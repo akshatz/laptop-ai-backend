@@ -22,11 +22,16 @@ AppRole auth, instead of reading `DATABASE_URL` directly from the environment.
    This initializes OpenBao (single unseal key/share — fine for a personal
    laptop, not for anything shared), unseals it, enables the KV v2 engine,
    writes `POSTGRES_USER`/`POSTGRES_PASSWORD`/`POSTGRES_DB`/`WEBUI_SECRET_KEY`
-   from `.env` into `secret/custom-backend`, and creates an AppRole scoped to
-   read-only access on that one path.
+   from `.env` into `secret/custom-backend`, and creates two AppRoles scoped
+   to that one path: `custom-backend` (read-only, long-lived token, used by
+   the running FastAPI app) and `custom-backend-admin` (read/write,
+   short-lived token, for a future rotation script only — never give its
+   creds to the app itself).
 
-   It prints `OPENBAO_ROLE_ID` and `OPENBAO_SECRET_ID` at the end — copy those
-   into the repo root `.env`.
+   It prints `OPENBAO_ROLE_ID`/`OPENBAO_SECRET_ID` (for the app's `.env`) and
+   `OPENBAO_ADMIN_ROLE_ID`/`OPENBAO_ADMIN_SECRET_ID` (for whatever rotation
+   tooling ends up using them — not currently consumed by anything) at the
+   end.
 
 4. Start the backend:
 
@@ -51,8 +56,12 @@ cd openbao && ./auto-unseal.sh
   re-run (skips init if `keys.json` exists).
 - `auto-unseal.sh` — unseals using the key saved by `bootstrap.sh`. Run after
   every container restart or host reboot.
-- `policy.hcl` — read-only policy for the `custom-backend` AppRole, scoped to
-  `secret/data/custom-backend` only.
+- `policy-readonly.hcl` — read-only policy for the `custom-backend` AppRole,
+  scoped to `secret/data/custom-backend` only.
+- `policy-admin.hcl` — read/write policy for the `custom-backend-admin`
+  AppRole, scoped to `secret/data/custom-backend` and
+  `secret/metadata/custom-backend` — intended for a future credential
+  rotation script, not for the running app.
 - `keys.json` (gitignored, created by `bootstrap.sh`) — root token + unseal
   key. Treat this like a master password.
 

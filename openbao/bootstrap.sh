@@ -47,9 +47,13 @@ bao kv put secret/custom-backend \
   postgres_db="$POSTGRES_DB" \
   webui_secret_key="$WEBUI_SECRET_KEY"
 
-echo "Writing policy for custom-backend..."
-docker cp policy.hcl "$CONTAINER":/tmp/policy.hcl
-bao policy write custom-backend /tmp/policy.hcl
+echo "Writing read-only policy for custom-backend..."
+docker cp policy-readonly.hcl "$CONTAINER":/tmp/policy-readonly.hcl
+bao policy write custom-backend /tmp/policy-readonly.hcl
+
+echo "Writing admin (read/write) policy for custom-backend-admin..."
+docker cp policy-admin.hcl "$CONTAINER":/tmp/policy-admin.hcl
+bao policy write custom-backend-admin /tmp/policy-admin.hcl
 
 echo "Enabling AppRole auth (ok if already enabled)..."
 bao auth enable approle 2>/dev/null || true
@@ -59,8 +63,16 @@ bao write auth/approle/role/custom-backend \
   token_ttl=1h \
   token_max_ttl=4h
 
+bao write auth/approle/role/custom-backend-admin \
+  token_policies="custom-backend-admin" \
+  token_ttl=15m \
+  token_max_ttl=1h
+
 ROLE_ID=$(bao read -field=role_id auth/approle/role/custom-backend/role-id)
 SECRET_ID=$(bao write -f -field=secret_id auth/approle/role/custom-backend/secret-id)
+
+ADMIN_ROLE_ID=$(bao read -field=role_id auth/approle/role/custom-backend-admin/role-id)
+ADMIN_SECRET_ID=$(bao write -f -field=secret_id auth/approle/role/custom-backend-admin/secret-id)
 
 echo ""
 echo "Root token and unseal key are stored in openbao/keys.json (gitignored) - keep it safe."
@@ -68,3 +80,7 @@ echo ""
 echo "Add these to your .env:"
 echo "OPENBAO_ROLE_ID=$ROLE_ID"
 echo "OPENBAO_SECRET_ID=$SECRET_ID"
+echo ""
+echo "Admin (read/write) AppRole credentials - for the rotation script only, do NOT give these to custom-backend:"
+echo "OPENBAO_ADMIN_ROLE_ID=$ADMIN_ROLE_ID"
+echo "OPENBAO_ADMIN_SECRET_ID=$ADMIN_SECRET_ID"
