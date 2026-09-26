@@ -10,6 +10,10 @@ openbao-data/
 openbao/keys.json
 openbao/backups/
 
+# Encrypted Passbolt recovery kit backups (from encrypt-recovery-kit.sh)
+backups/
+*.asc
+
 # Ignore Python caches and temporary files
 __pycache__/
 *.pyc

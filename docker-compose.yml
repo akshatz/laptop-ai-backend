@@ -14,7 +14,6 @@ services:
       POSTGRES_DB: ${POSTGRES_DB}
     volumes:
       - pg-data:/var/lib/postgresql/data
-      - ./database/init-passbolt-db.sh:/docker-entrypoint-initdb.d/init-passbolt-db.sh:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
       interval: 5s
@@ -95,6 +94,27 @@ services:
     networks:
       - ai-network
 
+  # 🔑 PASSBOLT-DB: Dedicated MariaDB instance for Passbolt (its officially
+  # tested/supported database — kept separate from the app's postgres-db)
+  passbolt-db:
+    image: mariadb:11
+    container_name: laptop-passbolt-db
+    restart: unless-stopped
+    environment:
+      - MYSQL_RANDOM_ROOT_PASSWORD=true
+      - MYSQL_DATABASE=passbolt
+      - MYSQL_USER=passbolt
+      - MYSQL_PASSWORD=${PASSBOLT_DB_PASSWORD}
+    volumes:
+      - passbolt-db-data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - ai-network
+
   # 🔑 PASSBOLT: Self-hosted password manager, for storing OpenBao root token,
   # unseal key, and AppRole credentials somewhere more usable than raw files
   passbolt:
@@ -105,10 +125,10 @@ services:
       - "8443:443"
     environment:
       - APP_FULL_BASE_URL=https://localhost:8443
-      - DATASOURCES_DEFAULT_HOST=postgres-db
-      - DATASOURCES_DEFAULT_PORT=5432
-      - DATASOURCES_DEFAULT_USERNAME=${POSTGRES_USER}
-      - DATASOURCES_DEFAULT_PASSWORD=${POSTGRES_PASSWORD}
+      - DATASOURCES_DEFAULT_HOST=passbolt-db
+      - DATASOURCES_DEFAULT_PORT=3306
+      - DATASOURCES_DEFAULT_USERNAME=passbolt
+      - DATASOURCES_DEFAULT_PASSWORD=${PASSBOLT_DB_PASSWORD}
       - DATASOURCES_DEFAULT_DATABASE=passbolt
       - EMAIL_DEFAULT_FROM=${PASSBOLT_SMTP_FROM}
       - EMAIL_TRANSPORT_DEFAULT_HOST=smtp.gmail.com
@@ -120,7 +140,7 @@ services:
       - passbolt-gpg:/etc/passbolt/gpg
       - passbolt-jwt:/etc/passbolt/jwt
     depends_on:
-      postgres-db:
+      passbolt-db:
         condition: service_healthy
     networks:
       - ai-network
@@ -153,6 +173,7 @@ volumes:
   openbao-data: # Persists sealed/unsealed OpenBao secret data across restarts
   passbolt-gpg: # Passbolt server GPG keypair, generated on first run
   passbolt-jwt: # Passbolt JWT signing keys, generated on first run
+  passbolt-db-data: # MariaDB data for passbolt-db
 
 networks:
   ai-network:

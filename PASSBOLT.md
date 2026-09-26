@@ -11,11 +11,16 @@ and AppRole credentials somewhere more usable than raw files on disk. See
    password — requires 2FA enabled on the account:
    https://myaccount.google.com/apppasswords).
 
-2. Start Postgres and Passbolt:
+2. Start Passbolt's database and Passbolt itself:
 
    ```bash
-   docker compose up -d postgres-db passbolt
+   docker compose up -d passbolt-db passbolt
    ```
+
+   Passbolt runs against its own dedicated MariaDB instance (`passbolt-db`)
+   — not the app's `postgres-db` — because MySQL/MariaDB is Passbolt's
+   officially tested database driver; using Postgres hit an unresolved
+   driver-loading crash in this image version.
 
    First run generates a server GPG keypair and JWT signing keys (persisted
    in the `passbolt-gpg` / `passbolt-jwt` volumes) — this takes a minute.
@@ -50,7 +55,10 @@ convenient copy for you to reference/share, not the source of truth.
 ## Notes
 
 - Port `8443` maps to the container's `443` — HTTPS only, self-signed cert.
-- `passbolt-gpg` and `passbolt-jwt` volumes are as important to back up as
-  `openbao/keys.json` — losing them means losing access to everything
-  stored in Passbolt. Extend `openbao/backup.sh`'s approach (GPG-encrypt
-  before it leaves the laptop) if you want this backed up the same way.
+- `passbolt-gpg`, `passbolt-jwt`, and `passbolt-db-data` volumes are as
+  important to back up as `openbao/keys.json` — losing them means losing
+  access to everything stored in Passbolt. Extend `openbao/backup.sh`'s
+  approach (GPG-encrypt before it leaves the laptop) if you want this backed
+  up the same way.
+- `PASSBOLT_DB_PASSWORD` (in `.env`) is the MariaDB password for the
+  `passbolt` user on `passbolt-db` — unrelated to `POSTGRES_PASSWORD`.
