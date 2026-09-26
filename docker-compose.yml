@@ -38,6 +38,8 @@ services:
   lgtm:
     image: grafana/otel-lgtm:latest
     container_name: laptop-lgtm
+    environment:
+      - PYROSCOPE_MEMBERLIST_INTERFACE_NAMES=lo
     restart: unless-stopped
     ports:
       - "3001:3000" # 👈 Grafana Dashboard UI
