@@ -78,6 +78,22 @@ services:
     networks:
       - ai-network
 
+  # 🔐 OPENBAO: Secrets storage and dynamic credential broker
+  openbao:
+    image: openbao/openbao:latest
+    container_name: laptop-openbao
+    restart: unless-stopped
+    cap_add:
+      - IPC_LOCK
+    ports:
+      - "8200:8200"
+    volumes:
+      - openbao-data:/openbao/data
+      - ./openbao/config.hcl:/openbao/config/config.hcl:ro
+    command: ["server", "-config=/openbao/config/config.hcl"]
+    networks:
+      - ai-network
+
   # ⚙️ CUSTOM BACKEND CONTAINER: Your private development sandbox
   custom-backend:
     build:
@@ -85,12 +101,16 @@ services:
     container_name: local-dev-backend
     restart: unless-stopped
     ports:
-      - "8001:8001"
+      - "8011:8000"
     environment:
-      - DATABASE_URL=postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres-db:5432/${POSTGRES_DB}
+      - OPENBAO_ADDR=http://openbao:8200
+      - OPENBAO_ROLE_ID=${OPENBAO_ROLE_ID}
+      - OPENBAO_SECRET_ID=${OPENBAO_SECRET_ID}
     depends_on:
       postgres-db:
         condition: service_healthy
+      openbao:
+        condition: service_started
     networks:
       - ai-network
 
@@ -99,6 +119,7 @@ volumes:
   ollama-models:
   open-webui-data:
   lgtm-data: # Preserves your Grafana dashboards, metrics, and trace histories safely
+  openbao-data: # Persists sealed/unsealed OpenBao secret data across restarts
 
 networks:
   ai-network:
