@@ -1,0 +1,14 @@
+# Ignore local Docker database data (prevents file lock crashes)
+postgres-data/
+pg-data/
+lgtm-data/
+open-webui-data/
+ollama-models/
+
+# Ignore Python caches and temporary files
+__pycache__/
+*.pyc
+.env
+
+# Ignore system configuration notes
+.vscode/

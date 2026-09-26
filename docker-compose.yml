@@ -1,0 +1,106 @@
+version: '3.8'
+
+services:
+  # 🐘 POSTGRESQL: High-efficiency relational database
+  postgres-db:
+    image: postgres:16-alpine
+    container_name: laptop-postgres
+    restart: unless-stopped
+    ports:
+      - "5433:5432"
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    volumes:
+      - pg-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 3
+    networks:
+      - ai-network
+
+  # 🧠 OLLAMA: Local AI Engine
+  ollama:
+    image: ollama/ollama:latest
+    container_name: laptop-ollama
+    restart: unless-stopped
+    volumes:
+      # 👇 FIX: Maps your existing host models directory straight into the container
+      - /usr/share/ollama/.ollama:/root/.ollama
+    networks:
+      - ai-network
+
+  # 📊 GRAFANA LGTM: Unified OpenTelemetry Monitoring Platform (Grafana, Loki, Tempo, Mimir)
+  lgtm:
+    image: grafana/otel-lgtm:latest
+    container_name: laptop-lgtm
+    restart: unless-stopped
+    ports:
+      - "3001:3000" # 👈 Grafana Dashboard UI
+      - "4317:4317" # OTLP gRPC Ingestion Port
+      - "4318:4318" # OTLP HTTP Ingestion Port
+    volumes:
+      - lgtm-data:/data
+    networks:
+      - ai-network
+
+  # 🌐 OPEN WEBUI: Main Dashboard Interface for your family
+  open-webui:
+    image: ghcr.io/open-webui/open-webui:main
+    container_name: laptop-open-webui
+    restart: unless-stopped
+    ports:
+      - "8082:8080" # Browser access at http://192.168.29.119:8082
+       # Browser access at http://192.168.29.119:8080 
+    environment:
+      - OLLAMA_BASE_URL=http://ollama:11434
+      - WEBUI_SECRET_KEY=${WEBUI_SECRET_KEY}
+      # 🚀 OPENTELEMETRY LIFEOFF: Feeds all UI metrics, traces, and logs to Grafana
+      - ENABLE_OTEL=true
+      - ENABLE_OTEL_TRACES=true
+      - ENABLE_OTEL_METRICS=true
+      - ENABLE_OTEL_LOGS=true
+      - OTEL_SERVICE_NAME=open-webui
+      - OTEL_EXPORTER_OTLP_ENDPOINT=http://lgtm:4317 # Points directly to your LGTM container
+      - OTEL_EXPORTER_OTLP_INSECURE=true
+      - OTEL_METRICS_EXPORT_INTERVAL_MILLIS=10000
+      # Laptop Performance tweaks
+      - ENABLE_TITLE_GENERATION=false
+      - ENABLE_TAG_GENERATION=false
+      - AIOHTTP_CLIENT_TIMEOUT=60
+    volumes:
+      - open-webui-data:/app/backend/data
+    depends_on:
+      - ollama
+      - lgtm
+    networks:
+      - ai-network
+
+  # ⚙️ CUSTOM BACKEND CONTAINER: Your private development sandbox
+  custom-backend:
+    build:
+      context: ./custom-backend
+    container_name: local-dev-backend
+    restart: unless-stopped
+    ports:
+      - "8001:8001"
+    environment:
+      - DATABASE_URL=postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres-db:5432/${POSTGRES_DB}
+    depends_on:
+      postgres-db:
+        condition: service_healthy
+    networks:
+      - ai-network
+
+volumes:
+  pg-data:
+  ollama-models:
+  open-webui-data:
+  lgtm-data: # Preserves your Grafana dashboards, metrics, and trace histories safely
+
+networks:
+  ai-network:
+    driver: bridge
