@@ -15,6 +15,7 @@ services:
     volumes:
       - pg-data:/var/lib/postgresql/data
       - ./database/init-passbolt-db.sh:/docker-entrypoint-initdb.d/init-passbolt-db.sh:ro
+      - ./database/init-openwebui-db.sh:/docker-entrypoint-initdb.d/init-openwebui-db.sh:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
       interval: 5s
@@ -58,6 +59,11 @@ services:
     environment:
       - OLLAMA_BASE_URL=http://ollama:11434
       - WEBUI_SECRET_KEY=${WEBUI_SECRET_KEY}
+      - DATABASE_URL=postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres-db:5432/open_webui
+      # Use Ollama for embeddings instead of downloading from HuggingFace
+      - RAG_EMBEDDING_ENGINE=ollama
+      - RAG_EMBEDDING_MODEL=nomic-embed-text
+      - RAG_OLLAMA_BASE_URL=http://ollama:11434
       # 🚀 OPENTELEMETRY LIFEOFF: Feeds all UI metrics, traces, and logs to Grafana
       - ENABLE_OTEL=true
       - ENABLE_OTEL_TRACES=true
