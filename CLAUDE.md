@@ -25,7 +25,7 @@ A personal laptop AI dev stack, orchestrated via `docker-compose.yml`: PostgreSQ
 
 ## Configuration
 
-All credentials/secrets come from environment variables — none are hardcoded in `docker-compose.yml`, `main.py`, or `init_db.py`. `.env` (gitignored, see `.env.example`) holds `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB`, `WEBUI_SECRET_KEY`, `DATABASE_URL` (for `custom-backend`, via the Docker network on port 5432), and `INIT_DB_DATABASE_URL` (for running `init_db.py` from the host against the mapped port 5433).
+All credentials/secrets/host paths come from environment variables — none are hardcoded in `docker-compose.yml`, `main.py`, or `init_db.py`. `.env` (gitignored, see `.env.example`) holds `OLLAMA_MODELS_PATH` (host path mounted into the `ollama` container), `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB`, `WEBUI_SECRET_KEY`, `DATABASE_URL` (for `custom-backend`, via the Docker network on port 5432), and `INIT_DB_DATABASE_URL` (for running `init_db.py` from the host against the mapped port 5433).
 
 ## Running things
 

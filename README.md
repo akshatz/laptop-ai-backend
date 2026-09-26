@@ -17,7 +17,7 @@ All services share the `ai-network` Docker bridge network.
 ## Prerequisites
 
 - Docker and Docker Compose
-- Ollama models already pulled to `/usr/share/ollama/.ollama` on the host (mounted into the `ollama` container)
+- Ollama models already pulled somewhere on the host; point `OLLAMA_MODELS_PATH` in `.env` at that directory (mounted into the `ollama` container)
 
 ## Configuration
 
@@ -31,6 +31,7 @@ cp .env.example .env
 
 | Variable | Used by | Purpose |
 |---|---|---|
+| `OLLAMA_MODELS_PATH` | `ollama` | Host path to your pulled Ollama models, mounted into the container |
 | `POSTGRES_USER` | `postgres-db`, `custom-backend` | Postgres role |
 | `POSTGRES_PASSWORD` | `postgres-db`, `custom-backend` | Postgres password |
 | `POSTGRES_DB` | `postgres-db`, `custom-backend` | Database name |

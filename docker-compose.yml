@@ -28,8 +28,8 @@ services:
     container_name: laptop-ollama
     restart: unless-stopped
     volumes:
-      # 👇 FIX: Maps your existing host models directory straight into the container
-      - /usr/share/ollama/.ollama:/root/.ollama
+      # 👇 Maps your existing host models directory straight into the container
+      - ${OLLAMA_MODELS_PATH:-/usr/share/ollama/.ollama}:/root/.ollama
     networks:
       - ai-network
 
@@ -53,8 +53,7 @@ services:
     container_name: laptop-open-webui
     restart: unless-stopped
     ports:
-      - "8082:8080" # Browser access at http://192.168.29.119:8082
-       # Browser access at http://192.168.29.119:8080 
+      - "8082:8080"
     environment:
       - OLLAMA_BASE_URL=http://ollama:11434
       - WEBUI_SECRET_KEY=${WEBUI_SECRET_KEY}
