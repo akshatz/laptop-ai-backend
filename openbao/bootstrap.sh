@@ -45,7 +45,10 @@ bao kv put secret/custom-backend \
   postgres_user="$POSTGRES_USER" \
   postgres_password="$POSTGRES_PASSWORD" \
   postgres_db="$POSTGRES_DB" \
-  webui_secret_key="$WEBUI_SECRET_KEY"
+  webui_secret_key="$WEBUI_SECRET_KEY" \
+  smtp_user="$PASSBOLT_SMTP_USER" \
+  smtp_password="$PASSBOLT_SMTP_PASSWORD" \
+  smtp_from="$PASSBOLT_SMTP_FROM"
 
 echo "Writing read-only policy for custom-backend..."
 docker cp policy-readonly.hcl "$CONTAINER":/tmp/policy-readonly.hcl
