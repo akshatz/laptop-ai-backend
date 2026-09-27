@@ -136,7 +136,8 @@ services:
   # ⚙️ CUSTOM BACKEND CONTAINER: Your private development sandbox
   custom-backend:
     build:
-      context: ./custom-backend
+      context: .
+      dockerfile: custom-backend/Dockerfile
     container_name: local-dev-backend
     restart: unless-stopped
     ports:

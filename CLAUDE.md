@@ -9,7 +9,9 @@ A personal laptop AI dev stack, orchestrated via `docker-compose.yml`: PostgreSQ
 ## Structure
 
 - `custom-backend/main.py` — FastAPI app: DB engine setup, SQLAlchemy models, Pydantic schemas, routes, all in one file. Fetches Postgres credentials from OpenBao at import time via AppRole before building the DB engine.
-- `database/init_db.py` — standalone schema/migration script (also defines `UserModel`, plus `UserChatModel` and `MessageModel`, which `main.py` does not yet use). Still reads `INIT_DB_DATABASE_URL` directly, not via OpenBao.
+- `custom-backend/entrypoint.sh` — container entrypoint: resolves the DB URL from OpenBao (via `resolve_db_url.py`), runs `alembic upgrade head` against `database/alembic/`, then execs uvicorn. Runs on every container start.
+- `database/init_db.py` — defines the Alembic-tracked schema (`UserModel`, `UserChatModel`, `MessageModel`, duplicating `UserModel` from `main.py`). No longer run directly to create tables; `database/alembic/` migrations (applied by `custom-backend/entrypoint.sh`) are now the source of schema changes. Still reads `INIT_DB_DATABASE_URL` directly, not via OpenBao — `alembic/env.py` uses the same env var.
+- `database/alembic/` — Alembic migrations against `init_db.py`'s models. Build context for `custom-backend`'s image is the repo root so this directory can be copied into it.
 - `database/init-passbolt-db.sh` — Postgres init script (auto-run on first `postgres-db` start only) that creates the separate `passbolt` database.
 - `docker-compose.yml` — defines all 7 services and the shared `ai-network`.
 - `openbao/` — OpenBao config (`config.hcl`), one-time setup script (`bootstrap.sh`), post-restart unseal script (`auto-unseal.sh`), backup script (`backup.sh`), and the read-only policy for `custom-backend`'s AppRole. See `openbao/README.md`.
@@ -36,9 +38,9 @@ All credentials/secrets/host paths come from environment variables — none are 
 ## Running things
 
 ```bash
-docker compose up -d                          # full stack (reads ./.env automatically)
+docker compose up -d                          # full stack (reads ./.env automatically); custom-backend applies migrations on startup via entrypoint.sh
 cd openbao && ./bootstrap.sh                  # one-time: init/unseal OpenBao, write secrets, create AppRole (see openbao/README.md)
 cd openbao && ./auto-unseal.sh                # after any openbao container restart / host reboot
-cd custom-backend && uvicorn main:app --reload --port 8001   # backend only (needs OPENBAO_ADDR/OPENBAO_ROLE_ID/OPENBAO_SECRET_ID exported)
-export $(grep -v '^#' .env | xargs) && python database/init_db.py   # apply schema to Postgres
+cd custom-backend && uvicorn main:app --reload --port 8001   # backend only, skips migrations (needs OPENBAO_ADDR/OPENBAO_ROLE_ID/OPENBAO_SECRET_ID exported)
+export $(grep -v '^#' .env | xargs) && cd database && alembic upgrade head   # apply schema to Postgres from the host (uses INIT_DB_DATABASE_URL against the mapped port 5433)
 ```
