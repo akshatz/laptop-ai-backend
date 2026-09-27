@@ -1,18 +1,81 @@
 # Laptop AI Backend
 
-A local, hybrid AI development stack for a personal laptop: a custom FastAPI backend backed by PostgreSQL, alongside Ollama for local model inference, Open WebUI as a chat frontend, and Grafana LGTM for observability.
+A local, hybrid AI development stack for a personal laptop: a custom FastAPI backend backed by PostgreSQL, alongside Ollama for local model inference, Open WebUI as a chat frontend, Milvus for RAG vector storage, and Grafana LGTM / OpenObserve for observability.
+
+## Architecture
+
+```mermaid
+flowchart TB
+    subgraph client[" "]
+        browser["Browser"]
+    end
+
+    subgraph app["Application layer"]
+        webui["open-webui\n:8082"]
+        backend["custom-backend (FastAPI)\n:8011\nrouters: auth, chats"]
+    end
+
+    subgraph inference["Inference"]
+        ollama["ollama\n(local LLM engine)"]
+    end
+
+    subgraph data["Data"]
+        postgres[("postgres-db\n:5433\n(app / open_webui / passbolt DBs)")]
+        milvus["milvus\n(vector store)"]
+        milvusEtcd["milvus-etcd\n(metadata)"]
+        milvusMinio["milvus-minio\n(object storage)"]
+        milvusInit["milvus-init-auth\n(one-shot password rotation)"]
+    end
+
+    subgraph secrets["Secrets & identity"]
+        openbao["openbao\n:8200"]
+        passbolt["passbolt\n:8443"]
+    end
+
+    subgraph observability["Observability"]
+        lgtm["lgtm (Grafana/Loki/Tempo/Mimir)\n:3001, OTLP 4317/4318"]
+        openobserve["openobserve (O2)\n:5080 (standalone, unused)"]
+    end
+
+    browser --> webui
+    browser --> backend
+
+    webui --> ollama
+    webui --> milvus
+    webui --> postgres
+    webui -. OTEL .-> lgtm
+
+    backend --> ollama
+    backend --> milvus
+    backend --> postgres
+    backend -- AppRole auth --> openbao
+
+    milvus --> milvusEtcd
+    milvus --> milvusMinio
+    milvusInit -. rotates root pw, gates startup .-> milvus
+    milvusInit -.-> webui
+    milvusInit -.-> backend
+
+    passbolt --> postgres
+    openbao -. stores root token/unseal key .-> passbolt
+```
+
+All services share the `ai-network` Docker bridge network, orchestrated via [devops/docker-compose.yml](devops/docker-compose.yml).
 
 ## Stack
 
 | Service | Purpose | Port |
 |---|---|---|
-| `postgres-db` | PostgreSQL 16 database | 5433 → 5432 |
+| `postgres-db` | PostgreSQL 16 database (hosts app, `open_webui`, and `passbolt` DBs) | 5433 → 5432 |
 | `ollama` | Local LLM inference engine | (internal) |
-| `open-webui` | Chat UI, talks to Ollama | 8082 → 8080 |
+| `open-webui` | Chat UI, talks to Ollama + Milvus for RAG | 8082 → 8080 |
+| `milvus` + `milvus-etcd` + `milvus-minio` | Vector store for RAG document embeddings | (internal, 19530) |
+| `milvus-init-auth` | One-shot job that rotates Milvus's default root password | (n/a, runs once) |
 | `lgtm` | Grafana + Loki + Tempo + Mimir (metrics/traces/logs) | 3001 (UI), 4317/4318 (OTLP) |
-| `openbao` | Secrets storage (Postgres creds, etc.) | 8200 |
+| `openobserve` | Standalone O2 observability platform (not yet wired to any service) | 5080 |
+| `openbao` | Secrets storage (Postgres creds, AppRole broker) | 8200 |
 | `passbolt` | Password manager (stores OpenBao/AppRole tokens) | 8443 → 443 |
-| `custom-backend` | FastAPI app with user management | 8011 → 8000 |
+| `custom-backend` | FastAPI app: auth, chats, RAG document ingestion | 8011 → 8000 |
 
 All services share the `ai-network` Docker bridge network.
 
@@ -47,10 +110,10 @@ cp .env.example .env
 ## Running
 
 ```bash
-docker compose up -d postgres-db openbao   # bring up the secrets dependency first
+docker compose -f devops/docker-compose.yml --project-directory . up -d postgres-db openbao   # bring up the secrets dependency first
 cd openbao && ./bootstrap.sh               # one-time: unseal, write secrets, create AppRole (see openbao/README.md)
 # copy the OPENBAO_ROLE_ID / OPENBAO_SECRET_ID it prints into .env
-docker compose up -d                       # start everything else
+docker compose -f devops/docker-compose.yml --project-directory . up -d   # start everything else
 ```
 
 - Open WebUI: http://localhost:8082
