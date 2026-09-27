@@ -5,12 +5,20 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+  workflow_dispatch:
+    inputs:
+      branch:
+        description: "Branch to run the build check against"
+        required: true
+        default: main
 
 jobs:
   compose-config:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.branch || github.ref }}
       - name: Validate docker-compose.yml
         run: docker compose config
 
@@ -18,5 +26,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.branch || github.ref }}
       - name: Build custom-backend image
         run: docker build -f custom-backend/Dockerfile .
