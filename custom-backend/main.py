@@ -83,6 +83,7 @@ class UserModel(Base):
     role: Mapped[str] = mapped_column(String(20), default="user")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
     password_changed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
 
     # email verification
     is_verified: Mapped[bool] = mapped_column(Boolean, default=False)
@@ -110,6 +111,7 @@ class UserResponse(BaseModel):
     role: str
     is_verified: bool
     mfa_enabled: bool
+    is_active: bool
 
     class Config:
         from_attributes = True
@@ -209,6 +211,38 @@ async def verify_email(payload: EmailVerifyRequest, db: AsyncSession = Depends(g
 
     return user
 
+@app.post("/users/deactivate", response_model=UserResponse)
+async def deactivate_user(payload: LoginRequest, db: AsyncSession = Depends(get_db)):
+    """
+    Soft-delete: user rows are never removed from the database, only flagged
+    inactive so they can no longer log in.
+    """
+    query = await db.execute(select(UserModel).where(UserModel.email == payload.email))
+    user = query.scalar_one_or_none()
+
+    if not user or not pwd_context.verify(payload.password, user.password_hash):
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid email or password.")
+
+    user.is_active = False
+    await db.commit()
+    await db.refresh(user)
+
+    return user
+
+@app.post("/users/reactivate", response_model=UserResponse)
+async def reactivate_user(payload: LoginRequest, db: AsyncSession = Depends(get_db)):
+    query = await db.execute(select(UserModel).where(UserModel.email == payload.email))
+    user = query.scalar_one_or_none()
+
+    if not user or not pwd_context.verify(payload.password, user.password_hash):
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid email or password.")
+
+    user.is_active = True
+    await db.commit()
+    await db.refresh(user)
+
+    return user
+
 @app.post("/mfa/enable", response_model=UserResponse)
 async def enable_mfa(payload: LoginRequest, db: AsyncSession = Depends(get_db)):
     """
@@ -250,6 +284,9 @@ async def login(payload: LoginRequest, db: AsyncSession = Depends(get_db)):
 
     if not user or not pwd_context.verify(payload.password, user.password_hash):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid email or password.")
+
+    if not user.is_active:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="This account has been deactivated.")
 
     if not user.is_verified:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Email address is not verified yet.")

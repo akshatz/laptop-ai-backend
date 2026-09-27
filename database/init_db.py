@@ -20,6 +20,7 @@ class UserModel(Base):
     role: Mapped[str] = mapped_column(String(20), default="user") # 'admin', 'user'
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
     password_changed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
 
     # email verification
     is_verified: Mapped[bool] = mapped_column(Boolean, default=False)
@@ -78,6 +79,9 @@ async def run_migrations():
         print("🛠️ Backfilling new users columns for pre-existing rows...")
         await conn.execute(text(
             "ALTER TABLE users ADD COLUMN IF NOT EXISTS password_changed_at TIMESTAMPTZ"
+        ))
+        await conn.execute(text(
+            "ALTER TABLE users ADD COLUMN IF NOT EXISTS is_active BOOLEAN DEFAULT TRUE"
         ))
         await conn.execute(text(
             "ALTER TABLE users ADD COLUMN IF NOT EXISTS is_verified BOOLEAN DEFAULT FALSE"
