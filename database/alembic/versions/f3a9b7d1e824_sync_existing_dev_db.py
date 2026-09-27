@@ -27,7 +27,7 @@ down_revision = "c25ed09c74cf"
 branch_labels = None
 depends_on = None
 
-_ADDED_COLUMNS_BY_THIS_REVISION: set[str] = set()
+_ADDED_COLUMNS_BY_THIS_REVISION: set[tuple[str, str]] = set()
 
 
 def _existing_columns(table_name: str) -> set[str]:
@@ -50,39 +50,48 @@ def upgrade() -> None:
             "users",
             sa.Column("password_changed_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
         )
-        _ADDED_COLUMNS_BY_THIS_REVISION.add("password_changed_at")
+        _ADDED_COLUMNS_BY_THIS_REVISION.add(("users", "password_changed_at"))
 
     if "is_active" not in users_columns:
         op.add_column("users", sa.Column("is_active", sa.Boolean(), server_default=sa.true(), nullable=False))
-        _ADDED_COLUMNS_BY_THIS_REVISION.add("is_active")
+        _ADDED_COLUMNS_BY_THIS_REVISION.add(("users", "is_active"))
 
     if "is_verified" not in users_columns:
         op.add_column("users", sa.Column("is_verified", sa.Boolean(), server_default=sa.false(), nullable=False))
-        _ADDED_COLUMNS_BY_THIS_REVISION.add("is_verified")
+        _ADDED_COLUMNS_BY_THIS_REVISION.add(("users", "is_verified"))
 
     if "verification_token" not in users_columns:
         op.add_column("users", sa.Column("verification_token", sa.String(64), nullable=True))
-        _ADDED_COLUMNS_BY_THIS_REVISION.add("verification_token")
+        _ADDED_COLUMNS_BY_THIS_REVISION.add(("users", "verification_token"))
 
     if "mfa_enabled" not in users_columns:
         op.add_column("users", sa.Column("mfa_enabled", sa.Boolean(), server_default=sa.false(), nullable=False))
-        _ADDED_COLUMNS_BY_THIS_REVISION.add("mfa_enabled")
+        _ADDED_COLUMNS_BY_THIS_REVISION.add(("users", "mfa_enabled"))
 
     if "mfa_otp_code" not in users_columns:
         op.add_column("users", sa.Column("mfa_otp_code", sa.String(6), nullable=True))
-        _ADDED_COLUMNS_BY_THIS_REVISION.add("mfa_otp_code")
+        _ADDED_COLUMNS_BY_THIS_REVISION.add(("users", "mfa_otp_code"))
 
     if "mfa_otp_expires_at" not in users_columns:
         op.add_column("users", sa.Column("mfa_otp_expires_at", sa.DateTime(timezone=True), nullable=True))
-        _ADDED_COLUMNS_BY_THIS_REVISION.add("mfa_otp_expires_at")
+        _ADDED_COLUMNS_BY_THIS_REVISION.add(("users", "mfa_otp_expires_at"))
 
     if "password_reset_otp" not in users_columns:
         op.add_column("users", sa.Column("password_reset_otp", sa.String(6), nullable=True))
-        _ADDED_COLUMNS_BY_THIS_REVISION.add("password_reset_otp")
+        _ADDED_COLUMNS_BY_THIS_REVISION.add(("users", "password_reset_otp"))
 
     if "password_reset_otp_expires_at" not in users_columns:
         op.add_column("users", sa.Column("password_reset_otp_expires_at", sa.DateTime(timezone=True), nullable=True))
-        _ADDED_COLUMNS_BY_THIS_REVISION.add("password_reset_otp_expires_at")
+        _ADDED_COLUMNS_BY_THIS_REVISION.add(("users", "password_reset_otp_expires_at"))
+
+    user_chats_columns = _existing_columns("user_chats")
+
+    if "updated_at" not in user_chats_columns:
+        op.add_column(
+            "user_chats",
+            sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
+        )
+        _ADDED_COLUMNS_BY_THIS_REVISION.add(("user_chats", "updated_at"))
 
     if "idx_chats_user" not in _existing_indexes("user_chats"):
         op.create_index("idx_chats_user", "user_chats", ["user_id"])
@@ -92,6 +101,6 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    for column_name in _ADDED_COLUMNS_BY_THIS_REVISION:
-        op.drop_column("users", column_name)
+    for table_name, column_name in _ADDED_COLUMNS_BY_THIS_REVISION:
+        op.drop_column(table_name, column_name)
     _ADDED_COLUMNS_BY_THIS_REVISION.clear()
