@@ -48,7 +48,8 @@ bao kv put secret/custom-backend \
   webui_secret_key="$WEBUI_SECRET_KEY" \
   smtp_user="$PASSBOLT_SMTP_USER" \
   smtp_password="$PASSBOLT_SMTP_PASSWORD" \
-  smtp_from="$PASSBOLT_SMTP_FROM"
+  smtp_from="$PASSBOLT_SMTP_FROM" \
+  milvus_root_password="$MILVUS_ROOT_PASSWORD"
 
 echo "Writing read-only policy for custom-backend..."
 docker cp policy-readonly.hcl "$CONTAINER":/tmp/policy-readonly.hcl

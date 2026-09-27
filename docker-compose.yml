@@ -251,11 +251,15 @@ services:
       - OPENBAO_ADDR=http://openbao:8200
       - OPENBAO_ROLE_ID=${OPENBAO_ROLE_ID}
       - OPENBAO_SECRET_ID=${OPENBAO_SECRET_ID}
+      - OLLAMA_BASE_URL=http://ollama:11434
+      - MILVUS_URI=http://milvus:19530
     depends_on:
       postgres-db:
         condition: service_healthy
       openbao:
         condition: service_started
+      milvus-init-auth:
+        condition: service_completed_successfully
     networks:
       - ai-network
 
