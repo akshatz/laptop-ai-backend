@@ -49,6 +49,21 @@ services:
     networks:
       - ai-network
 
+  # 🔭 OPENOBSERVE (O2): Unified logs/metrics/traces observability platform
+  openobserve:
+    image: openobserve/openobserve:latest
+    container_name: laptop-openobserve
+    restart: unless-stopped
+    ports:
+      - "5080:5080"   # Web UI + HTTP API + OTLP/HTTP ingestion
+    environment:
+      - ZO_ROOT_USER_EMAIL=${OPENOBSERVE_ROOT_USER_EMAIL}
+      - ZO_ROOT_USER_PASSWORD=${OPENOBSERVE_ROOT_USER_PASSWORD}
+    volumes:
+      - openobserve-data:/data
+    networks:
+      - ai-network
+
   # 🌐 OPEN WEBUI: Main Dashboard Interface for your family
   open-webui:
     image: ghcr.io/open-webui/open-webui:main
@@ -253,6 +268,7 @@ volumes:
   ollama-models:
   open-webui-data:
   lgtm-data: # Preserves your Grafana dashboards, metrics, and trace histories safely
+  openobserve-data: # Persists OpenObserve's logs/metrics/traces storage
   openbao-data: # Persists sealed/unsealed OpenBao secret data across restarts
   passbolt-gpg: # Passbolt server GPG keypair, generated on first run
   passbolt-jwt: # Passbolt JWT signing keys, generated on first run

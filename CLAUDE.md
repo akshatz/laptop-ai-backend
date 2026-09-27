@@ -4,7 +4,7 @@ Guidance for Claude Code when working in this repository.
 
 ## What this is
 
-A personal laptop AI dev stack, orchestrated via `docker-compose.yml`: PostgreSQL, Ollama, Open WebUI, Milvus (vector store, with etcd + MinIO dependencies), Grafana LGTM observability, OpenBao (secrets), Passbolt (password manager), and a custom FastAPI backend (`custom-backend/`).
+A personal laptop AI dev stack, orchestrated via `docker-compose.yml`: PostgreSQL, Ollama, Open WebUI, Milvus (vector store, with etcd + MinIO dependencies), Grafana LGTM observability, OpenObserve (O2) observability, OpenBao (secrets), Passbolt (password manager), and a custom FastAPI backend (`custom-backend/`).
 
 ## Structure
 
@@ -21,6 +21,7 @@ A personal laptop AI dev stack, orchestrated via `docker-compose.yml`: PostgreSQ
 - `database/alembic/` — Alembic migrations against `init_db.py`'s models. Build context for `custom-backend`'s image is the repo root so this directory can be copied into it.
 - `database/init-passbolt-db.sh` — Postgres init script (auto-run on first `postgres-db` start only) that creates the separate `passbolt` database.
 - `docker-compose.yml` — defines all services (including `milvus` and its `milvus-etcd`/`milvus-minio` dependencies, which back Open WebUI's RAG vector store) and the shared `ai-network`.
+- OpenObserve (`openobserve` service) — standalone O2 instance running alongside Grafana LGTM, not integrated with it; its web UI/API/OTLP-HTTP ingestion is on port 5080. Nothing currently exports telemetry to it (`open-webui`'s OTEL env vars still point at `lgtm`); point a service's `OTEL_EXPORTER_OTLP_ENDPOINT` at `http://openobserve:5080/api/<org>/` (with the org's auth header) to send it data.
 - `openbao/` — OpenBao config (`config.hcl`), one-time setup script (`bootstrap.sh`), post-restart unseal script (`auto-unseal.sh`), backup script (`backup.sh`), and the read-only policy for `custom-backend`'s AppRole. See `openbao/README.md`.
 - `PASSBOLT.md` — one-time admin registration and usage notes for the `passbolt` service.
 
