@@ -14,7 +14,7 @@ and AppRole credentials somewhere more usable than raw files on disk. See
 2. Start Postgres and Passbolt:
 
    ```bash
-   docker compose up -d postgres-db passbolt
+   docker compose -f devops/docker-compose.yml up -d postgres-db passbolt
    ```
 
    First run generates a server GPG keypair and JWT signing keys (persisted

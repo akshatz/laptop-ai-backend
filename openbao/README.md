@@ -8,7 +8,7 @@ AppRole auth, instead of reading `DATABASE_URL` directly from the environment.
 1. Start OpenBao (and Postgres, since bootstrap reads `.env` for the values to store):
 
    ```bash
-   docker compose up -d postgres-db openbao
+   docker compose -f devops/docker-compose.yml up -d postgres-db openbao
    ```
 
 2. Make sure `jq` is installed on the host (`sudo apt install jq`). The `bao` CLI itself doesn't need a host install — the scripts run it inside the `laptop-openbao` container via `docker exec`.
@@ -36,7 +36,7 @@ AppRole auth, instead of reading `DATABASE_URL` directly from the environment.
 4. Start the backend:
 
    ```bash
-   docker compose up -d custom-backend
+   docker compose -f devops/docker-compose.yml up -d custom-backend
    ```
 
 ## After a restart
