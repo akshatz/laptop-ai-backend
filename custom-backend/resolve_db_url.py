@@ -1,6 +1,6 @@
 """
 Prints the Postgres connection string built from OpenBao secrets, in the
-same way main.py does at import time. Used by entrypoint.sh to populate
+same way db.py does at import time. Used by entrypoint.sh to populate
 INIT_DB_DATABASE_URL for Alembic before the app starts, without duplicating
 the AppRole-login/KV-read logic.
 """

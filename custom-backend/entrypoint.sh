@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Container entrypoint: fetches DB credentials from OpenBao (same AppRole
-# main.py uses), applies pending Alembic migrations against them, then hands
+# db.py uses), applies pending Alembic migrations against them, then hands
 # off to uvicorn. Runs on every container start, so migrations stay applied
 # without a separate manual step.
 set -euo pipefail

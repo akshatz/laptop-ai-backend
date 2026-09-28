@@ -19,8 +19,8 @@ if config.config_file_name is not None:
 target_metadata = Base.metadata
 
 # init_db.py's models (users, user_chats, messages) are the schema source of
-# truth Alembic tracks — see CLAUDE.md's note on main.py/init_db.py declaring
-# UserModel independently; this migration setup does not resolve that.
+# truth Alembic tracks — see CLAUDE.md's note on custom-backend/models.py and
+# init_db.py declaring the models independently; this migration setup does not resolve that.
 DATABASE_URL = os.environ["INIT_DB_DATABASE_URL"]
 
 

@@ -14,8 +14,8 @@ services:
       POSTGRES_DB: ${POSTGRES_DB}
     volumes:
       - pg-data:/var/lib/postgresql/data
-      - ../database/init-passbolt-db.sh:/docker-entrypoint-initdb.d/init-passbolt-db.sh:ro
-      - ../database/init-openwebui-db.sh:/docker-entrypoint-initdb.d/init-openwebui-db.sh:ro
+      - ./database/init-passbolt-db.sh:/docker-entrypoint-initdb.d/init-passbolt-db.sh:ro
+      - ./database/init-openwebui-db.sh:/docker-entrypoint-initdb.d/init-openwebui-db.sh:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
       interval: 5s
@@ -185,7 +185,7 @@ services:
     environment:
       - MILVUS_ROOT_PASSWORD=${MILVUS_ROOT_PASSWORD}
     volumes:
-      - ../milvus/init_auth.py:/init_auth.py:ro
+      - ./milvus/init_auth.py:/init_auth.py:ro
     command: >
       bash -c "pip install --quiet 'setuptools<81' pymilvus==2.4.15 && python /init_auth.py"
     depends_on:
@@ -205,7 +205,7 @@ services:
       - "8200:8200"
     volumes:
       - openbao-data:/openbao/data
-      - ../openbao/config.hcl:/openbao/config/config.hcl:ro
+      - ./openbao/config.hcl:/openbao/config/config.hcl:ro
     command: ["server", "-config=/openbao/config/config.hcl"]
     networks:
       - ai-network
@@ -243,7 +243,7 @@ services:
   # ⚙️ CUSTOM BACKEND CONTAINER: Your private development sandbox
   custom-backend:
     build:
-      context: ..
+      context: .
       dockerfile: custom-backend/Dockerfile
     container_name: local-dev-backend
     restart: unless-stopped
