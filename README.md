@@ -113,10 +113,10 @@ cp .env.example .env
 ## Running
 
 ```bash
-docker compose -f devops/docker-compose.yml --project-directory . up -d postgres-db openbao   # bring up the secrets dependency first
+docker compose -f devops/docker-compose.yml up -d postgres-db openbao   # bring up the secrets dependency first
 cd openbao && ./bootstrap.sh               # one-time: unseal, write secrets, create AppRole (see openbao/README.md)
 # copy the OPENBAO_ROLE_ID / OPENBAO_SECRET_ID it prints into .env
-docker compose -f devops/docker-compose.yml --project-directory . up -d   # start everything else
+docker compose -f devops/docker-compose.yml up -d   # start everything else
 ```
 
 - Open WebUI: http://localhost:8082

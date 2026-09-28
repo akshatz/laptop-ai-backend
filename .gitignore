@@ -16,6 +16,8 @@ passbolt-recovery-kit*.asc*
 __pycache__/
 *.pyc
 .env
+# devops/.env is a committed symlink to ../.env so compose finds it from devops/
+!devops/.env
 
 # Ignore system configuration notes
 .vscode/
