@@ -1,3 +1,5 @@
+name: laptop-ai-backend
+
 services:
   # 🐘 POSTGRESQL: High-efficiency relational database
   postgres-db:

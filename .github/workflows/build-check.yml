@@ -20,7 +20,7 @@ jobs:
         with:
           ref: ${{ inputs.branch || github.ref }}
       - name: Validate docker-compose.yml
-        run: docker compose config
+        run: docker compose -f devops/docker-compose.yml --project-directory . config
 
   backend-build:
     runs-on: ubuntu-latest
