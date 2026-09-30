@@ -11,6 +11,8 @@ openbao/keys.json
 openbao/backups/
 devops/backups/
 passbolt-recovery-kit*.asc*
+# Passbolt HTTPS cert/key from devops/passbolt/make-cert.sh
+devops/passbolt/certs/
 
 # Ignore Python caches and temporary files
 __pycache__/
