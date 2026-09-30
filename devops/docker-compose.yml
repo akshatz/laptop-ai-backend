@@ -101,6 +101,27 @@ services:
     networks:
       - ai-network
 
+  # 🛂 AUTHENTIK EVENTS SHIPPER: OpenTelemetry Collector receiving authentik-server/-worker output from
+  # Docker's fluentd logging driver and sending authentik's audit events (logins, failed logins,
+  # password changes, app authorizations, admin changes) to OpenObserve stream "authentik_events".
+  # Config: devops/otel-collector/authentik-events.yaml. The port is published on 127.0.0.1 only
+  # because the Docker daemon (on the host) is what connects to it.
+  authentik-events-shipper:
+    image: otel/opentelemetry-collector-contrib:0.161.0
+    container_name: laptop-authentik-events-shipper
+    restart: unless-stopped
+    command: ["--config=/etc/otelcol-contrib/authentik-events.yaml"]
+    ports:
+      - "127.0.0.1:24224:24224"
+    environment:
+      - OPENOBSERVE_BASIC_AUTH=${OPENOBSERVE_BASIC_AUTH}
+    volumes:
+      - ./otel-collector/authentik-events.yaml:/etc/otelcol-contrib/authentik-events.yaml:ro
+    depends_on:
+      - openobserve
+    networks:
+      - ai-network
+
   # 🌐 OPEN WEBUI: Main Dashboard Interface for your family
   open-webui:
     # Signup email verification is an Open WebUI event Function
@@ -320,6 +341,15 @@ services:
     container_name: laptop-authentik-server
     restart: unless-stopped
     command: server
+    # Container output goes to authentik-events-shipper (fluentd driver → OpenObserve stream
+    # authentik_events). Async, so authentik starts even if the shipper is down; `docker logs`
+    # still works through Docker's local log cache.
+    logging:
+      driver: fluentd
+      options:
+        fluentd-address: 127.0.0.1:24224
+        fluentd-async: "true"
+        tag: authentik-server
     environment: &authentik-env
       AUTHENTIK_SECRET_KEY: ${AUTHENTIK_SECRET_KEY}
       AUTHENTIK_POSTGRESQL__HOST: postgres-db
@@ -355,6 +385,15 @@ services:
     container_name: laptop-authentik-worker
     restart: unless-stopped
     command: worker
+    # Container output goes to authentik-events-shipper (fluentd driver → OpenObserve stream
+    # authentik_events). Async, so authentik starts even if the shipper is down; `docker logs`
+    # still works through Docker's local log cache.
+    logging:
+      driver: fluentd
+      options:
+        fluentd-address: 127.0.0.1:24224
+        fluentd-async: "true"
+        tag: authentik-worker
     environment: *authentik-env
     volumes:
       - authentik-data:/data
