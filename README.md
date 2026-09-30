@@ -82,6 +82,7 @@ All services share the `ai-network` Docker bridge network, orchestrated via [dev
 | `milvus-init-auth` | One-shot job that rotates Milvus's default root password | (n/a, runs once) |
 | `lgtm` | Grafana + Loki + Tempo + Mimir (metrics/traces/logs) | 3001 (UI), 4317/4318 (OTLP) |
 | `openobserve` | O2 observability platform; receives Open WebUI's logs | 5080 |
+| `searxng` | Self-hosted metasearch engine for Open WebUI's web search | (internal, 8080) |
 | `openwebui-audit-shipper` | OpenTelemetry Collector shipping Open WebUI's audit log (who did what) to O2 | (internal) |
 | `openbao` | Secrets storage (Postgres creds, AppRole broker) | 8200 |
 | `passbolt-db` | MariaDB for Passbolt (dedicated, separate from postgres-db) | (internal) |
@@ -279,6 +280,16 @@ Documents are embedded with Ollama's **`embeddinggemma`** (Google, 768-dim, 2048
 - **Open WebUI** saves the embedding engine/model in its database the first time they're set, and the saved values override the compose file. Change them under **Admin → Settings → Documents**. After changing the model, click **Reindex Knowledge Base Vectors** there, since old vectors don't match the new model.
 - **custom-backend** keeps one Milvus collection per model (`custom_backend_docs_<model>`), so switching `EMBEDDING_MODEL` starts an empty collection. Re-upload documents to chats after a switch.
 - To change the model, update `RAG_EMBEDDING_MODEL` (open-webui) and `EMBEDDING_MODEL` (custom-backend) in compose together, plus the prefixes: the query/document prefixes in compose and `_PREFIXES` in [custom-backend/chat_service.py](custom-backend/chat_service.py). Other models need different prefixes, or none.
+
+## Web search
+
+Open WebUI can search the web through **SearXNG** (`searxng` service, [devops/searxng/settings.yml](devops/searxng/settings.yml)), a self-hosted metasearch engine that queries Google, Bing, Brave, DuckDuckGo and others without API keys or accounts. It's only reachable inside the Docker network.
+
+- In a chat, click **Web Search** (the globe icon under the message box) for questions that need current information. Open WebUI searches, fetches the top 3 result pages (`WEB_SEARCH_RESULT_COUNT`), picks the relevant parts with the embedding model, and answers from them with sources. It works with any model.
+- Searches leave your machine through SearXNG, so each engine sees your IP but not who asked.
+- Enable/engine/URL are saved Open WebUI settings (`web.search.*`), which override the compose values once saved. Change them under **Admin → Settings → Web Search**.
+- `SEARXNG_SECRET` in `.env` signs SearXNG's cookies. Generate it with `openssl rand -hex 32`.
+- Harmless startup errors: SearXNG logs `ahmia`/`torch` "can't register engine" (Tor-only engines) and a missing `limiter.toml` (the limiter is off, since the service is internal).
 
 ## Open WebUI audit log in OpenObserve
 
