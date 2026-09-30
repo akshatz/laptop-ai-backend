@@ -78,6 +78,13 @@ SECRET_ID=$(bao write -f -field=secret_id auth/approle/role/custom-backend/secre
 ADMIN_ROLE_ID=$(bao read -field=role_id auth/approle/role/custom-backend-admin/role-id)
 ADMIN_SECRET_ID=$(bao write -f -field=secret_id auth/approle/role/custom-backend-admin/secret-id)
 
+# Human logins (bao-admin / bao-readonly), only once their passwords are in .env.
+if [ -n "${OPENBAO_ADMIN_PASSWORD:-}" ] && [ -n "${OPENBAO_READONLY_PASSWORD:-}" ]; then
+  ./setup-users.sh
+else
+  echo "Skipping human logins: set OPENBAO_ADMIN_PASSWORD and OPENBAO_READONLY_PASSWORD in .env, then run ./setup-users.sh"
+fi
+
 echo ""
 echo "Root token and unseal key are stored in openbao/keys.json (gitignored) - keep it safe."
 echo ""
