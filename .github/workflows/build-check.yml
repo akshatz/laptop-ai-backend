@@ -12,6 +12,10 @@ on:
         required: true
         default: main
 
+# Both jobs only check out and build; nothing needs write access to the repo.
+permissions:
+  contents: read
+
 jobs:
   compose-config:
     runs-on: ubuntu-latest
