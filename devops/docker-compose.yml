@@ -68,14 +68,11 @@ services:
 
   # 🌐 OPEN WEBUI: Main Dashboard Interface for your family
   open-webui:
-    # Stock Open WebUI plus signup email verification (devops/open-webui/email_verification.py).
-    # The wrapper relies on Open WebUI internals, so the base image is pinned by digest
-    # rather than tracking :main — bump it deliberately and re-test signup verification.
-    build:
-      context: ..
-      dockerfile: devops/open-webui/Dockerfile
-      args:
-        OPEN_WEBUI_IMAGE: ghcr.io/open-webui/open-webui@sha256:1a6399d237dc392a2313e0ca826020b3fd5d22536357840eb63393d18dc8b924  # v0.11.3-era :main, 2026-09-04
+    # Signup email verification is an Open WebUI event Function
+    # (devops/open-webui/functions/signup_email_verification.py, imported via Admin → Functions).
+    # It registers routes on Open WebUI's app, so the image is pinned by digest rather than
+    # tracking :main — bump it deliberately and re-test signup verification.
+    image: ghcr.io/open-webui/open-webui@sha256:1a6399d237dc392a2313e0ca826020b3fd5d22536357840eb63393d18dc8b924  # v0.11.3-era :main, 2026-09-04
     container_name: laptop-open-webui
     restart: unless-stopped
     ports:
@@ -105,10 +102,10 @@ services:
       - ENABLE_TITLE_GENERATION=false
       - ENABLE_TAG_GENERATION=false
       - AIOHTTP_CLIENT_TIMEOUT=60
-      # Signup email verification: new users start pending and are promoted once they
-      # follow the emailed link. Reuses Passbolt's Gmail SMTP relay credentials.
+      # Signup email verification (event Function): new users start pending and are promoted
+      # once they confirm the emailed link. Reuses Passbolt's Gmail SMTP relay credentials,
+      # which the Function falls back to when its SMTP Valves are left empty.
       - DEFAULT_USER_ROLE=pending
-      - EMAIL_VERIFY_BASE_URL=http://localhost:8082
       - SMTP_USER=${PASSBOLT_SMTP_USER}
       - SMTP_PASSWORD=${PASSBOLT_SMTP_PASSWORD}
     volumes:
@@ -120,6 +117,28 @@ services:
         condition: service_started
       milvus-init-auth:
         condition: service_completed_successfully
+    networks:
+      - ai-network
+
+  # 🔒 OPEN WEBUI HTTPS PROXY: serves Open WebUI at https://${OPEN_WEBUI_HOST}:8444 with a cert from
+  # Caddy's local CA. Needed for LAN access: browsers only expose secure-context APIs
+  # (crypto.randomUUID, which Open WebUI's frontend requires) over HTTPS or on localhost.
+  # Trust the CA once per device, e.g. export it with
+  #   docker cp laptop-open-webui-proxy:/data/caddy/pki/authorities/local/root.crt caddy-root.crt
+  # and import it into the OS/browser trust store.
+  open-webui-proxy:
+    image: caddy:2
+    container_name: laptop-open-webui-proxy
+    restart: unless-stopped
+    ports:
+      - "8444:443"
+    environment:
+      - OPEN_WEBUI_HOST=${OPEN_WEBUI_HOST}
+    volumes:
+      - ./caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+    depends_on:
+      - open-webui
     networks:
       - ai-network
 
@@ -290,6 +309,7 @@ volumes:
   milvus-etcd-data: # Milvus metadata store
   milvus-minio-data: # Milvus object storage (segment/index files)
   milvus-data: # Milvus standalone data directory
+  caddy-data: # Caddy's local CA + issued certs for open-webui-proxy (keep stable so devices stay trusting it)
 
 networks:
   ai-network:
