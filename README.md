@@ -35,7 +35,8 @@ flowchart TB
 
     subgraph observability["Observability"]
         lgtm["lgtm (Grafana/Loki/Tempo/Mimir)\n:3001, OTLP 4317/4318"]
-        openobserve["openobserve (O2)\n:5080 (Open WebUI logs)"]
+        openobserve["openobserve (O2)\n:5080 (Open WebUI logs + audit)"]
+        auditshipper["openwebui-audit-shipper\n(OTel Collector)"]
     end
 
     browser --> webui
@@ -48,6 +49,8 @@ flowchart TB
     webui --> postgres
     webui -. OTEL traces/metrics .-> lgtm
     webui -. OTEL logs .-> openobserve
+    webui -. audit.log .-> auditshipper
+    auditshipper -. OTLP .-> openobserve
 
     backend --> ollama
     backend --> milvus
@@ -78,6 +81,7 @@ All services share the `ai-network` Docker bridge network, orchestrated via [dev
 | `milvus-init-auth` | One-shot job that rotates Milvus's default root password | (n/a, runs once) |
 | `lgtm` | Grafana + Loki + Tempo + Mimir (metrics/traces/logs) | 3001 (UI), 4317/4318 (OTLP) |
 | `openobserve` | O2 observability platform; receives Open WebUI's logs | 5080 |
+| `openwebui-audit-shipper` | OpenTelemetry Collector shipping Open WebUI's audit log (who did what) to O2 | (internal) |
 | `openbao` | Secrets storage (Postgres creds, AppRole broker) | 8200 |
 | `passbolt` | Password manager (stores OpenBao/AppRole tokens) | 8443 → 443 |
 | `custom-backend` | FastAPI app: auth, chats, RAG document ingestion | 8011 → 8000 |
@@ -111,7 +115,7 @@ cp .env.example .env
 | `PASSBOLT_SMTP_USER` / `PASSBOLT_SMTP_PASSWORD` / `PASSBOLT_SMTP_FROM` | `passbolt`, `open-webui` | Gmail SMTP relay Passbolt uses to send registration/recovery emails — see [PASSBOLT.md](PASSBOLT.md). The user/password are also passed to `open-webui` as `SMTP_USER`/`SMTP_PASSWORD` for signup verification emails |
 | `MILVUS_ROOT_PASSWORD` | `milvus-init-auth`, `open-webui` | Milvus root password — rotated in from the `root`/`Milvus` default on first boot, then used by Open WebUI to authenticate |
 | `OPENOBSERVE_ROOT_USER_EMAIL` / `OPENOBSERVE_ROOT_USER_PASSWORD` | `openobserve`, `open-webui` | Root login for the OpenObserve UI/API, created on O2's first start (password needs lower, upper, digit and special characters) |
-| `OPENOBSERVE_BASIC_AUTH` | `open-webui` | base64 of `email:password` above, which `open-webui` uses to send its logs to O2's `openwebui_backend` stream. Regenerate when either changes: `printf '%s:%s' "$OPENOBSERVE_ROOT_USER_EMAIL" "$OPENOBSERVE_ROOT_USER_PASSWORD" \| base64 -w0` |
+| `OPENOBSERVE_BASIC_AUTH` | `open-webui`, `openwebui-audit-shipper` | base64 of `email:password` above, used to send Open WebUI's logs to O2's `openwebui_backend` stream and its audit log to `openwebui_audit`. Regenerate when either changes: `printf '%s:%s' "$OPENOBSERVE_ROOT_USER_EMAIL" "$OPENOBSERVE_ROOT_USER_PASSWORD" \| base64 -w0` |
 | `OPEN_WEBUI_HOST` | `open-webui-proxy` | LAN IP or hostname other devices use to reach Open WebUI over HTTPS on port 8444 |
 | `OLLAMA_BASE_URL` / `DEFAULT_CHAT_MODEL` | `custom-backend` | Optional — Ollama endpoint (default `http://ollama:11434`) and chat model (default `llama3.2`, must already be pulled) for the RAG chat endpoints |
 
@@ -215,6 +219,16 @@ uvicorn main:app --reload --port 8001
 export $(grep -v '^#' .env | xargs)
 cd database && alembic upgrade head
 ```
+
+## Open WebUI audit log in OpenObserve
+
+Open WebUI's regular logs (stream `openwebui_backend`) are mostly web-server request lines with the client IP but **no user**. To see who did what, Open WebUI's audit log is on (`AUDIT_LOG_LEVEL=METADATA` in compose) and shipped to O2 stream **`openwebui_audit`** by `openwebui-audit-shipper`, an OpenTelemetry Collector ([devops/otel-collector/openwebui-audit.yaml](devops/otel-collector/openwebui-audit.yaml)). Open WebUI only writes audit entries to `data/audit.log`, never over OTel, so the collector tails that file from the `open-webui-data` volume (read-only).
+
+- Each entry's message reads `<email> <METHOD> <URL> <status>`, e.g. `alice@example.com POST http://localhost:8082/api/v1/users/update 200`, and has searchable fields `user_email`, `user_name`, `user_role`, `user_id`, `verb`, `request_uri`, `response_status_code`, `source_ip` and `user_agent`. Example O2 query: `SELECT * FROM "openwebui_audit" WHERE user_email = 'alice@example.com'`.
+- `METADATA` records no request or response bodies. Don't raise it to `REQUEST`: that would log sign-in passwords and chat content.
+- Only POST/PUT/PATCH/DELETE requests are audited, and `/chats`, `/chat` and `/folders` are skipped (`AUDIT_EXCLUDED_PATHS`), so chatting itself isn't logged. Set `ENABLE_AUDIT_GET_REQUESTS=true` to include reads, at the cost of much more volume.
+- Requests without a signed-in user, such as a password sign-in attempt, show `-` in place of the email.
+- The collector keeps its read position in the `otelcol-audit-storage` volume, so restarts don't re-send entries. On its first start it ships whatever `audit.log` already holds. Open WebUI rotates the file at 10 MB (zipped copies stay in `data/`).
 
 ## Known gaps / TODO
 
