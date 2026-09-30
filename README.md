@@ -194,7 +194,9 @@ New users join through a one-time invite link ([authentik/blueprints/invitations
 4. They open the link, choose a username, name and password (the [password rules](#password-rules) apply), and scan a QR code with Google Authenticator. That creates and signs in their authentik account.
 5. They click **Continue with authentik** on Open WebUI. People with an existing Open WebUI account (same email) go straight in. New people get a **pending** account, which you approve under **Admin → Users**.
 
-Links without a valid invitation are refused ("Invalid invite/invite not found"). Delete an unused invitation to revoke it.
+Links without a valid invitation are refused ("Invalid invite/invite not found"). Delete an unused invitation to revoke it. Don't open a link yourself to check it: opening it uses up a single-use invitation.
+
+To see how far each person has got, run `devops/open-webui/sync-user-status.sh`. It records each person's stage (not invited → invited → authentik account → MFA set up → linked to Open WebUI) and when they reached it in the `fn_user_sso_status` table (see [Function tables](#function-tables)), prints that table, and shows the stage as each Open WebUI user's profile status (e.g. "📨 SSO: invited"). It only replaces a profile status that's empty or one it wrote itself. Profile statuses are visible to other users and editable by their owner; the table is admin-only. It's a snapshot, so re-run it after inviting or onboarding someone.
 
 ### Password rules
 
@@ -250,12 +252,13 @@ A third event Function, [devops/open-webui/functions/password_expiry.py](devops/
 
 ### Function tables
 
-The Functions keep their state in Postgres, in Open WebUI's `open_webui` database, so it's backed up with the rest of Open WebUI's data:
+The Functions (and the SSO status script) keep their state in Postgres, in Open WebUI's `open_webui` database, so it's backed up with the rest of Open WebUI's data:
 
 | Table | Used by | Holds |
 |---|---|---|
 | `fn_email_verified` | Signup Email Verification | Users verified once (`user_id`, `verified_at`) |
 | `fn_password_age` | Password Expiry | When each password was last set, and the last reminder (`user_id`, `changed_at`, `last_warned_at`) |
+| `fn_user_sso_status` | `devops/open-webui/sync-user-status.sh` (not a Function) | Each person's SSO onboarding stage and when they reached each step, keyed by lowercased email (see [Inviting users](#inviting-users)) |
 
 They're created by a separate Alembic setup, [devops/open-webui/migrations/](devops/open-webui/migrations/), which tracks its history in `fn_alembic_version` so it never touches Open WebUI's own migrations in the same database. The one-shot `open-webui-fn-migrate` service applies it on every `docker compose up` (a no-op once current), and `open-webui` waits for it. Its first revision also imports rows from the Functions' earlier SQLite files (`email_verification.db` / `password_expiry.db` on the `open-webui-data` volume), if present. Once that's done, those files are unused and can be deleted.
 
