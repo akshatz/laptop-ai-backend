@@ -36,7 +36,8 @@ flowchart TB
 
     subgraph observability["Observability"]
         lgtm["lgtm (Grafana/Loki/Tempo/Mimir)\n:3001, OTLP 4317/4318"]
-        openobserve["openobserve (O2)\n:5080 (Open WebUI logs)"]
+        openobserve["openobserve (O2)\n:5080 (Open WebUI logs + audit)"]
+        auditshipper["openwebui-audit-shipper\n(OTel Collector)"]
     end
 
     browser --> webui
@@ -49,6 +50,8 @@ flowchart TB
     webui --> postgres
     webui -. OTEL traces/metrics .-> lgtm
     webui -. OTEL logs .-> openobserve
+    webui -. audit.log .-> auditshipper
+    auditshipper -. OTLP .-> openobserve
 
     backend --> ollama
     backend --> milvus
@@ -79,6 +82,7 @@ All services share the `ai-network` Docker bridge network, orchestrated via [dev
 | `milvus-init-auth` | One-shot job that rotates Milvus's default root password | (n/a, runs once) |
 | `lgtm` | Grafana + Loki + Tempo + Mimir (metrics/traces/logs) | 3001 (UI), 4317/4318 (OTLP) |
 | `openobserve` | O2 observability platform; receives Open WebUI's logs | 5080 |
+| `openwebui-audit-shipper` | OpenTelemetry Collector shipping Open WebUI's audit log (who did what) to O2 | (internal) |
 | `openbao` | Secrets storage (Postgres creds, AppRole broker) | 8200 |
 | `passbolt-db` | MariaDB for Passbolt (dedicated, separate from postgres-db) | (internal) |
 | `passbolt` | Password manager (stores OpenBao/AppRole tokens) | 8443 → 443 |
@@ -114,7 +118,7 @@ cp .env.example .env
 | `PASSBOLT_DB_PASSWORD` | `passbolt-db`, `passbolt` | Password for the dedicated MariaDB instance Passbolt uses (its officially supported database) |
 | `MILVUS_ROOT_PASSWORD` | `milvus-init-auth`, `open-webui` | Milvus root password — rotated in from the `root`/`Milvus` default on first boot, then used by Open WebUI to authenticate |
 | `OPENOBSERVE_ROOT_USER_EMAIL` / `OPENOBSERVE_ROOT_USER_PASSWORD` | `openobserve`, `open-webui` | Root login for the OpenObserve UI/API, created on O2's first start (password needs lower, upper, digit and special characters) |
-| `OPENOBSERVE_BASIC_AUTH` | `open-webui` | base64 of `email:password` above, which `open-webui` uses to send its logs to O2's `openwebui_backend` stream. Regenerate when either changes: `printf '%s:%s' "$OPENOBSERVE_ROOT_USER_EMAIL" "$OPENOBSERVE_ROOT_USER_PASSWORD" \| base64 -w0` |
+| `OPENOBSERVE_BASIC_AUTH` | `open-webui`, `openwebui-audit-shipper` | base64 of `email:password` above, used to send Open WebUI's logs to O2's `openwebui_backend` stream and its audit log to `openwebui_audit`. Regenerate when either changes: `printf '%s:%s' "$OPENOBSERVE_ROOT_USER_EMAIL" "$OPENOBSERVE_ROOT_USER_PASSWORD" \| base64 -w0` |
 | `OPEN_WEBUI_HOST` | `open-webui-proxy` | LAN IP or hostname other devices use to reach Open WebUI over HTTPS on port 8444 |
 | `OLLAMA_BASE_URL` / `DEFAULT_CHAT_MODEL` | `custom-backend` | Optional — Ollama endpoint (default `http://ollama:11434`) and chat model (default `llama3.2`, must already be pulled) for the RAG chat endpoints |
 
@@ -137,6 +141,41 @@ docker compose -f devops/docker-compose.yml up -d   # start everything else
 - Postgres: `localhost:5433` (credentials from `.env`)
 
 Note: OpenBao starts **sealed** after every container restart or host reboot — run `cd openbao && ./auto-unseal.sh` before `custom-backend` will be able to start.
+
+## Open WebUI SSO + MFA (authentik)
+
+Open WebUI sign-in goes through [authentik](https://goauthentik.io) (`authentik-server` + `authentik-worker`, using a separate `authentik` database in `postgres-db`), which requires a TOTP code from Google Authenticator or any other TOTP app on every login. Open WebUI's own email/password sign-in is turned off.
+
+- authentik is served by `open-webui-proxy` at `https://<OPEN_WEBUI_HOST>:9443` (same Caddy CA as Open WebUI on 8444). Open WebUI shows a **Continue with authentik** button.
+- Its configuration is the blueprint [authentik/blueprints/open-webui-sso.yaml](authentik/blueprints/open-webui-sso.yaml), applied by the worker on start and whenever the file changes. It makes MFA mandatory in authentik's default login flow (users without a TOTP device get a QR code to set one up before their first login completes; TOTP and static recovery codes only) and registers the Open WebUI OIDC client.
+- Open WebUI calls authentik server-side at the same `https://<OPEN_WEBUI_HOST>:9443` URL browsers use, so issuer and endpoint URLs match. It trusts Caddy's CA through `caddy-ca-export`, a one-shot service that copies only Caddy's public root cert (never the CA key) into the `caddy-ca-public` volume.
+- There is no self-signup in authentik: the admin creates each user. The first SSO login links an existing Open WebUI account with the same email (`OAUTH_MERGE_ACCOUNTS_BY_EMAIL`). A new email gets a new Open WebUI account in the default role (`pending`), which the admin approves under **Admin → Users**. The signup verification email isn't sent for SSO signups.
+
+### First-time setup
+
+1. Add the authentik variables to `.env` (see `.env.example`), e.g.
+   ```bash
+   echo "AUTHENTIK_SECRET_KEY=$(openssl rand -base64 60 | tr -d '\n')" >> .env
+   echo "OPEN_WEBUI_OIDC_CLIENT_ID=$(openssl rand -hex 20)" >> .env
+   echo "OPEN_WEBUI_OIDC_CLIENT_SECRET=$(openssl rand -base64 60 | tr -d '\n')" >> .env
+   ```
+   plus `AUTHENTIK_BOOTSTRAP_EMAIL` / `AUTHENTIK_BOOTSTRAP_PASSWORD`. Use your Open WebUI admin email as `AUTHENTIK_BOOTSTRAP_EMAIL`: then `akadmin` signs in to Open WebUI as the existing admin.
+2. Let containers reach the host's published port 9443. A host firewall (ufw by default denies incoming) blocks container → host traffic, and Open WebUI's server-side OIDC calls go that way:
+   ```bash
+   sudo ufw allow from 172.16.0.0/12 to any port 9443 proto tcp comment 'open-webui -> authentik'
+   ```
+3. `docker compose -f devops/docker-compose.yml up -d`. From here, Open WebUI password sign-in is rejected (`ENABLE_PASSWORD_AUTH=false`).
+4. Open `https://<OPEN_WEBUI_HOST>:9443`, sign in as `akadmin`, and scan the QR code with Google Authenticator when asked.
+5. In authentik, create a user for each Open WebUI user under **Directory → Users** with the **same email**, and set their password. Each user sets up TOTP on their first login.
+6. Turn off Open WebUI's login form. `ENABLE_LOGIN_FORM=false` in compose is ignored because Open WebUI has already saved `ui.enable_login_form` in its database, and while that form is on, `/api/v1/auths/signup` still accepts password signups. Delete the saved value so the compose setting applies, then restart:
+   ```bash
+   docker exec laptop-postgres psql -U "$POSTGRES_USER" -d open_webui -c "DELETE FROM config WHERE key = 'ui.enable_login_form'"
+   docker compose -f devops/docker-compose.yml restart open-webui
+   ```
+
+**Rollback:** set `ENABLE_PASSWORD_AUTH=true` and `ENABLE_LOGIN_FORM=true` on `open-webui` and run `up -d` again. If authentik is down, nobody can sign in to Open WebUI, and the rollback is how you get back in.
+
+**Lost authenticator:** in authentik, open the user under **Directory → Users → MFA Authenticators** and delete the TOTP device. The user enrolls a new one on their next login.
 
 ## Open WebUI signup verification
 
@@ -218,6 +257,16 @@ uvicorn main:app --reload --port 8001
 export $(grep -v '^#' .env | xargs)
 cd database && alembic upgrade head
 ```
+
+## Open WebUI audit log in OpenObserve
+
+Open WebUI's regular logs (stream `openwebui_backend`) are mostly web-server request lines with the client IP but **no user**. To see who did what, Open WebUI's audit log is on (`AUDIT_LOG_LEVEL=METADATA` in compose) and shipped to O2 stream **`openwebui_audit`** by `openwebui-audit-shipper`, an OpenTelemetry Collector ([devops/otel-collector/openwebui-audit.yaml](devops/otel-collector/openwebui-audit.yaml)). Open WebUI only writes audit entries to `data/audit.log`, never over OTel, so the collector tails that file from the `open-webui-data` volume (read-only).
+
+- Each entry's message reads `<email> <METHOD> <URL> <status>`, e.g. `alice@example.com POST http://localhost:8082/api/v1/users/update 200`, and has searchable fields `user_email`, `user_name`, `user_role`, `user_id`, `verb`, `request_uri`, `response_status_code`, `source_ip` and `user_agent`. Example O2 query: `SELECT * FROM "openwebui_audit" WHERE user_email = 'alice@example.com'`.
+- `METADATA` records no request or response bodies. Don't raise it to `REQUEST`: that would log sign-in passwords and chat content.
+- Only POST/PUT/PATCH/DELETE requests are audited, and `/chats`, `/chat` and `/folders` are skipped (`AUDIT_EXCLUDED_PATHS`), so chatting itself isn't logged. Set `ENABLE_AUDIT_GET_REQUESTS=true` to include reads, at the cost of much more volume.
+- Requests without a signed-in user, such as a password sign-in attempt, show `-` in place of the email.
+- The collector keeps its read position in the `otelcol-audit-storage` volume, so restarts don't re-send entries. On its first start it ships whatever `audit.log` already holds. Open WebUI rotates the file at 10 MB (zipped copies stay in `data/`).
 
 ## Known gaps / TODO
 

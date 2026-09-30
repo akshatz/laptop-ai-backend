@@ -11,3 +11,10 @@ https://{$OPEN_WEBUI_HOST}, https://localhost {
 	tls internal
 	reverse_proxy open-webui:8080
 }
+
+# authentik (SSO + TOTP for Open WebUI). Same host, own port, so its OIDC issuer and login pages
+# live at https://{$OPEN_WEBUI_HOST}:9443 for browsers and for Open WebUI's server-side calls alike.
+https://{$OPEN_WEBUI_HOST}:9443, https://localhost:9443 {
+	tls internal
+	reverse_proxy authentik-server:9000
+}
