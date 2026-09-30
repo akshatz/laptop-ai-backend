@@ -98,6 +98,13 @@ services:
       - OTEL_EXPORTER_OTLP_ENDPOINT=http://lgtm:4317 # Points directly to your LGTM container
       - OTEL_EXPORTER_OTLP_INSECURE=true
       - OTEL_METRICS_EXPORT_INTERVAL_MILLIS=10000
+      # Logs go to OpenObserve instead (OTLP/HTTP, org "default", stream "openwebui_backend" — O2
+      # doesn't allow hyphens in stream names); traces and metrics stay on lgtm.
+      # Auth and stream both go in OTEL_EXPORTER_OTLP_LOGS_HEADERS: the OTel exporter only reads it
+      # when Open WebUI passes no headers itself, so don't also set OTEL_LOGS_BASIC_AUTH_*.
+      - OTEL_LOGS_OTLP_SPAN_EXPORTER=http
+      - OTEL_LOGS_EXPORTER_OTLP_ENDPOINT=http://openobserve:5080/api/default/v1/logs
+      - OTEL_EXPORTER_OTLP_LOGS_HEADERS=Authorization=Basic%20${OPENOBSERVE_BASIC_AUTH},stream-name=openwebui_backend
       # Laptop Performance tweaks
       - ENABLE_TITLE_GENERATION=false
       - ENABLE_TAG_GENERATION=false
