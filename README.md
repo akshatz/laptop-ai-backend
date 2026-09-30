@@ -152,6 +152,14 @@ How it behaves:
 - The Function is stored in Open WebUI's database, not read from the repo — re-import it after editing the file.
 - The `open-webui` image is pinned by digest because the Function uses Open WebUI internals. When bumping it, re-test a signup end to end.
 
+### Password reset
+
+Open WebUI has no "forgot password" of its own. A second, independent event Function, [devops/open-webui/functions/password_reset.py](devops/open-webui/functions/password_reset.py), adds it — import and enable it the same way, set its `base_url` Valve, and restart once.
+
+- Users go to `/api/v1/auths/forgot-password` (Open WebUI's login page can't be customised to link it, so share or bookmark the URL), enter their email, and get a reset link that expires in 30 minutes and works once — any password change invalidates older links. Pending and deactivated accounts can't reset.
+- Whenever a password changes (by the user, an admin, or a reset), the user gets a notice email with the forgot-password link, so an unexpected change doesn't go unnoticed. Turn off with the `notify_on_password_change` Valve.
+- A reset only logs out the user's other sessions if Open WebUI has Redis configured; this stack doesn't, so existing sessions stay valid until they expire (`JWT_EXPIRES_IN`, default 4 weeks).
+
 ### Function tables
 
 The Functions keep their state in Postgres, in Open WebUI's `open_webui` database, so it's backed up with the rest of Open WebUI's data:
