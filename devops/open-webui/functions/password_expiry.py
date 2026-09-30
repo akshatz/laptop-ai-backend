@@ -1,7 +1,7 @@
 """
 title: Password Expiry
 author: akshatz
-version: 1.1.0
+version: 1.2.0
 required_open_webui_version: 0.11.3
 description: Blocks password sign-in once a password is older than max_age_days (default 180) and emails reminders before it expires.
 
@@ -17,8 +17,12 @@ How it works:
   `fn_password_age` table in Open WebUI's database (created by the repo's separate Function
   migrations, devops/open-webui/migrations/, run by the `open-webui-fn-migrate` compose service):
   `auth.signup` and `auth.password_changed` (self-service change, admin change, or a reset through the
-  Password Reset Function) set it to now. Accounts with no record yet (e.g. existing users when this is
-  first enabled) start their clock the first time they sign in, so nobody is locked out on day one.
+  Password Reset Function) set it to now. Accounts with no record yet (existing users when this is
+  first enabled) start their clock from their account creation date (`start_from_account_creation`) —
+  Open WebUI doesn't record password changes, so creation is the earliest the password can date from —
+  but always get at least `grace_days_for_existing` days (with reminders) from when the Function first
+  sees them, so enabling it never locks anyone out without warning. With `start_from_account_creation`
+  off, their clock starts at that first sighting instead.
 - Functions can't veto a login, so on `system.startup.completed` it wraps the ASGI app of Open WebUI's
   own POST /api/v1/auths/signin route. For an expired account, a *correct* password gets a 403 telling
   the user to reset it; a wrong password falls through to Open WebUI's normal error, so this never
@@ -60,6 +64,16 @@ class Event:
     class Valves(BaseModel):
         max_age_days: int = Field(default=180, description="Days after which a password must be changed.")
         warn_days: int = Field(default=14, description="Email a reminder at sign-in this many days before expiry.")
+        start_from_account_creation: bool = Field(
+            default=True,
+            description="For accounts with no record yet, count password age from account creation "
+            "(off: from when this Function first sees them).",
+        )
+        grace_days_for_existing: int = Field(
+            default=14,
+            description="Accounts with no record yet get at least this many days before expiring, so "
+            "old accounts aren't locked out the moment this is enabled.",
+        )
         exempt_admins: bool = Field(
             default=False, description="Skip expiry for admins (avoids locking out the only admin)."
         )
@@ -88,16 +102,26 @@ class Event:
             )
             await session.commit()
 
-    async def _changed_at(self, user_id: str) -> int:
-        """When the password was last set; starts the clock now for accounts with no record."""
+    def _baseline(self, user) -> int:
+        """Where the clock starts for an account with no record yet (see the module docstring)."""
+        now = int(time.time())
+        created_at = getattr(user, "created_at", None)
+        if not self.valves.start_from_account_creation or not created_at:
+            return now
+        # Latest start that still leaves grace_days_for_existing days before expiry.
+        latest = now - max(0, self.valves.max_age_days - self.valves.grace_days_for_existing) * DAY
+        return min(now, max(int(created_at), latest))
+
+    async def _changed_at(self, user) -> int:
+        """When the password was last set; records a baseline for accounts with no record yet."""
         async with get_async_db_context() as session:
             await session.execute(
                 text("INSERT INTO fn_password_age (user_id, changed_at) VALUES (:u, :t) ON CONFLICT (user_id) DO NOTHING"),
-                {"u": user_id, "t": int(time.time())},
+                {"u": user.id, "t": self._baseline(user)},
             )
             await session.commit()
             result = await session.execute(
-                text("SELECT changed_at FROM fn_password_age WHERE user_id = :u"), {"u": user_id}
+                text("SELECT changed_at FROM fn_password_age WHERE user_id = :u"), {"u": user.id}
             )
             return result.scalar_one()
 
@@ -116,7 +140,7 @@ class Event:
         """Seconds until the password expires, or None if this user is exempt."""
         if self.valves.exempt_admins and user.role == "admin":
             return None
-        changed_at = await self._changed_at(user.id)
+        changed_at = await self._changed_at(user)
         return changed_at + self.valves.max_age_days * DAY - time.time()
 
     # ---- email ------------------------------------------------------------------------------
