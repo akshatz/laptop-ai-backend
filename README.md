@@ -271,6 +271,15 @@ export $(grep -v '^#' .env | xargs)
 cd database && alembic upgrade head
 ```
 
+## RAG embeddings
+
+Documents are embedded with Ollama's **`embeddinggemma`** (Google, 768-dim, 2048-token context) in both Open WebUI and `custom-backend`. It replaced `nomic-embed-text` for better retrieval: in a quick test it separated the right chunk from the runner-up about 3× more clearly. Both apps send embeddinggemma's task prefixes (`task: search result | query: ` on questions, `title: none | text: ` on documents), which the model is trained with.
+
+- Pull the model before first use: `docker exec laptop-ollama ollama pull embeddinggemma`.
+- **Open WebUI** saves the embedding engine/model in its database the first time they're set, and the saved values override the compose file. Change them under **Admin → Settings → Documents**. After changing the model, click **Reindex Knowledge Base Vectors** there, since old vectors don't match the new model.
+- **custom-backend** keeps one Milvus collection per model (`custom_backend_docs_<model>`), so switching `EMBEDDING_MODEL` starts an empty collection. Re-upload documents to chats after a switch.
+- To change the model, update `RAG_EMBEDDING_MODEL` (open-webui) and `EMBEDDING_MODEL` (custom-backend) in compose together, plus the prefixes: the query/document prefixes in compose and `_PREFIXES` in [custom-backend/chat_service.py](custom-backend/chat_service.py). Other models need different prefixes, or none.
+
 ## Open WebUI audit log in OpenObserve
 
 Open WebUI's regular logs (stream `openwebui_backend`) are mostly web-server request lines with the client IP but **no user**. To see who did what, Open WebUI's audit log is on (`AUDIT_LOG_LEVEL=METADATA` in compose) and shipped to O2 stream **`openwebui_audit`** by `openwebui-audit-shipper`, an OpenTelemetry Collector ([devops/otel-collector/openwebui-audit.yaml](devops/otel-collector/openwebui-audit.yaml)). Open WebUI only writes audit entries to `data/audit.log`, never over OTel, so the collector tails that file from the `open-webui-data` volume (read-only).
