@@ -1,0 +1,51 @@
+# OpenTelemetry Collector config for the `openwebui-audit-shipper` service: tails Open WebUI's
+# audit log (AUDIT_LOG_LEVEL on open-webui, one JSON object per line) from the open-webui-data
+# volume and sends it to OpenObserve stream `openwebui_audit`. Open WebUI itself never exports
+# audit entries over OTel — they only go to this file.
+extensions:
+  # Remembers how far each file has been read, so restarts don't re-send old entries.
+  file_storage:
+    directory: /var/lib/otelcol/file_storage
+
+receivers:
+  filelog/openwebui_audit:
+    # Only the live file: Open WebUI rotates it to audit.<date>.log.zip at 10 MB
+    # (AUDIT_LOG_FILE_ROTATION_SIZE), and the collector picks up the new audit.log by fingerprint.
+    include: [/open-webui-data/audit.log]
+    start_at: beginning
+    storage: file_storage
+    operators:
+      # Fields land as attributes (O2 flattens nested ones, e.g. user_email, user_role).
+      - type: json_parser
+        timestamp:
+          parse_from: attributes.timestamp
+          layout_type: epoch
+          layout: s
+      # Readable one-line body for O2's log view, e.g. "alice@example.com POST /api/v1/... 200".
+      # Requests without a signed-in user (e.g. sign-in itself) show "-".
+      - type: add
+        field: body
+        value: EXPR((attributes.user?.email ?? "-") + " " + attributes.verb + " " + attributes.request_uri + " " + string(attributes.response_status_code))
+
+processors:
+  resource:
+    attributes:
+      - key: service.name
+        value: open-webui
+        action: upsert
+  batch: {}
+
+exporters:
+  otlphttp/openobserve:
+    logs_endpoint: http://openobserve:5080/api/default/v1/logs
+    headers:
+      Authorization: Basic ${env:OPENOBSERVE_BASIC_AUTH}
+      stream-name: openwebui_audit
+
+service:
+  extensions: [file_storage]
+  pipelines:
+    logs:
+      receivers: [filelog/openwebui_audit]
+      processors: [resource, batch]
+      exporters: [otlphttp/openobserve]

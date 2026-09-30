@@ -66,6 +66,28 @@ services:
     networks:
       - ai-network
 
+  # 🧾 OPEN WEBUI AUDIT SHIPPER: OpenTelemetry Collector tailing Open WebUI's audit log (read-only
+  # mount of its data volume) into OpenObserve stream "openwebui_audit". Config:
+  # devops/otel-collector/openwebui-audit.yaml. Read offsets persist in otelcol-audit-storage.
+  openwebui-audit-shipper:
+    image: otel/opentelemetry-collector-contrib:0.161.0
+    container_name: laptop-openwebui-audit-shipper
+    restart: unless-stopped
+    # Root only so it can write read offsets to the fresh named volume (the image's default user
+    # can't); everything else it touches is mounted read-only.
+    user: "0:0"
+    command: ["--config=/etc/otelcol-contrib/openwebui-audit.yaml"]
+    environment:
+      - OPENOBSERVE_BASIC_AUTH=${OPENOBSERVE_BASIC_AUTH}
+    volumes:
+      - ./otel-collector/openwebui-audit.yaml:/etc/otelcol-contrib/openwebui-audit.yaml:ro
+      - open-webui-data:/open-webui-data:ro
+      - otelcol-audit-storage:/var/lib/otelcol/file_storage
+    depends_on:
+      - openobserve
+    networks:
+      - ai-network
+
   # 🌐 OPEN WEBUI: Main Dashboard Interface for your family
   open-webui:
     # Signup email verification is an Open WebUI event Function
@@ -105,6 +127,12 @@ services:
       - OTEL_LOGS_OTLP_SPAN_EXPORTER=http
       - OTEL_LOGS_EXPORTER_OTLP_ENDPOINT=http://openobserve:5080/api/default/v1/logs
       - OTEL_EXPORTER_OTLP_LOGS_HEADERS=Authorization=Basic%20${OPENOBSERVE_BASIC_AUTH},stream-name=openwebui_backend
+      # Audit log: who did what (user id/name/email/role, method, path, status, IP, user agent) to
+      # data/audit.log, shipped to O2 stream "openwebui_audit" by openwebui-audit-shipper — the
+      # logs above carry no user. METADATA records no request/response bodies; don't raise it to
+      # REQUEST, which would log sign-in passwords. By default only POST/PUT/PATCH/DELETE are
+      # audited, excluding /chats, /chat and /folders (AUDIT_EXCLUDED_PATHS).
+      - AUDIT_LOG_LEVEL=METADATA
       # Laptop Performance tweaks
       - ENABLE_TITLE_GENERATION=false
       - ENABLE_TAG_GENERATION=false
@@ -461,6 +489,7 @@ volumes:
   open-webui-data:
   lgtm-data: # Preserves your Grafana dashboards, metrics, and trace histories safely
   openobserve-data: # Persists OpenObserve's logs/metrics/traces storage
+  otelcol-audit-storage: # openwebui-audit-shipper's read offsets into Open WebUI's audit log
   openbao-data: # Persists sealed/unsealed OpenBao secret data across restarts
   passbolt-gpg: # Passbolt server GPG keypair, generated on first run
   passbolt-jwt: # Passbolt JWT signing keys, generated on first run
