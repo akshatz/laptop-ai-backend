@@ -1,0 +1,54 @@
+# OpenTelemetry Collector config for the `authentik-events-shipper` service: receives
+# authentik-server/-worker container output from Docker's fluentd logging driver and sends
+# authentik's audit events (logins, failed logins, password changes, app authorizations, admin
+# changes — the JSON lines with "event": "Created Event") to OpenObserve stream `authentik_events`.
+# Everything else authentik prints (per-request access logs, debug) is dropped here.
+receivers:
+  fluentforward:
+    endpoint: 0.0.0.0:24224
+
+processors:
+  filter/authentik_events:
+    error_mode: ignore
+    logs:
+      log_record:
+        # Drop every line that isn't an authentik event.
+        # (quoted: the ": " inside would otherwise make YAML read this line as a map)
+        - 'not IsMatch(body, "\"event\": \"Created Event\"")'
+
+  transform/authentik_events:
+    error_mode: ignore
+    log_statements:
+      - context: log
+        statements:
+          # Event fields become attributes (O2 flattens nested ones, e.g. user_username, user_email).
+          - merge_maps(attributes, ParseJSON(body), "upsert")
+          # authentik logs naive UTC timestamps.
+          - set(time, Time(attributes["timestamp"], "%Y-%m-%dT%H:%M:%S.%f", "UTC")) where attributes["timestamp"] != nil
+          # context holds the whole HTTP request (query args, headers) — keep it, but as one JSON
+          # string rather than hundreds of flattened O2 columns.
+          - set(attributes["context"], String(attributes["context"])) where attributes["context"] != nil
+          - delete_matching_keys(attributes, "^(event|logger|pid|schema_name|domain_url|level|timestamp|source|container_id|fluent\\.tag)$")
+          # Readable one-line body for O2's log view, e.g. "akadmin login_failed 192.168.29.119".
+          - set(body, Concat([attributes["user"]["username"], attributes["action"], attributes["client_ip"]], " "))
+
+  resource:
+    attributes:
+      - key: service.name
+        value: authentik
+        action: upsert
+  batch: {}
+
+exporters:
+  otlphttp/openobserve:
+    logs_endpoint: http://openobserve:5080/api/default/v1/logs
+    headers:
+      Authorization: Basic ${env:OPENOBSERVE_BASIC_AUTH}
+      stream-name: authentik_events
+
+service:
+  pipelines:
+    logs:
+      receivers: [fluentforward]
+      processors: [filter/authentik_events, transform/authentik_events, resource, batch]
+      exporters: [otlphttp/openobserve]

@@ -83,6 +83,7 @@ All services share the `ai-network` Docker bridge network, orchestrated via [dev
 | `lgtm` | Grafana + Loki + Tempo + Mimir (metrics/traces/logs) | 3001 (UI), 4317/4318 (OTLP) |
 | `openobserve` | O2 observability platform; receives Open WebUI's logs | 5080 |
 | `searxng` | Self-hosted metasearch engine for Open WebUI's web search | (internal, 8080) |
+| `authentik-events-shipper` | OpenTelemetry Collector shipping authentik's audit events to O2 | 127.0.0.1:24224 (fluentd, from Docker) |
 | `openwebui-audit-shipper` | OpenTelemetry Collector shipping Open WebUI's audit log (who did what) to O2 | (internal) |
 | `openbao` | Secrets storage (Postgres creds, AppRole broker) | 8200 |
 | `passbolt-db` | MariaDB for Passbolt (dedicated, separate from postgres-db) | (internal) |
@@ -300,6 +301,15 @@ Open WebUI's regular logs (stream `openwebui_backend`) are mostly web-server req
 - Only POST/PUT/PATCH/DELETE requests are audited, and `/chats`, `/chat` and `/folders` are skipped (`AUDIT_EXCLUDED_PATHS`), so chatting itself isn't logged. Set `ENABLE_AUDIT_GET_REQUESTS=true` to include reads, at the cost of much more volume.
 - Requests without a signed-in user, such as a password sign-in attempt, show `-` in place of the email.
 - The collector keeps its read position in the `otelcol-audit-storage` volume, so restarts don't re-send entries. On its first start it ships whatever `audit.log` already holds. Open WebUI rotates the file at 10 MB (zipped copies stay in `data/`).
+
+## authentik events in OpenObserve
+
+authentik's audit events go to O2 stream **`authentik_events`**, next to Open WebUI's `openwebui_audit`. Covered: logins, failed logins, logouts, password changes, MFA setup, Open WebUI authorizations and admin changes.
+
+- How: `authentik-server`/`authentik-worker` use Docker's `fluentd` logging driver to send their output to `authentik-events-shipper`, an OpenTelemetry Collector ([devops/otel-collector/authentik-events.yaml](devops/otel-collector/authentik-events.yaml)). It keeps only the event lines (authentik logs each event as JSON with `"event": "Created Event"`) and drops the per-request access logs.
+- Each entry's message reads `<username> <action> <IP>`, e.g. `akadmin login_failed 192.168.29.119`. Fields: `action`, `user_username`, `user_email`, `client_ip`, and `context` (a JSON string with the stage, request details, etc.). Example: `SELECT * FROM "authentik_events" WHERE action = 'login_failed'`.
+- The driver is async, so authentik starts even when the shipper is down (events from that time are lost), and `docker logs` still works through Docker's local cache. The shipper's port 24224 is published on 127.0.0.1 only, because the Docker daemon on the host is what connects to it.
+- authentik also keeps its own event log (**Events → Logs** in the admin UI, 1 year by default).
 
 ## Known gaps / TODO
 
