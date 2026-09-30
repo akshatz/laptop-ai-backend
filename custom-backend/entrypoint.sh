@@ -5,12 +5,11 @@
 # without a separate manual step.
 set -euo pipefail
 
-echo "Resolving database URL from OpenBao..."
-export INIT_DB_DATABASE_URL
-INIT_DB_DATABASE_URL="$(python resolve_db_url.py)"
-
-echo "Applying database migrations (upgrade to head)..."
-alembic -c database/alembic.ini upgrade head
+echo "Applying database migrations (upgrade to head), DB URL from OpenBao..."
+# resolve_db_url.py passes the URL (which includes the DB password) to Alembic
+# only through Alembic's environment, so it's never printed or left exported
+# in this shell for uvicorn to inherit.
+python resolve_db_url.py alembic -c database/alembic.ini upgrade head
 
 echo "Starting uvicorn..."
 exec python -m uvicorn main:app --host 0.0.0.0 --port 8000
