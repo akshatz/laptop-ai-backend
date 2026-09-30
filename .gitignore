@@ -21,3 +21,4 @@ __pycache__/
 
 # Ignore system configuration notes
 .vscode/
+/open-webui/

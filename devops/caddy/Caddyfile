@@ -1,0 +1,13 @@
+# HTTPS front for Open WebUI, so browsers on the LAN get a secure context
+# (plain http://<LAN-IP> isn't one, and Open WebUI's frontend 500s without crypto.randomUUID).
+# Certificates come from Caddy's own local CA (kept in the caddy-data volume); trust its root
+# once per device — see the comment on the open-webui-proxy service in docker-compose.yml.
+{
+	# Browsers send no SNI when connecting to an IP address, so tell Caddy which cert to serve.
+	default_sni {$OPEN_WEBUI_HOST}
+}
+
+https://{$OPEN_WEBUI_HOST}, https://localhost {
+	tls internal
+	reverse_proxy open-webui:8080
+}
