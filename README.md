@@ -166,10 +166,12 @@ Open WebUI has no "forgot password" of its own. A second, independent event Func
 
 A third event Function, [devops/open-webui/functions/password_expiry.py](devops/open-webui/functions/password_expiry.py), makes passwords expire after 180 days (`max_age_days` Valve). It needs the Password Reset Function, since expired users recover through the forgot-password page (or an admin sets a new password). NIST SP 800-63B advises against forced periodic changes; enable this only if a policy requires it.
 
-- Open WebUI doesn't record password age, so the Function keeps its own record in the `fn_password_age` table (see [Function tables](#function-tables)), reset on signup and on every password change. Existing users' clocks start at their first sign-in after the Function is enabled.
-- An expired user who enters the correct password gets a 403 pointing to the forgot-password page. A wrong password gets Open WebUI's normal error, so nothing leaks about whether an account exists.
+- Open WebUI doesn't record password age, so the Function keeps its own record in the `fn_password_age` table (see [Function tables](#function-tables)), reset on signup and on every password change. Existing users (no record yet) are counted from their account creation date — Open WebUI's `user.created_at`, since it doesn't record password changes — but always get at least 14 days, with reminders, from when the Function first sees them (`grace_days_for_existing`), so enabling it doesn't lock out old accounts. Turn off `start_from_account_creation` to count from that first sighting instead.
+- An expired user who enters the correct password gets an error on the login page saying the password has expired, and is **emailed a one-time link to set a new one** (the Password Reset Function's page; valid 30 minutes, at most one email per 10 minutes). Open WebUI's login page can't be redirected, so the email is the way forward. If the Password Reset Function isn't enabled, the message tells them to ask an admin instead. A wrong password gets Open WebUI's normal error, so nothing leaks about whether an account exists.
 - Users signing in within 14 days of expiry (`warn_days`) get a reminder email, at most once a day.
-- Admins expire too unless `exempt_admins` is on — keep a second admin or the Password Reset Function available so you can't lock yourself out.
+- Admin passwords never expire (`exempt_admins`, on by default).
+- **Overview:** while signed in to Open WebUI as an admin, open `/api/v1/auths/password-expiry` (e.g. http://localhost:8082/api/v1/auths/password-expiry) for every user's password date, expiry date, days left and status, soonest first; add `?format=json` for JSON. Dates marked * are estimated for users the Function hasn't recorded yet, and viewing the page doesn't start anyone's clock.
+- The 180 days and other settings are the Function's Valves (**Admin → Functions → Password Expiry → ⚙**), stored in Open WebUI's database — not environment variables.
 - Only the email/password sign-in is checked (not LDAP, OAuth or API keys), and already-signed-in sessions last until they expire.
 
 ### Function tables
