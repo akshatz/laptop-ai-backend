@@ -160,6 +160,16 @@ Open WebUI has no "forgot password" of its own. A second, independent event Func
 - Whenever a password changes (by the user, an admin, or a reset), the user gets a notice email with the forgot-password link, so an unexpected change doesn't go unnoticed. Turn off with the `notify_on_password_change` Valve.
 - A reset only logs out the user's other sessions if Open WebUI has Redis configured; this stack doesn't, so existing sessions stay valid until they expire (`JWT_EXPIRES_IN`, default 4 weeks).
 
+### Password expiry
+
+A third event Function, [devops/open-webui/functions/password_expiry.py](devops/open-webui/functions/password_expiry.py), makes passwords expire after 180 days (`max_age_days` Valve). It needs the Password Reset Function, since expired users recover through the forgot-password page (or an admin sets a new password). NIST SP 800-63B advises against forced periodic changes; enable this only if a policy requires it.
+
+- Open WebUI doesn't record password age, so the Function keeps its own record in the `fn_password_age` table (see [Function tables](#function-tables)), reset on signup and on every password change. Existing users' clocks start at their first sign-in after the Function is enabled.
+- An expired user who enters the correct password gets a 403 pointing to the forgot-password page. A wrong password gets Open WebUI's normal error, so nothing leaks about whether an account exists.
+- Users signing in within 14 days of expiry (`warn_days`) get a reminder email, at most once a day.
+- Admins expire too unless `exempt_admins` is on — keep a second admin or the Password Reset Function available so you can't lock yourself out.
+- Only the email/password sign-in is checked (not LDAP, OAuth or API keys), and already-signed-in sessions last until they expire.
+
 ### Function tables
 
 The Functions keep their state in Postgres, in Open WebUI's `open_webui` database, so it's backed up with the rest of Open WebUI's data:
