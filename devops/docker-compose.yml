@@ -31,6 +31,11 @@ services:
     volumes:
       # 👇 Maps your existing host models directory straight into the container
       - ${OLLAMA_MODELS_PATH:-/usr/share/ollama/.ollama}:/root/.ollama
+    environment:
+      # Default context window for every model (Ollama's own default is ~2k tokens, which
+      # silently truncated chat history and web search results). A model's num_ctx, set in
+      # its Modelfile or Open WebUI's Advanced Params, still overrides this. Costs RAM/VRAM.
+      - OLLAMA_CONTEXT_LENGTH=8192
     networks:
       - ai-network
 
@@ -185,7 +190,10 @@ services:
       # Laptop Performance tweaks
       - ENABLE_TITLE_GENERATION=false
       - ENABLE_TAG_GENERATION=false
-      - AIOHTTP_CLIENT_TIMEOUT=60
+      # Total time Open WebUI waits for a model response (whole stream, not per chunk). 60s cut
+      # off longer answers mid-generation ("Error submitting message"), especially with web search
+      # results in the prompt.
+      - AIOHTTP_CLIENT_TIMEOUT=300
       # Signup email verification (event Function): new users start pending and are promoted
       # once they confirm the emailed link. Reuses Passbolt's Gmail SMTP relay credentials,
       # which the Function falls back to when its SMTP Valves are left empty.
