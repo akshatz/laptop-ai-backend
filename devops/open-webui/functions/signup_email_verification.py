@@ -1,13 +1,14 @@
 """
 title: Signup Email Verification
 author: akshatz
-version: 1.2.0
+version: 1.3.0
 required_open_webui_version: 0.11.3
 description: Emails pending signups a signed, expiring verification link; confirming it promotes them from pending to user once.
 
 Open WebUI event Function (Admin → Functions → import this file, then enable it).
 
-- On `auth.signup` for a `pending` user, emails a verification link.
+- On `auth.signup` (password signup) or `user.created` with source `oauth` (first SSO login, which
+  never emits `auth.signup`) for a `pending` user, emails a verification link.
 - On `system.startup.completed` (and, defensively, on any event) it registers three routes on
   Open WebUI's own app, since event Functions can't declare HTTP routes themselves:
     GET  /api/v1/auths/verify-email            confirm page; the token is in the URL fragment
@@ -281,7 +282,10 @@ class Event:
         if __app__ is not None and getattr(self, "_routes_for", None) != id(__app__):
             self._register_routes(__app__)
 
-        if event.get("event") != "auth.signup":
+        # Password signups emit auth.signup; OAuth/SSO account creation only emits user.created
+        # (source "oauth"). Password signups also emit user.created, so match it for oauth only.
+        name = event.get("event")
+        if not (name == "auth.signup" or (name == "user.created" and event.get("source") == "oauth")):
             return
 
         user_id = (event.get("subject") or {}).get("id")
