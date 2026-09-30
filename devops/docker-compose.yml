@@ -68,7 +68,14 @@ services:
 
   # 🌐 OPEN WEBUI: Main Dashboard Interface for your family
   open-webui:
-    image: ghcr.io/open-webui/open-webui:main
+    # Stock Open WebUI plus signup email verification (devops/open-webui/email_verification.py).
+    # The wrapper relies on Open WebUI internals, so the base image is pinned by digest
+    # rather than tracking :main — bump it deliberately and re-test signup verification.
+    build:
+      context: ..
+      dockerfile: devops/open-webui/Dockerfile
+      args:
+        OPEN_WEBUI_IMAGE: ghcr.io/open-webui/open-webui@sha256:1a6399d237dc392a2313e0ca826020b3fd5d22536357840eb63393d18dc8b924  # v0.11.3-era :main, 2026-09-04
     container_name: laptop-open-webui
     restart: unless-stopped
     ports:
@@ -98,6 +105,12 @@ services:
       - ENABLE_TITLE_GENERATION=false
       - ENABLE_TAG_GENERATION=false
       - AIOHTTP_CLIENT_TIMEOUT=60
+      # Signup email verification: new users start pending and are promoted once they
+      # follow the emailed link. Reuses Passbolt's Gmail SMTP relay credentials.
+      - DEFAULT_USER_ROLE=pending
+      - EMAIL_VERIFY_BASE_URL=http://localhost:8082
+      - SMTP_USER=${PASSBOLT_SMTP_USER}
+      - SMTP_PASSWORD=${PASSBOLT_SMTP_PASSWORD}
     volumes:
       - open-webui-data:/app/backend/data
     depends_on:
