@@ -151,7 +151,7 @@ Open WebUI sign-in goes through [authentik](https://goauthentik.io) (`authentik-
 - authentik is served by `open-webui-proxy` at `https://<OPEN_WEBUI_HOST>:9443` (same Caddy CA as Open WebUI on 8444). Open WebUI shows a **Continue with authentik** button.
 - Its configuration is the blueprint [authentik/blueprints/open-webui-sso.yaml](authentik/blueprints/open-webui-sso.yaml), applied by the worker on start and whenever the file changes. It makes MFA mandatory in authentik's default login flow (users without a TOTP device get a QR code to set one up before their first login completes; TOTP and static recovery codes only) and registers the Open WebUI OIDC client.
 - Open WebUI calls authentik server-side at the same `https://<OPEN_WEBUI_HOST>:9443` URL browsers use, so issuer and endpoint URLs match. It trusts Caddy's CA through `caddy-ca-export`, a one-shot service that copies only Caddy's public root cert (never the CA key) into the `caddy-ca-public` volume.
-- There is no self-signup in authentik: the admin creates each user. The first SSO login links an existing Open WebUI account with the same email (`OAUTH_MERGE_ACCOUNTS_BY_EMAIL`). A new email gets a new Open WebUI account in the default role (`pending`), which the admin approves under **Admin → Users**. The signup verification email isn't sent for SSO signups.
+- Sign-up is invite-only (see [Inviting users](#inviting-users)); there's no public sign-up page. The first SSO login links an existing Open WebUI account with the same email (`OAUTH_MERGE_ACCOUNTS_BY_EMAIL`). A new email gets a new Open WebUI account in the default role (`pending`), which the admin approves under **Admin → Users**. The signup verification email isn't sent for SSO signups.
 
 ### First-time setup
 
@@ -168,7 +168,7 @@ Open WebUI sign-in goes through [authentik](https://goauthentik.io) (`authentik-
    ```
 3. `docker compose -f devops/docker-compose.yml up -d`. From here, Open WebUI password sign-in is rejected (`ENABLE_PASSWORD_AUTH=false`).
 4. Open `https://<OPEN_WEBUI_HOST>:9443`, sign in as `akadmin`, and scan the QR code with Google Authenticator when asked.
-5. In authentik, create a user for each Open WebUI user under **Directory → Users** with the **same email**, and set their password. Each user sets up TOTP on their first login.
+5. Invite each existing Open WebUI user (see [Inviting users](#inviting-users)) with their **same email**, so their accounts get linked. They choose their own password and set up TOTP while signing up.
 6. Turn off Open WebUI's login form. `ENABLE_LOGIN_FORM=false` in compose is ignored because Open WebUI has already saved `ui.enable_login_form` in its database, and while that form is on, `/api/v1/auths/signup` still accepts password signups. Delete the saved value so the compose setting applies, then restart:
    ```bash
    docker exec laptop-postgres psql -U "$POSTGRES_USER" -d open_webui -c "DELETE FROM config WHERE key = 'ui.enable_login_form'"
@@ -179,11 +179,28 @@ Open WebUI sign-in goes through [authentik](https://goauthentik.io) (`authentik-
 
 **Lost authenticator:** in authentik, open the user under **Directory → Users → MFA Authenticators** and delete the TOTP device. The user enrolls a new one on their next login.
 
+### Inviting users
+
+New users join through a one-time invite link ([authentik/blueprints/invitations.yaml](authentik/blueprints/invitations.yaml)):
+
+1. In authentik's admin UI (`https://<OPEN_WEBUI_HOST>:9443`), go to **Directory → Invitations → Create**.
+2. Fill in:
+   - **Name**: e.g. `invite-jatin`
+   - **Flow**: `invitation-enrollment`
+   - **Expires**: a date a few days out
+   - **Single use**: on
+   - **Custom attributes**: `{"email": "their@email.com"}`. Use the email of their existing Open WebUI account, if they have one, so the accounts get linked.
+3. Open the new invitation's row, copy the **link**, and send it to them.
+4. They open the link, choose a username, name and password (the [password rules](#password-rules) apply), and scan a QR code with Google Authenticator. That creates and signs in their authentik account.
+5. They click **Continue with authentik** on Open WebUI. People with an existing Open WebUI account (same email) go straight in. New people get a **pending** account, which you approve under **Admin → Users**.
+
+Links without a valid invitation are refused ("Invalid invite/invite not found"). Delete an unused invitation to revoke it.
+
 ### Password rules
 
 New passwords must be **at least 8 characters, with an uppercase letter, a lowercase letter, a number and a symbol**.
 
-- **authentik** ([authentik/blueprints/password-policy.yaml](authentik/blueprints/password-policy.yaml)) also rejects passwords found in known data breaches (Have I Been Pwned; only the first 5 characters of the password's SHA-1 hash leave the server). Its zxcvbn strength check is off, since it rejected random 8-character passwords that meet the rules. The rules apply when users change their own password. Passwords an admin sets under **Directory → Users → Set password** are not checked, so follow the rules there by hand.
+- **authentik** ([authentik/blueprints/password-policy.yaml](authentik/blueprints/password-policy.yaml)) also rejects passwords found in known data breaches (Have I Been Pwned; only the first 5 characters of the password's SHA-1 hash leave the server). Its zxcvbn strength check is off, since it rejected random 8-character passwords that meet the rules. The rules apply when users sign up through an invite and when they change their own password. Passwords an admin sets under **Directory → Users → Set password** are not checked, so follow the rules there by hand.
 - **Open WebUI** checks the same length and character rules (`ENABLE_PASSWORD_VALIDATION` / `PASSWORD_VALIDATION_REGEX_PATTERN` in compose) on signup, password change, admin create/edit and the Password Reset Function. With SSO on, these only matter if password sign-in is re-enabled.
 - Existing passwords aren't affected until they're next changed.
 - **After upgrading authentik**, re-apply the blueprint: authentik re-applies its own default password-change blueprint when it changes, which resets the policy to its default (8 characters, no character rules). Use **Customization → Blueprints → laptop-ai-backend - Password creation rules → Apply**, or:
