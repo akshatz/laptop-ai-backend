@@ -177,6 +177,19 @@ Open WebUI sign-in goes through [authentik](https://goauthentik.io) (`authentik-
 
 **Lost authenticator:** in authentik, open the user under **Directory → Users → MFA Authenticators** and delete the TOTP device. The user enrolls a new one on their next login.
 
+### Password rules
+
+New passwords must be **at least 8 characters, with an uppercase letter, a lowercase letter, a number and a symbol**.
+
+- **authentik** ([authentik/blueprints/password-policy.yaml](authentik/blueprints/password-policy.yaml)) also rejects passwords found in known data breaches (Have I Been Pwned; only the first 5 characters of the password's SHA-1 hash leave the server). Its zxcvbn strength check is off, since it rejected random 8-character passwords that meet the rules. The rules apply when users change their own password. Passwords an admin sets under **Directory → Users → Set password** are not checked, so follow the rules there by hand.
+- **Open WebUI** checks the same length and character rules (`ENABLE_PASSWORD_VALIDATION` / `PASSWORD_VALIDATION_REGEX_PATTERN` in compose) on signup, password change, admin create/edit and the Password Reset Function. With SSO on, these only matter if password sign-in is re-enabled.
+- Existing passwords aren't affected until they're next changed.
+- **After upgrading authentik**, re-apply the blueprint: authentik re-applies its own default password-change blueprint when it changes, which resets the policy to its default (8 characters, no character rules). Use **Customization → Blueprints → laptop-ai-backend - Password creation rules → Apply**, or:
+  ```bash
+  docker exec laptop-authentik-worker ak apply_blueprint /blueprints/custom/password-policy.yaml
+  ```
+- To change the rules, edit both places and keep them in sync. authentik picks up blueprint edits by itself; Open WebUI needs `docker compose -f devops/docker-compose.yml up -d open-webui`.
+
 ## Open WebUI signup verification
 
 New Open WebUI signups start as `pending` (`DEFAULT_USER_ROLE=pending`) and are emailed a verification link; confirming it promotes them to `user`. This is an Open WebUI event Function, [devops/open-webui/functions/signup_email_verification.py](devops/open-webui/functions/signup_email_verification.py) (Open WebUI declined adding it to core — [discussion #31626](https://github.com/open-webui/open-webui/discussions/31626)).

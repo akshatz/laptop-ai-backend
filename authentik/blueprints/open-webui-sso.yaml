@@ -53,6 +53,11 @@ entries:
       name: Open WebUI
     attrs:
       client_type: confidential
+      # Must be listed explicitly: a blueprint-created provider otherwise allows no grant types and
+      # authentik rejects the login ("Invalid grant_type for provider").
+      grant_types:
+        - authorization_code
+        - refresh_token
       client_id: !Env OPEN_WEBUI_OIDC_CLIENT_ID
       client_secret: !Env OPEN_WEBUI_OIDC_CLIENT_SECRET
       authorization_flow: !Find [authentik_flows.flow, [slug, default-provider-authorization-implicit-consent]]
@@ -60,7 +65,19 @@ entries:
       # RS256-signed ID tokens, verifiable through the provider's JWKS.
       signing_key: !Find [authentik_crypto.certificatekeypair, [name, authentik Self-signed Certificate]]
       sub_mode: hashed_user_id
+      # Open WebUI sends /oauth/oidc/callback (its `oauth_login_callback` route resolves to that path);
+      # /oauth/oidc/login/callback is the same handler, kept in case a future version switches.
       redirect_uris:
+        - matching_mode: strict
+          url: !Format ["https://%s:8444/oauth/oidc/callback", !Env OPEN_WEBUI_HOST]
+        - matching_mode: strict
+          url: https://localhost:8444/oauth/oidc/callback
+        - matching_mode: strict
+          url: http://localhost:8082/oauth/oidc/callback
+        # Plain HTTP on the LAN IP (direct to the open-webui port). Works because the code exchange
+        # still needs the client secret + PKCE, but prefer https://<host>:8444.
+        - matching_mode: strict
+          url: !Format ["http://%s:8082/oauth/oidc/callback", !Env OPEN_WEBUI_HOST]
         - matching_mode: strict
           url: !Format ["https://%s:8444/oauth/oidc/login/callback", !Env OPEN_WEBUI_HOST]
         - matching_mode: strict
