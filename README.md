@@ -135,6 +135,41 @@ docker compose -f devops/docker-compose.yml up -d   # start everything else
 
 Note: OpenBao starts **sealed** after every container restart or host reboot — run `cd openbao && ./auto-unseal.sh` before `custom-backend` will be able to start.
 
+## Open WebUI SSO + MFA (authentik)
+
+Open WebUI sign-in goes through [authentik](https://goauthentik.io) (`authentik-server` + `authentik-worker`, using a separate `authentik` database in `postgres-db`), which requires a TOTP code from Google Authenticator or any other TOTP app on every login. Open WebUI's own email/password sign-in is turned off.
+
+- authentik is served by `open-webui-proxy` at `https://<OPEN_WEBUI_HOST>:9443` (same Caddy CA as Open WebUI on 8444). Open WebUI shows a **Continue with authentik** button.
+- Its configuration is the blueprint [authentik/blueprints/open-webui-sso.yaml](authentik/blueprints/open-webui-sso.yaml), applied by the worker on start and whenever the file changes. It makes MFA mandatory in authentik's default login flow (users without a TOTP device get a QR code to set one up before their first login completes; TOTP and static recovery codes only) and registers the Open WebUI OIDC client.
+- Open WebUI calls authentik server-side at the same `https://<OPEN_WEBUI_HOST>:9443` URL browsers use, so issuer and endpoint URLs match. It trusts Caddy's CA through `caddy-ca-export`, a one-shot service that copies only Caddy's public root cert (never the CA key) into the `caddy-ca-public` volume.
+- There is no self-signup in authentik: the admin creates each user. The first SSO login links an existing Open WebUI account with the same email (`OAUTH_MERGE_ACCOUNTS_BY_EMAIL`). A new email gets a new Open WebUI account in the default role (`pending`), which the admin approves under **Admin → Users**. The signup verification email isn't sent for SSO signups.
+
+### First-time setup
+
+1. Add the authentik variables to `.env` (see `.env.example`), e.g.
+   ```bash
+   echo "AUTHENTIK_SECRET_KEY=$(openssl rand -base64 60 | tr -d '\n')" >> .env
+   echo "OPEN_WEBUI_OIDC_CLIENT_ID=$(openssl rand -hex 20)" >> .env
+   echo "OPEN_WEBUI_OIDC_CLIENT_SECRET=$(openssl rand -base64 60 | tr -d '\n')" >> .env
+   ```
+   plus `AUTHENTIK_BOOTSTRAP_EMAIL` / `AUTHENTIK_BOOTSTRAP_PASSWORD`. Use your Open WebUI admin email as `AUTHENTIK_BOOTSTRAP_EMAIL`: then `akadmin` signs in to Open WebUI as the existing admin.
+2. Let containers reach the host's published port 9443. A host firewall (ufw by default denies incoming) blocks container → host traffic, and Open WebUI's server-side OIDC calls go that way:
+   ```bash
+   sudo ufw allow from 172.16.0.0/12 to any port 9443 proto tcp comment 'open-webui -> authentik'
+   ```
+3. `docker compose -f devops/docker-compose.yml up -d`. From here, Open WebUI password sign-in is rejected (`ENABLE_PASSWORD_AUTH=false`).
+4. Open `https://<OPEN_WEBUI_HOST>:9443`, sign in as `akadmin`, and scan the QR code with Google Authenticator when asked.
+5. In authentik, create a user for each Open WebUI user under **Directory → Users** with the **same email**, and set their password. Each user sets up TOTP on their first login.
+6. Turn off Open WebUI's login form. `ENABLE_LOGIN_FORM=false` in compose is ignored because Open WebUI has already saved `ui.enable_login_form` in its database, and while that form is on, `/api/v1/auths/signup` still accepts password signups. Delete the saved value so the compose setting applies, then restart:
+   ```bash
+   docker exec laptop-postgres psql -U "$POSTGRES_USER" -d open_webui -c "DELETE FROM config WHERE key = 'ui.enable_login_form'"
+   docker compose -f devops/docker-compose.yml restart open-webui
+   ```
+
+**Rollback:** set `ENABLE_PASSWORD_AUTH=true` and `ENABLE_LOGIN_FORM=true` on `open-webui` and run `up -d` again. If authentik is down, nobody can sign in to Open WebUI, and the rollback is how you get back in.
+
+**Lost authenticator:** in authentik, open the user under **Directory → Users → MFA Authenticators** and delete the TOTP device. The user enrolls a new one on their next login.
+
 ## Open WebUI signup verification
 
 New Open WebUI signups start as `pending` (`DEFAULT_USER_ROLE=pending`) and are emailed a verification link; confirming it promotes them to `user`. This is an Open WebUI event Function, [devops/open-webui/functions/signup_email_verification.py](devops/open-webui/functions/signup_email_verification.py) (Open WebUI declined adding it to core — [discussion #31626](https://github.com/open-webui/open-webui/discussions/31626)).
