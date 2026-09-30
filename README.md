@@ -147,10 +147,23 @@ One-time setup, after the stack is up:
 How it behaves:
 
 - Links expire after 2 hours (`token_max_age_seconds` Valve). The token sits in the link's `#` fragment and the page asks the user to click **Verify email**, so tokens don't reach server logs and mail scanners that open links don't verify accounts.
-- A user can request a new link with `POST /api/v1/auths/verify-email/resend` `{"email": "..."}` (rate-limited, same response whether or not the account exists).
-- Each account is verified at most once (recorded in `/app/backend/data/email_verification.db`), so an admin can suspend a user by setting them back to `pending` without an old link or a resend re-activating them.
+- Pending users see a "Check your email" screen (`PENDING_USER_OVERLAY_TITLE`/`PENDING_USER_OVERLAY_CONTENT` in compose) linking to `/api/v1/auths/verify-email/resend`, a page where they can request a new link (rate-limited, same response whether or not the account exists). If **Admin → Settings → Authentication** already has saved overlay text, that wins over the compose values — clear it or paste the same text there.
+- Each account is verified at most once (recorded in the `fn_email_verified` table — see [Function tables](#function-tables)), so an admin can suspend a user by setting them back to `pending` without an old link or a resend re-activating them.
 - The Function is stored in Open WebUI's database, not read from the repo — re-import it after editing the file.
 - The `open-webui` image is pinned by digest because the Function uses Open WebUI internals. When bumping it, re-test a signup end to end.
+
+### Function tables
+
+The Functions keep their state in Postgres, in Open WebUI's `open_webui` database, so it's backed up with the rest of Open WebUI's data:
+
+| Table | Used by | Holds |
+|---|---|---|
+| `fn_email_verified` | Signup Email Verification | Users verified once (`user_id`, `verified_at`) |
+| `fn_password_age` | Password Expiry | When each password was last set, and the last reminder (`user_id`, `changed_at`, `last_warned_at`) |
+
+They're created by a separate Alembic setup, [devops/open-webui/migrations/](devops/open-webui/migrations/), which tracks its history in `fn_alembic_version` so it never touches Open WebUI's own migrations in the same database. The one-shot `open-webui-fn-migrate` service applies it on every `docker compose up` (a no-op once current), and `open-webui` waits for it. Its first revision also imports rows from the Functions' earlier SQLite files (`email_verification.db` / `password_expiry.db` on the `open-webui-data` volume), if present. Once that's done, those files are unused and can be deleted.
+
+To add a table or column, add a new revision under `devops/open-webui/migrations/versions/` (the Functions don't create tables themselves).
 
 ## Custom Backend
 

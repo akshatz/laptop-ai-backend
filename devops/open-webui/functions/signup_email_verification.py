@@ -1,7 +1,7 @@
 """
 title: Signup Email Verification
 author: akshatz
-version: 1.0.0
+version: 1.2.0
 required_open_webui_version: 0.11.3
 description: Emails pending signups a signed, expiring verification link; confirming it promotes them from pending to user once.
 
@@ -14,12 +14,16 @@ Open WebUI event Function (Admin → Functions → import this file, then enable
                                                (#token=...), so it never reaches server/access logs,
                                                and mail scanners that pre-open links don't verify anyone
     POST /api/v1/auths/verify-email            {"token": "..."} → promotes pending → user
+    GET  /api/v1/auths/verify-email/resend     "resend verification email" page (link it from the
+                                               pending-user overlay text)
     POST /api/v1/auths/verify-email/resend     {"email": "..."} → re-sends the link (rate-limited,
                                                same response whether or not the account exists)
 
 Tokens are signed with WEBUI_SECRET_KEY and expire after `token_max_age_seconds`. Each user is
-verified at most once (ids recorded in `verified_db_path`, outside user-editable fields), so an admin
-can put a verified user back to `pending` to suspend them without an old link or a resend undoing it.
+verified at most once (ids recorded in the `fn_email_verified` table in Open WebUI's database, outside
+user-editable fields), so an admin can put a verified user back to `pending` to suspend them without an
+old link or a resend undoing it. The table is created by the repo's separate Function migrations
+(devops/open-webui/migrations/, run by the `open-webui-fn-migrate` compose service), not by this file.
 
 SMTP settings are Valves; empty values fall back to the SMTP_* environment variables so the
 password can stay in the container environment instead of the Functions table.
@@ -29,7 +33,6 @@ import asyncio
 import logging
 import os
 import smtplib
-import sqlite3
 import time
 from email.message import EmailMessage
 
@@ -38,7 +41,9 @@ from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.routing import APIRoute
 from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
 from pydantic import BaseModel, Field
+from sqlalchemy import text
 
+from open_webui.internal.db import get_async_db_context
 from open_webui.models.users import Users
 
 log = logging.getLogger("signup_email_verification")
@@ -51,16 +56,21 @@ RESEND_COOLDOWN = 60  # seconds between resends to the same address
 _last_resend: dict[str, float] = {}
 _background_tasks: set[asyncio.Task] = set()
 
-CONFIRM_PAGE = """<!doctype html>
+PAGE_HEAD = """<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Verify email</title>
+<title>{title}</title>
 <style>
   body{font-family:system-ui,sans-serif;background:#f6f6f7;color:#1c1c1e;display:grid;place-items:center;min-height:100vh;margin:0;padding:16px}
-  main{background:#fff;border-radius:12px;padding:32px;max-width:420px;width:100%;box-shadow:0 1px 3px rgba(0,0,0,.08);text-align:center}
+  main{background:#fff;border-radius:12px;padding:32px;max-width:420px;width:100%;box-sizing:border-box;box-shadow:0 1px 3px rgba(0,0,0,.08);text-align:center}
   button{font:inherit;background:#1c1c1e;color:#fff;border:0;border-radius:8px;padding:10px 20px;cursor:pointer}
   button:disabled{opacity:.5;cursor:default}
-  @media (prefers-color-scheme:dark){body{background:#111;color:#eee}main{background:#1c1c1e}button{background:#eee;color:#111}}
+  input{font:inherit;width:100%;box-sizing:border-box;padding:10px;margin:0 0 12px;border:1px solid #ccc;border-radius:8px;background:inherit;color:inherit}
+  a{color:inherit}
+  @media (prefers-color-scheme:dark){body{background:#111;color:#eee}main{background:#1c1c1e}button{background:#eee;color:#111}input{border-color:#444}}
 </style></head>
+"""
+
+CONFIRM_PAGE = PAGE_HEAD.replace("{title}", "Verify email") + """
 <body><main>
   <h1>Verify your email</h1>
   <p id="msg">Confirm this is your email address to activate your account.</p>
@@ -84,6 +94,33 @@ CONFIRM_PAGE = """<!doctype html>
 </body></html>
 """
 
+RESEND_PAGE = PAGE_HEAD.replace("{title}", "Resend verification email") + """
+<body><main>
+  <h1>Resend verification email</h1>
+  <p id="msg">Enter the email you signed up with and we'll send a new verification link.</p>
+  <form id="f">
+    <input id="email" type="email" required autocomplete="email" placeholder="you@example.com">
+    <button id="go">Send link</button>
+  </form>
+  <p><a href="/">Back to Open WebUI</a></p>
+</main>
+<script>
+  const f = document.getElementById("f"), msg = document.getElementById("msg"), btn = document.getElementById("go");
+  f.onsubmit = async (e) => {
+    e.preventDefault();
+    btn.disabled = true;
+    try {
+      const r = await fetch(location.pathname, {method: "POST", headers: {"Content-Type": "application/json"},
+                                                body: JSON.stringify({email: document.getElementById("email").value})});
+      const body = await r.json().catch(() => ({}));
+      msg.textContent = r.ok ? body.status + " Check your inbox (and spam folder)." : (body.detail || "Something went wrong.");
+      if (r.ok) f.hidden = true; else btn.disabled = false;
+    } catch { msg.textContent = "Network error, try again."; btn.disabled = false; }
+  };
+</script>
+</body></html>
+"""
+
 
 def _format_duration(seconds: int) -> str:
     if seconds < 3600:
@@ -99,10 +136,6 @@ class Event:
             default="http://localhost:8082", description="Public URL of Open WebUI, used to build the link."
         )
         token_max_age_seconds: int = Field(default=2 * 3600, description="How long a verification link stays valid.")
-        verified_db_path: str = Field(
-            default="/app/backend/data/email_verification.db",
-            description="SQLite file recording verified user ids (keep it on the data volume).",
-        )
         smtp_host: str = Field(default="", description="Empty → $SMTP_HOST, else smtp.gmail.com.")
         smtp_port: int = Field(default=0, description="0 → $SMTP_PORT, else 465 (implicit TLS).")
         smtp_user: str = Field(default="", description="Empty → $SMTP_USER.")
@@ -128,27 +161,27 @@ class Event:
     def _serializer(self) -> URLSafeTimedSerializer:
         return URLSafeTimedSerializer(os.environ["WEBUI_SECRET_KEY"], salt="open-webui-email-verify")
 
-    # ---- verified-user store --------------------------------------------------------------
+    # ---- verified-user store (fn_email_verified in Open WebUI's database) --------------------
 
-    def _db(self) -> sqlite3.Connection:
-        conn = sqlite3.connect(self.valves.verified_db_path, timeout=10)
-        conn.execute(
-            "CREATE TABLE IF NOT EXISTS verified_users (user_id TEXT PRIMARY KEY, verified_at INTEGER NOT NULL)"
-        )
-        return conn
-
-    def _is_verified_sync(self, user_id: str) -> bool:
-        with self._db() as conn:
-            return conn.execute("SELECT 1 FROM verified_users WHERE user_id = ?", (user_id,)).fetchone() is not None
-
-    def _mark_verified_sync(self, user_id: str) -> bool:
-        """Records user_id as verified; returns False if it already was (so each user is promoted at most once)."""
-        with self._db() as conn:
-            cursor = conn.execute(
-                "INSERT OR IGNORE INTO verified_users (user_id, verified_at) VALUES (?, ?)",
-                (user_id, int(time.time())),
+    async def _is_verified(self, user_id: str) -> bool:
+        async with get_async_db_context() as session:
+            result = await session.execute(
+                text("SELECT 1 FROM fn_email_verified WHERE user_id = :u"), {"u": user_id}
             )
-            return cursor.rowcount == 1
+            return result.first() is not None
+
+    async def _mark_verified(self, user_id: str) -> bool:
+        """Records user_id as verified; returns False if it already was (so each user is promoted at most once)."""
+        async with get_async_db_context() as session:
+            result = await session.execute(
+                text(
+                    "INSERT INTO fn_email_verified (user_id, verified_at) VALUES (:u, :t) "
+                    "ON CONFLICT (user_id) DO NOTHING"
+                ),
+                {"u": user_id, "t": int(time.time())},
+            )
+            await session.commit()
+            return result.rowcount == 1
 
     # ---- email ------------------------------------------------------------------------------
 
@@ -188,6 +221,9 @@ class Event:
     async def _confirm_page(self):
         return HTMLResponse(CONFIRM_PAGE, headers={"Cache-Control": "no-store", "Referrer-Policy": "no-referrer"})
 
+    async def _resend_page(self):
+        return HTMLResponse(RESEND_PAGE, headers={"Cache-Control": "no-store"})
+
     async def _verify(self, token: str = Body(..., embed=True)):
         try:
             user_id = self._serializer().loads(token, max_age=self.valves.token_max_age_seconds)
@@ -201,7 +237,7 @@ class Event:
             raise HTTPException(400, detail="Invalid verification token.")
         # Only a first-time verification promotes; a pending user who was verified before was
         # put back to pending by an admin (suspended), and stays that way.
-        if user.role == "pending" and await asyncio.to_thread(self._mark_verified_sync, user.id):
+        if user.role == "pending" and await self._mark_verified(user.id):
             user = await Users.update_user_role_by_id(user.id, "user")
             log.info("Verified %s, role pending -> user", user.email)
         return {"status": "verified", "email": user.email, "role": user.role}
@@ -217,18 +253,20 @@ class Event:
         _last_resend[email] = now
 
         user = await Users.get_user_by_email(email)
-        if user and user.role == "pending" and not await asyncio.to_thread(self._is_verified_sync, user.id):
+        if user and user.role == "pending" and not await self._is_verified(user.id):
             self._send_in_background(user.id, user.email, user.name)
         return response
 
     def _register_routes(self, app) -> None:
         """(Re)installs this Function's routes; replaces any from an older copy of the module."""
         routes = app.router.routes
-        routes[:] = [r for r in routes if getattr(r, "name", None) not in {f"{ROUTE_TAG}_{n}" for n in ("page", "verify", "resend")}]
+        route_names = {f"{ROUTE_TAG}_{n}" for n in ("page", "verify", "resend_page", "resend")}
+        routes[:] = [r for r in routes if getattr(r, "name", None) not in route_names]
         # Insert at the front so these win over the SPA static mount at "/".
         for path, endpoint, methods, name in (
             (VERIFY_PATH, self._confirm_page, ["GET"], "page"),
             (VERIFY_PATH, self._verify, ["POST"], "verify"),
+            (RESEND_PATH, self._resend_page, ["GET"], "resend_page"),
             (RESEND_PATH, self._resend, ["POST"], "resend"),
         ):
             routes.insert(

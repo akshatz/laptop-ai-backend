@@ -106,6 +106,10 @@ services:
       # once they confirm the emailed link. Reuses Passbolt's Gmail SMTP relay credentials,
       # which the Function falls back to when its SMTP Valves are left empty.
       - DEFAULT_USER_ROLE=pending
+      # Shown to pending users; the Markdown link points at the Function's resend page. Only
+      # used while Admin → Settings → Authentication has no saved overlay text of its own.
+      - PENDING_USER_OVERLAY_TITLE=Check your email
+      - "PENDING_USER_OVERLAY_CONTENT=We sent a verification link to the email address you signed up with. Click it to activate your account, then refresh this page. Link expired or no email? [Send a new link](/api/v1/auths/verify-email/resend) (check your spam folder too)."
       - SMTP_USER=${PASSBOLT_SMTP_USER}
       - SMTP_PASSWORD=${PASSBOLT_SMTP_PASSWORD}
     volumes:
@@ -117,6 +121,32 @@ services:
         condition: service_started
       milvus-init-auth:
         condition: service_completed_successfully
+      open-webui-fn-migrate:
+        condition: service_completed_successfully
+    networks:
+      - ai-network
+
+  # 🗃️ OPEN WEBUI FUNCTION MIGRATIONS: one-shot Alembic run creating the tables this repo's event
+  # Functions (devops/open-webui/functions/) keep their state in, inside Open WebUI's `open_webui`
+  # database. Separate history table (fn_alembic_version) so it never touches Open WebUI's own
+  # migrations. Mounts the open-webui data volume read-only to import the Functions' old SQLite files.
+  # Runs on every `up`; a no-op once at head.
+  open-webui-fn-migrate:
+    image: python:3.12-slim
+    container_name: laptop-open-webui-fn-migrate
+    restart: "no"
+    environment:
+      - OPEN_WEBUI_FN_DATABASE_URL=postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres-db:5432/open_webui
+      - LEGACY_FUNCTION_DATA_DIR=/legacy-data
+    volumes:
+      - ./open-webui/migrations:/migrations:ro
+      - open-webui-data:/legacy-data:ro
+    command: >
+      bash -c "pip install --quiet --root-user-action=ignore alembic==1.16.1 sqlalchemy==2.1.1 'psycopg[binary]==3.3.6'
+      && alembic -c /migrations/alembic.ini upgrade head"
+    depends_on:
+      postgres-db:
+        condition: service_healthy
     networks:
       - ai-network
 
