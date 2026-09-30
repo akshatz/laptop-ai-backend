@@ -119,9 +119,39 @@ services:
       - "PENDING_USER_OVERLAY_CONTENT=We sent a verification link to the email address you signed up with. Click it to activate your account, then refresh this page. Link expired or no email? [Send a new link](/api/v1/auths/verify-email/resend) (check your spam folder too)."
       - SMTP_USER=${PASSBOLT_SMTP_USER}
       - SMTP_PASSWORD=${PASSBOLT_SMTP_PASSWORD}
+      # 🔐 SSO + MFA: sign-in goes through authentik (authentik/blueprints/open-webui-sso.yaml),
+      # which requires a TOTP code (Google Authenticator etc.). The discovery URL is the Caddy
+      # front, reached via the host so issuer/endpoint URLs match what browsers see.
+      - OAUTH_PROVIDER_NAME=authentik
+      - OAUTH_CLIENT_ID=${OPEN_WEBUI_OIDC_CLIENT_ID}
+      - OAUTH_CLIENT_SECRET=${OPEN_WEBUI_OIDC_CLIENT_SECRET}
+      - OPENID_PROVIDER_URL=https://${OPEN_WEBUI_HOST}:9443/application/o/open-webui/.well-known/openid-configuration
+      - OAUTH_SCOPES=openid email profile
+      - OAUTH_CODE_CHALLENGE_METHOD=S256
+      - ENABLE_OAUTH_SIGNUP=true
+      # Links existing Open WebUI accounts to the authentik user with the same email on first SSO
+      # login. Safe only because authentik accounts are created by the admin (no self-enrollment).
+      - OAUTH_MERGE_ACCOUNTS_BY_EMAIL=true
+      # Rejects email/password sign-in at the API. The login form itself is a saved DB setting
+      # (ui.enable_login_form) that overrides ENABLE_LOGIN_FORM once set — turn it off in
+      # Admin → Settings too, or password signups still work (see README "Open WebUI SSO + MFA").
+      - ENABLE_PASSWORD_AUTH=false
+      - ENABLE_LOGIN_FORM=false
+      # Trust Caddy's local CA for the server-side OIDC calls (bundle built in `command` below).
+      - SSL_CERT_FILE=/tmp/ca-bundle.crt
+      - REQUESTS_CA_BUNDLE=/tmp/ca-bundle.crt
+    # System CAs + Caddy's public root cert (exported by caddy-ca-export), then the image's normal start.
+    command: >
+      bash -c "cat /etc/ssl/certs/ca-certificates.crt /caddy-ca/root.crt > /tmp/ca-bundle.crt
+      && exec bash start.sh"
     volumes:
       - open-webui-data:/app/backend/data
+      - caddy-ca-public:/caddy-ca:ro
     depends_on:
+      caddy-ca-export:
+        condition: service_completed_successfully
+      authentik-server:
+        condition: service_started
       ollama:
         condition: service_started
       lgtm:
@@ -167,15 +197,106 @@ services:
     image: caddy:2
     container_name: laptop-open-webui-proxy
     restart: unless-stopped
+    # Also fronts authentik on 9443. No depends_on open-webui: open-webui waits for this proxy's CA
+    # (via caddy-ca-export), and Caddy resolves upstreams per request anyway.
     ports:
       - "8444:443"
+      - "9443:9443"
     environment:
       - OPEN_WEBUI_HOST=${OPEN_WEBUI_HOST}
     volumes:
       - ./caddy/Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy-data:/data
+    networks:
+      - ai-network
+
+  # 📜 CADDY CA EXPORT: one-shot copy of Caddy's public root cert (only root.crt — never the CA key)
+  # into caddy-ca-public, so open-webui can trust authentik's HTTPS endpoint without mounting
+  # caddy-data. Waits for Caddy to create its CA on first start. Runs on every `up`.
+  caddy-ca-export:
+    image: caddy:2
+    container_name: laptop-caddy-ca-export
+    restart: "no"
+    volumes:
+      - caddy-data:/data:ro
+      - caddy-ca-public:/export
+    command: >
+      sh -c "for i in $$(seq 60); do [ -f /data/caddy/pki/authorities/local/root.crt ] && break; sleep 1; done
+      && cp /data/caddy/pki/authorities/local/root.crt /export/root.crt"
     depends_on:
-      - open-webui
+      - open-webui-proxy
+    networks:
+      - ai-network
+
+  # 🗃️ AUTHENTIK DB: one-shot creation of the `authentik` database in postgres-db. The initdb
+  # scripts only run on a fresh volume, so this covers existing installs too. No-op once it exists.
+  authentik-db-init:
+    image: postgres:16-alpine
+    container_name: laptop-authentik-db-init
+    restart: "no"
+    environment:
+      - PGHOST=postgres-db
+      - PGUSER=${POSTGRES_USER}
+      - PGPASSWORD=${POSTGRES_PASSWORD}
+      - PGDATABASE=${POSTGRES_DB}
+    command: >
+      sh -c "echo \"SELECT 'CREATE DATABASE authentik' WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = 'authentik')\\gexec\" | psql -v ON_ERROR_STOP=1"
+    depends_on:
+      postgres-db:
+        condition: service_healthy
+    networks:
+      - ai-network
+
+  # 🛂 AUTHENTIK: identity provider for Open WebUI sign-in, with TOTP (Google Authenticator) required.
+  # Web UI/admin at https://${OPEN_WEBUI_HOST}:9443 (through open-webui-proxy); not published directly.
+  # Configuration lives in authentik/blueprints/, applied by the worker.
+  authentik-server:
+    image: ghcr.io/goauthentik/server:2026.8.3
+    container_name: laptop-authentik-server
+    restart: unless-stopped
+    command: server
+    environment: &authentik-env
+      AUTHENTIK_SECRET_KEY: ${AUTHENTIK_SECRET_KEY}
+      AUTHENTIK_POSTGRESQL__HOST: postgres-db
+      AUTHENTIK_POSTGRESQL__USER: ${POSTGRES_USER}
+      AUTHENTIK_POSTGRESQL__PASSWORD: ${POSTGRES_PASSWORD}
+      AUTHENTIK_POSTGRESQL__NAME: authentik
+      AUTHENTIK_ERROR_REPORTING__ENABLED: "false"
+      AUTHENTIK_DISABLE_STARTUP_ANALYTICS: "true"
+      # Initial `akadmin` login; only read on the very first start.
+      AUTHENTIK_BOOTSTRAP_EMAIL: ${AUTHENTIK_BOOTSTRAP_EMAIL}
+      AUTHENTIK_BOOTSTRAP_PASSWORD: ${AUTHENTIK_BOOTSTRAP_PASSWORD}
+      # Same Gmail relay as Passbolt/Open WebUI (recovery emails, notifications).
+      AUTHENTIK_EMAIL__HOST: smtp.gmail.com
+      AUTHENTIK_EMAIL__PORT: "587"
+      AUTHENTIK_EMAIL__USE_TLS: "true"
+      AUTHENTIK_EMAIL__USERNAME: ${PASSBOLT_SMTP_USER}
+      AUTHENTIK_EMAIL__PASSWORD: ${PASSBOLT_SMTP_PASSWORD}
+      AUTHENTIK_EMAIL__FROM: ${PASSBOLT_SMTP_USER}
+      # Read by authentik/blueprints/open-webui-sso.yaml (!Env).
+      OPEN_WEBUI_HOST: ${OPEN_WEBUI_HOST}
+      OPEN_WEBUI_OIDC_CLIENT_ID: ${OPEN_WEBUI_OIDC_CLIENT_ID}
+      OPEN_WEBUI_OIDC_CLIENT_SECRET: ${OPEN_WEBUI_OIDC_CLIENT_SECRET}
+    volumes:
+      - authentik-data:/data
+    depends_on:
+      authentik-db-init:
+        condition: service_completed_successfully
+    networks:
+      - ai-network
+
+  authentik-worker:
+    image: ghcr.io/goauthentik/server:2026.8.3
+    container_name: laptop-authentik-worker
+    restart: unless-stopped
+    command: worker
+    environment: *authentik-env
+    volumes:
+      - authentik-data:/data
+      - ../authentik/blueprints:/blueprints/custom:ro
+    depends_on:
+      authentik-db-init:
+        condition: service_completed_successfully
     networks:
       - ai-network
 
@@ -347,6 +468,8 @@ volumes:
   milvus-minio-data: # Milvus object storage (segment/index files)
   milvus-data: # Milvus standalone data directory
   caddy-data: # Caddy's local CA + issued certs for open-webui-proxy (keep stable so devices stay trusting it)
+  caddy-ca-public: # Copy of Caddy's public root cert only, mounted into open-webui (see caddy-ca-export)
+  authentik-data: # authentik media/uploads
 
 networks:
   ai-network:
