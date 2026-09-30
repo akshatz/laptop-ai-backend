@@ -1,0 +1,22 @@
+# SearXNG settings for the `searxng` service (Open WebUI's web search backend). Only overrides are
+# listed; everything else comes from SearXNG's bundled defaults (use_default_settings).
+use_default_settings: true
+
+general:
+  instance_name: laptop-ai-backend search
+
+server:
+  # Set from SEARXNG_SECRET (.env) — the placeholder here is never used.
+  secret_key: "overridden-by-SEARXNG_SECRET"
+  # Only reachable inside ai-network (no published port) by open-webui, so no bot limiter
+  # (which would also need a Valkey/Redis instance).
+  limiter: false
+  public_instance: false
+  image_proxy: false
+
+search:
+  # Open WebUI queries /search?format=json; SearXNG rejects formats not listed here (403).
+  formats:
+    - html
+    - json
+  safe_search: 1

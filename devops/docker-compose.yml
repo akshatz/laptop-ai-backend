@@ -87,6 +87,20 @@ services:
     networks:
       - ai-network
 
+  # 🔎 SEARXNG: self-hosted metasearch (Google, Bing, DuckDuckGo, … without API keys) used by Open WebUI's
+  # web search. Internal only (no published port); config in devops/searxng/settings.yml.
+  searxng:
+    image: searxng/searxng:2026.9.29-4e2c1ea7f
+    container_name: laptop-searxng
+    restart: unless-stopped
+    environment:
+      - SEARXNG_SECRET=${SEARXNG_SECRET}
+      - SEARXNG_BASE_URL=http://searxng:8080/
+    volumes:
+      - ./searxng/settings.yml:/etc/searxng/settings.yml:ro
+    networks:
+      - ai-network
+
   # 🌐 OPEN WEBUI: Main Dashboard Interface for your family
   open-webui:
     # Signup email verification is an Open WebUI event Function
@@ -114,6 +128,13 @@ services:
       # is set). Keep in sync with custom-backend/chat_service.py.
       - "RAG_EMBEDDING_QUERY_PREFIX=task: search result | query: "
       - "RAG_EMBEDDING_CONTENT_PREFIX=title: none | text: "
+      # 🔎 Web search via the searxng service: users click "Web Search" under the chat box. Results pages
+      # are fetched and the relevant parts picked with the embedding model above. Enable/engine/URL are
+      # saved DB settings (web.search.*) that override these once saved — see README "Web search".
+      - ENABLE_WEB_SEARCH=true
+      - WEB_SEARCH_ENGINE=searxng
+      - SEARXNG_QUERY_URL=http://searxng:8080/search
+      - WEB_SEARCH_RESULT_COUNT=3
       # Use Milvus as the vector store for RAG document embeddings
       - VECTOR_DB=milvus
       - MILVUS_URI=http://milvus:19530
@@ -190,6 +211,8 @@ services:
       - open-webui-data:/app/backend/data
       - caddy-ca-public:/caddy-ca:ro
     depends_on:
+      searxng:
+        condition: service_started
       caddy-ca-export:
         condition: service_completed_successfully
       authentik-server:
