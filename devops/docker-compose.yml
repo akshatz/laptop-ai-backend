@@ -164,6 +164,13 @@ services:
       # Admin → Settings too, or password signups still work (see README "Open WebUI SSO + MFA").
       - ENABLE_PASSWORD_AUTH=false
       - ENABLE_LOGIN_FORM=false
+      # Password creation rules for any Open WebUI password that still gets set (signup, change,
+      # admin create/edit, the Password Reset Function; matters if password sign-in is re-enabled).
+      # Same length/character rules as authentik/blueprints/password-policy.yaml — keep in sync.
+      # `$$` is Compose's escape for a literal `$`.
+      - ENABLE_PASSWORD_VALIDATION=true
+      - "PASSWORD_VALIDATION_REGEX_PATTERN=^(?=.*[a-z])(?=.*[A-Z])(?=.*\\d)(?=.*[^\\w\\s]).{8,}$$"
+      - PASSWORD_VALIDATION_HINT=at least 8 characters, with an uppercase letter, a lowercase letter, a number and a symbol
       # Trust Caddy's local CA for the server-side OIDC calls (bundle built in `command` below).
       - SSL_CERT_FILE=/tmp/ca-bundle.crt
       - REQUESTS_CA_BUNDLE=/tmp/ca-bundle.crt
