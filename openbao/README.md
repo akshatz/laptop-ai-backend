@@ -62,14 +62,27 @@ cd openbao && ./auto-unseal.sh
   AppRole, scoped to `secret/data/custom-backend` and
   `secret/metadata/custom-backend` — intended for a future credential
   rotation script, not for the running app.
+- `setup-users.sh` — creates the human logins (userpass): `bao-admin` and
+  `bao-readonly`, with passwords from `OPENBAO_ADMIN_PASSWORD` /
+  `OPENBAO_READONLY_PASSWORD` in `.env`. Safe to re-run; `bootstrap.sh` runs it
+  at the end once both passwords are set. Run it on its own to add or change
+  the users, since `bootstrap.sh` issues new AppRole secret IDs every run.
+- `policy-user-readonly.hcl` — `bao-readonly`'s policy: read/list every secret
+  under `secret/`, no writes, no policy/auth access.
+- `policy-user-admin.hcl` — `bao-admin`'s policy: secrets, policies, auth
+  methods (users, AppRoles), mounts, identity, leases. No seal, generate-root
+  or rekey (those still need `keys.json`). It can write policies and users,
+  so it can grant itself more — treat it as fully trusted.
 - `keys.json` (gitignored, created by `bootstrap.sh`) — root token + unseal
   key. Treat this like a master password.
 
 ## UI
 
-http://localhost:8200/ui — Method: **Token**, using the root token from
-`keys.json` (there's no username/password or OIDC method configured, only
-Token for humans and AppRole for `custom-backend`).
+http://localhost:8200/ui — Method: **Username**, as `bao-readonly` to look
+secrets up or `bao-admin` to change things (passwords in `.env`, created by
+`setup-users.sh`). Keep the root token from `keys.json` (Method: **Token**) for
+break-glass only, e.g. if the userpass method is broken. There's no OIDC/SSO or
+MFA on OpenBao logins; AppRole is for `custom-backend` only.
 
 ## Backup (do this — a laptop crash otherwise loses all secrets)
 
