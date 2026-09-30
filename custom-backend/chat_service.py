@@ -1,4 +1,5 @@
 import os
+import re
 from langchain_core.documents import Document
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_milvus import Milvus
@@ -26,10 +27,38 @@ def build_rag_chat_chain(model: str):
 # Open WebUI uses for its own document uploads, but a separate collection so
 # the two don't collide. Embeddings use the same Ollama model Open WebUI is
 # configured with (see docker-compose.yml's RAG_EMBEDDING_MODEL).
-EMBEDDING_MODEL = os.environ.get("EMBEDDING_MODEL", "nomic-embed-text")
-MILVUS_COLLECTION = "custom_backend_docs"
+EMBEDDING_MODEL = os.environ.get("EMBEDDING_MODEL", "embeddinggemma")
+# One collection per embedding model: vectors from different models aren't
+# comparable (even at the same dimension), so switching models starts a fresh
+# collection instead of silently mixing them. Re-ingest documents after a switch.
+MILVUS_COLLECTION = "custom_backend_docs_" + re.sub(r"\W", "_", EMBEDDING_MODEL.split(":")[0])
 
-_embeddings = OllamaEmbeddings(base_url=OLLAMA_BASE_URL, model=EMBEDDING_MODEL)
+# embeddinggemma is trained with task prefixes on queries vs. documents; they
+# measurably improve retrieval. Other models get no prefix. Keep in sync with
+# RAG_EMBEDDING_QUERY_PREFIX / RAG_EMBEDDING_CONTENT_PREFIX in docker-compose.yml.
+_PREFIXES = {
+    "embeddinggemma": ("task: search result | query: ", "title: none | text: "),
+}
+QUERY_PREFIX, DOCUMENT_PREFIX = _PREFIXES.get(EMBEDDING_MODEL.split(":")[0], ("", ""))
+
+
+class PrefixedOllamaEmbeddings(OllamaEmbeddings):
+    """OllamaEmbeddings that prepends the model's query/document prefixes."""
+
+    def embed_documents(self, texts: list[str]) -> list[list[float]]:
+        return super().embed_documents([DOCUMENT_PREFIX + t for t in texts])
+
+    async def aembed_documents(self, texts: list[str]) -> list[list[float]]:
+        return await super().aembed_documents([DOCUMENT_PREFIX + t for t in texts])
+
+    def embed_query(self, text: str) -> list[float]:
+        return super().embed_documents([QUERY_PREFIX + text])[0]
+
+    async def aembed_query(self, text: str) -> list[float]:
+        return (await super().aembed_documents([QUERY_PREFIX + text]))[0]
+
+
+_embeddings = PrefixedOllamaEmbeddings(base_url=OLLAMA_BASE_URL, model=EMBEDDING_MODEL)
 vector_store = Milvus(
     embedding_function=_embeddings,
     collection_name=MILVUS_COLLECTION,

@@ -102,10 +102,18 @@ services:
       - OLLAMA_BASE_URL=http://ollama:11434
       - WEBUI_SECRET_KEY=${WEBUI_SECRET_KEY}
       - DATABASE_URL=postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres-db:5432/open_webui
-      # Use Ollama for embeddings instead of downloading from HuggingFace
+      # Use Ollama for embeddings instead of downloading from HuggingFace. embeddinggemma (Google,
+      # 768-dim, 2048-token context) retrieves better than nomic-embed-text; pull it first with
+      # `docker exec laptop-ollama ollama pull embeddinggemma`. Engine/model are saved DB settings
+      # (rag.embedding_engine/rag.embedding_model) that override these once saved — see README.
+      # Changing the model means re-indexing documents (Admin → Settings → Documents → Reindex).
       - RAG_EMBEDDING_ENGINE=ollama
-      - RAG_EMBEDDING_MODEL=nomic-embed-text
+      - RAG_EMBEDDING_MODEL=embeddinggemma
       - RAG_OLLAMA_BASE_URL=http://ollama:11434
+      # embeddinggemma's task prefixes (env-only settings; prepended to the text since no prefix field
+      # is set). Keep in sync with custom-backend/chat_service.py.
+      - "RAG_EMBEDDING_QUERY_PREFIX=task: search result | query: "
+      - "RAG_EMBEDDING_CONTENT_PREFIX=title: none | text: "
       # Use Milvus as the vector store for RAG document embeddings
       - VECTOR_DB=milvus
       - MILVUS_URI=http://milvus:19530
@@ -505,6 +513,8 @@ services:
       - OPENBAO_SECRET_ID=${OPENBAO_SECRET_ID}
       - OLLAMA_BASE_URL=http://ollama:11434
       - MILVUS_URI=http://milvus:19530
+      # Same embedding model as open-webui's RAG_EMBEDDING_MODEL; picks collection custom_backend_docs_<model>
+      - EMBEDDING_MODEL=embeddinggemma
     depends_on:
       postgres-db:
         condition: service_healthy
