@@ -151,7 +151,7 @@ Open WebUI sign-in goes through [authentik](https://goauthentik.io) (`authentik-
 - authentik is served by `open-webui-proxy` at `https://<OPEN_WEBUI_HOST>:9443` (same Caddy CA as Open WebUI on 8444). Open WebUI shows a **Continue with authentik** button.
 - Its configuration is the blueprint [authentik/blueprints/open-webui-sso.yaml](authentik/blueprints/open-webui-sso.yaml), applied by the worker on start and whenever the file changes. It makes MFA mandatory in authentik's default login flow (users without a TOTP device get a QR code to set one up before their first login completes; TOTP and static recovery codes only) and registers the Open WebUI OIDC client.
 - Open WebUI calls authentik server-side at the same `https://<OPEN_WEBUI_HOST>:9443` URL browsers use, so issuer and endpoint URLs match. It trusts Caddy's CA through `caddy-ca-export`, a one-shot service that copies only Caddy's public root cert (never the CA key) into the `caddy-ca-public` volume.
-- Sign-up is invite-only (see [Inviting users](#inviting-users)); there's no public sign-up page. The first SSO login links an existing Open WebUI account with the same email (`OAUTH_MERGE_ACCOUNTS_BY_EMAIL`). A new email gets a new Open WebUI account in the default role (`pending`) and is sent the signup verification email; clicking its link promotes the account to `user` (an admin can also approve it under **Admin → Users**).
+- Anyone can sign up: Open WebUI's sign-in page has a **Sign up** button under **Continue with authentik** (added by [devops/open-webui/static/loader.js](devops/open-webui/static/loader.js); recreate `open-webui` after editing it), and authentik's own login page has a **Sign up** link. Both go to the `self-enrollment` flow ([authentik/blueprints/self-enrollment.yaml](authentik/blueprints/self-enrollment.yaml)); afterwards authentik sends the user on to Open WebUI. It asks for name, email and password only (the email doubles as the authentik username), refuses an email that's already registered, and creates the account **inactive** until the emailed confirmation link (valid 30 minutes) is opened. Only then does it continue to TOTP setup and login. Confirming the email matters because of the account linking below. Admins can also invite people (see [Inviting users](#inviting-users)). The first SSO login links an existing Open WebUI account with the same email (`OAUTH_MERGE_ACCOUNTS_BY_EMAIL`). A new email gets a new Open WebUI account in the default role (`pending`) and is sent the signup verification email; clicking its link promotes the account to `user` (an admin can also approve it under **Admin → Users**).
 
 ### First-time setup
 
@@ -181,7 +181,7 @@ Open WebUI sign-in goes through [authentik](https://goauthentik.io) (`authentik-
 
 ### Inviting users
 
-New users join through a one-time invite link ([authentik/blueprints/invitations.yaml](authentik/blueprints/invitations.yaml)):
+Besides self sign-up, you can send new users a one-time invite link ([authentik/blueprints/invitations.yaml](authentik/blueprints/invitations.yaml)):
 
 1. In authentik's admin UI (`https://<OPEN_WEBUI_HOST>:9443`), go to **Directory → Invitations → Create**.
 2. Fill in:

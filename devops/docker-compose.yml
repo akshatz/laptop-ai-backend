@@ -239,6 +239,9 @@ services:
     volumes:
       - open-webui-data:/app/backend/data
       - caddy-ca-public:/caddy-ca:ro
+      # "Sign up" button on the sign-in page → authentik's self-enrollment flow. Open WebUI copies
+      # this into /static/loader.js at startup, so recreate the container after editing it.
+      - ./open-webui/static/loader.js:/app/build/static/loader.js:ro
     depends_on:
       searxng:
         condition: service_started
