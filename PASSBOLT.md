@@ -82,11 +82,5 @@ convenient copy for you to reference/share, not the source of truth.
   access to everything stored in Passbolt. Extend `openbao/backup.sh`'s
   approach (GPG-encrypt before it leaves the laptop) if you want this backed
   up the same way.
-- Your account's recovery kit (the `.asc` private key Passbolt has you
-  download during setup) is plaintext. Run
-  `devops/passbolt/encrypt-recovery-kit.sh /path/to/passbolt-recovery-kit.asc`
-  to write a passphrase-encrypted copy to `devops/backups/` (gitignored) and
-  optionally delete the original. Only the encrypted copy should leave the
-  laptop. Restore with `gpg --decrypt <file> > passbolt-recovery-kit.asc`.
 - `PASSBOLT_DB_PASSWORD` (in `.env`) is the MariaDB password for the
   `passbolt` user on `passbolt-db` — unrelated to `POSTGRES_PASSWORD`.
