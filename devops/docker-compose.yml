@@ -40,7 +40,13 @@ services:
       - ai-network
 
   # 📊 GRAFANA LGTM: Unified OpenTelemetry Monitoring Platform (Grafana, Loki, Tempo, Mimir)
+  # Opt-in (profile "lgtm"), off by default to save ~0.8 GB RAM on the 16 GB laptop: logs go to
+  # OpenObserve, and open-webui no longer exports traces/metrics. Start it with
+  #   docker compose -f devops/docker-compose.yml --profile lgtm up -d lgtm
+  # (dashboards/history persist in lgtm-data); set ENABLE_OTEL_TRACES/METRICS=true on open-webui
+  # again to feed it.
   lgtm:
+    profiles: ["lgtm"]
     image: grafana/otel-lgtm:latest
     container_name: laptop-lgtm
     environment:
@@ -227,17 +233,18 @@ services:
       - VECTOR_DB=milvus
       - MILVUS_URI=http://milvus:19530
       - MILVUS_TOKEN=root:${MILVUS_ROOT_PASSWORD}
-      # 🚀 OPENTELEMETRY LIFEOFF: Feeds all UI metrics, traces, and logs to Grafana
+      # OpenTelemetry: only logs are exported (to OpenObserve, below). Traces/metrics went to the lgtm
+      # service, which is now opt-in (profile "lgtm") — turn these back on if you start it.
       - ENABLE_OTEL=true
-      - ENABLE_OTEL_TRACES=true
-      - ENABLE_OTEL_METRICS=true
+      - ENABLE_OTEL_TRACES=false
+      - ENABLE_OTEL_METRICS=false
       - ENABLE_OTEL_LOGS=true
       - OTEL_SERVICE_NAME=open-webui
-      - OTEL_EXPORTER_OTLP_ENDPOINT=http://lgtm:4317 # Points directly to your LGTM container
+      - OTEL_EXPORTER_OTLP_ENDPOINT=http://lgtm:4317 # traces/metrics endpoint (unused while they're off)
       - OTEL_EXPORTER_OTLP_INSECURE=true
       - OTEL_METRICS_EXPORT_INTERVAL_MILLIS=10000
       # Logs go to OpenObserve instead (OTLP/HTTP, org "default", stream "openwebui_backend" — O2
-      # doesn't allow hyphens in stream names); traces and metrics stay on lgtm.
+      # doesn't allow hyphens in stream names).
       # Auth and stream both go in OTEL_EXPORTER_OTLP_LOGS_HEADERS: the OTel exporter only reads it
       # when Open WebUI passes no headers itself, so don't also set OTEL_LOGS_BASIC_AUTH_*.
       - OTEL_LOGS_OTLP_SPAN_EXPORTER=http
@@ -326,8 +333,6 @@ services:
       authentik-server:
         condition: service_started
       ollama:
-        condition: service_started
-      lgtm:
         condition: service_started
       milvus-init-auth:
         condition: service_completed_successfully
