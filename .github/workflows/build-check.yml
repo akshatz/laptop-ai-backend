@@ -23,8 +23,11 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: ${{ inputs.branch || github.ref }}
+      # .env is gitignored, so validate with the documented example values. Required variables
+      # (${VAR:?...}, e.g. OLLAMA_CONTAINER_ID, whose blank value would mount every container's
+      # logs) fail without them, and a variable missing from .env.example shows up here.
       - name: Validate docker-compose.yml
-        run: docker compose -f devops/docker-compose.yml config
+        run: docker compose --env-file .env.example -f devops/docker-compose.yml config -q
 
   backend-build:
     runs-on: ubuntu-latest
