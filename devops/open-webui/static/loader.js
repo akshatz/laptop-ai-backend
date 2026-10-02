@@ -1,10 +1,70 @@
 // Mounted over Open WebUI's empty /app/build/static/loader.js (copied to /static/loader.js at
-// startup, and loaded by every page). Adds a "Sign up" button under "Continue with authentik" on
-// the sign-in page, linking to authentik's self-enrollment flow
-// (authentik/blueprints/self-enrollment.yaml) on the same host, port 9443 (Caddy).
-// After sign-up authentik follows next= to the Open WebUI application's launch URL; it only
-// accepts relative next= values, hence the /application/launch/ hop instead of a direct URL.
+// startup, and loaded by every page). Two things:
+//
+// 1. Signed-out visitors go straight to authentik. OAUTH_AUTO_REDIRECT does this too, but only
+//    after the SvelteKit app has started and rendered its sign-in page, so "Continue with
+//    authentik" flashed for a second or two. This runs before that: it keeps the page hidden
+//    behind Open WebUI's splash screen, checks the same conditions as Open WebUI's auth page
+//    (src/routes/auth/+page.svelte — auto_redirect on, a single OAuth provider, no login form, no
+//    LDAP/trusted-header, not onboarding, no token; skipped after logout and on ?error= / ?form=),
+//    and then redirects. If any condition fails, the page is shown as usual.
+//
+// 2. A "Sign up" button under "Continue with authentik" on the sign-in page (still shown after
+//    logout or a sign-in error), linking to authentik's self-enrollment flow
+//    (authentik/blueprints/self-enrollment.yaml) on the same host, port 9443 (Caddy). After sign-up
+//    authentik follows next= to the Open WebUI application's launch URL; it only accepts relative
+//    next= values, hence the /application/launch/ hop instead of a direct URL.
 (() => {
+	// ---- 1. early SSO redirect ----------------------------------------------------------------
+	const params = new URLSearchParams(location.search);
+	const onAuthPage = location.pathname.startsWith('/auth');
+	const hasToken = () => {
+		try {
+			if (localStorage.token) return true;
+		} catch (e) {}
+		return document.cookie.split('; ').some((c) => c.startsWith('token='));
+	};
+	const suppressed =
+		onAuthPage &&
+		(params.get('state') === 'logout' || params.has('error') || params.has('form'));
+
+	if (!hasToken() && !suppressed) {
+		// Everything except the splash screen stays invisible until we know where we're going.
+		const hide = document.createElement('style');
+		hide.textContent = 'body > :not(#splash-screen) { visibility: hidden !important; }';
+		document.head.appendChild(hide);
+		const show = () => hide.remove();
+
+		fetch('/api/config', { credentials: 'include' })
+			.then((r) => (r.ok ? r.json() : null))
+			.then((config) => {
+				const providers = Object.keys(config?.oauth?.providers ?? {});
+				const features = config?.features ?? {};
+				const redirect =
+					config?.oauth?.auto_redirect &&
+					providers.length === 1 &&
+					features.auth !== false &&
+					features.enable_login_form === false &&
+					!features.enable_ldap &&
+					!features.auth_trusted_header &&
+					!config?.onboarding &&
+					!hasToken();
+				if (!redirect) return show();
+				// Where to land after sign-in (Open WebUI reads this back in its auth page).
+				const target = onAuthPage
+					? params.get('redirect')
+					: location.pathname + location.search;
+				try {
+					if (target && target !== '/') localStorage.setItem('redirectPath', target);
+				} catch (e) {}
+				location.replace(`/oauth/${providers[0]}/login`);
+				// If navigation is blocked or slow, don't leave a blank page forever.
+				setTimeout(show, 5000);
+			})
+			.catch(show);
+	}
+
+	// ---- 2. "Sign up" button --------------------------------------------------------------------
 	const BUTTON_ID = 'authentik-signup-button';
 	const signupUrl =
 		`https://${location.hostname}:9443/if/flow/self-enrollment/` +
