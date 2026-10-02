@@ -1,0 +1,89 @@
+# Applied automatically by authentik-worker (mounted into /blueprints/custom), and re-applied
+# whenever this file changes. Values in !Env come from the worker's environment (devops/.env).
+#
+# Registers OpenBao as an OIDC application, so its UI and CLI sign in through authentik (same
+# password + required TOTP as Open WebUI) instead of the bao-admin / bao-readonly passwords, which
+# stay as a fallback for when authentik is down. Access is by group:
+#   openbao-admins   → OpenBao policy user-admin   (manage secrets, policies, auth, mounts)
+#   openbao-readers  → OpenBao policy user-readonly (read/list apps/)
+# Add people to these groups under Directory → Groups. Members of neither group are refused here,
+# before OpenBao is reached. The OpenBao side (oidc auth method, role, groups → policies) is set
+# up by openbao/setup-users.sh, which reads the groups from the `groups` claim of the profile scope.
+version: 1
+metadata:
+  name: laptop-ai-backend - OpenBao SSO
+entries:
+  # Reuses the login flow with required TOTP and the default provider flows.
+  - model: authentik_blueprints.metaapplyblueprint
+    attrs:
+      identifiers:
+        name: laptop-ai-backend - Open WebUI SSO with required TOTP
+      required: true
+
+  - model: authentik_core.group
+    id: openbao-admins
+    identifiers:
+      name: openbao-admins
+
+  - model: authentik_core.group
+    id: openbao-readers
+    identifiers:
+      name: openbao-readers
+
+  - model: authentik_providers_oauth2.oauth2provider
+    id: openbao-provider
+    identifiers:
+      name: OpenBao
+    attrs:
+      client_type: confidential
+      # Must be listed explicitly: a blueprint-created provider otherwise allows no grant types.
+      grant_types:
+        - authorization_code
+        - refresh_token
+      client_id: !Env OPENBAO_OIDC_CLIENT_ID
+      client_secret: !Env OPENBAO_OIDC_CLIENT_SECRET
+      authorization_flow: !Find [authentik_flows.flow, [slug, default-provider-authorization-implicit-consent]]
+      invalidation_flow: !Find [authentik_flows.flow, [slug, default-provider-invalidation-flow]]
+      # RS256-signed ID tokens, verified by OpenBao through the provider's JWKS.
+      signing_key: !Find [authentik_crypto.certificatekeypair, [name, authentik Self-signed Certificate]]
+      sub_mode: hashed_user_id
+      # OpenBao UI callback (/ui/vault/auth/<mount>/oidc/callback, mount `oidc`) on each address the
+      # UI is opened on, plus the CLI's local listener (`bao login -method=oidc`).
+      redirect_uris:
+        - matching_mode: strict
+          url: http://localhost:8200/ui/vault/auth/oidc/oidc/callback
+        - matching_mode: strict
+          url: http://127.0.0.1:8200/ui/vault/auth/oidc/oidc/callback
+        - matching_mode: strict
+          url: !Format ["http://%s:8200/ui/vault/auth/oidc/oidc/callback", !Env OPEN_WEBUI_HOST]
+        - matching_mode: strict
+          url: http://localhost:8250/oidc/callback
+      property_mappings:
+        - !Find [authentik_providers_oauth2.scopemapping, [managed, goauthentik.io/providers/oauth2/scope-openid]]
+        - !Find [authentik_providers_oauth2.scopemapping, [managed, goauthentik.io/providers/oauth2/scope-email]]
+        # Includes the `groups` claim (names of the user's groups) OpenBao maps to policies.
+        - !Find [authentik_providers_oauth2.scopemapping, [managed, goauthentik.io/providers/oauth2/scope-profile]]
+
+  - model: authentik_core.application
+    id: openbao-app
+    identifiers:
+      slug: openbao
+    attrs:
+      name: OpenBao
+      provider: !KeyOf openbao-provider
+      meta_launch_url: !Format ["http://%s:8200/ui/", !Env OPEN_WEBUI_HOST]
+      # Allowed if the user is in either group.
+      policy_engine_mode: any
+
+  - model: authentik_policies.policybinding
+    identifiers:
+      target: !KeyOf openbao-app
+      group: !KeyOf openbao-admins
+    attrs:
+      order: 0
+  - model: authentik_policies.policybinding
+    identifiers:
+      target: !KeyOf openbao-app
+      group: !KeyOf openbao-readers
+    attrs:
+      order: 1
