@@ -22,7 +22,9 @@ def resolve_db_url() -> str:
         secret_id=os.environ["OPENBAO_SECRET_ID"],
     )
     secrets = client.secrets.kv.v2.read_secret_version(
-        path="custom-backend", raise_on_deleted_version=True
+        path=os.environ.get("OPENBAO_SECRET_PATH", "default/custom-backend"),
+        mount_point=os.environ.get("OPENBAO_SECRET_MOUNT", "apps"),
+        raise_on_deleted_version=True,
     )["data"]["data"]
 
     return (

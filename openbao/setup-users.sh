@@ -3,7 +3,7 @@
 # use the root token:
 #
 #   bao-admin     policy user-admin     manage secrets, policies, auth, mounts (policy-user-admin.hcl)
-#   bao-readonly  policy user-readonly  read/list every secret under secret/ (policy-user-readonly.hcl)
+#   bao-readonly  policy user-readonly  read/list every secret under apps/ (policy-user-readonly.hcl)
 #
 # Passwords come from OPENBAO_ADMIN_PASSWORD / OPENBAO_READONLY_PASSWORD in the root
 # .env. Safe to re-run: re-writes both policies and users, so changing a password in

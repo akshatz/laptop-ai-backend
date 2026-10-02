@@ -1,7 +1,7 @@
-path "secret/data/custom-backend" {
+path "apps/data/default/custom-backend" {
   capabilities = ["create", "update", "read"]
 }
 
-path "secret/metadata/custom-backend" {
+path "apps/metadata/default/custom-backend" {
   capabilities = ["read", "list"]
 }

@@ -5,7 +5,13 @@ from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, Asyn
 
 # 🔐 FETCH SECRETS FROM OPENBAO
 # custom-backend authenticates via AppRole (role/secret id only, no long-lived
-# token) and reads the KV v2 secret written by openbao/bootstrap.sh.
+# token) and reads the KV v2 secret written by openbao/bootstrap.sh, at
+# apps/default/custom-backend (apps/<environment>/<app> layout: the KV v2
+# engine is mounted at apps/, and default is the environment).
+OPENBAO_SECRET_MOUNT = os.environ.get("OPENBAO_SECRET_MOUNT", "apps")
+OPENBAO_SECRET_PATH = os.environ.get("OPENBAO_SECRET_PATH", "default/custom-backend")
+
+
 def _load_secrets_from_openbao() -> dict:
     client = hvac.Client(url=os.environ["OPENBAO_ADDR"])
     client.auth.approle.login(
@@ -13,7 +19,7 @@ def _load_secrets_from_openbao() -> dict:
         secret_id=os.environ["OPENBAO_SECRET_ID"],
     )
     return client.secrets.kv.v2.read_secret_version(
-        path="custom-backend", raise_on_deleted_version=True
+        path=OPENBAO_SECRET_PATH, mount_point=OPENBAO_SECRET_MOUNT, raise_on_deleted_version=True
     )["data"]["data"]
 
 secrets = _load_secrets_from_openbao()

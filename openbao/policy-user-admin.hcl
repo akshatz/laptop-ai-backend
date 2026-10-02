@@ -5,8 +5,8 @@
 # and users can grant themselves more, so treat this login as fully trusted.
 # Not the app's policy - custom-backend-admin's AppRole uses policy-admin.hcl.
 
-# Secrets (KV v2 at secret/)
-path "secret/*" {
+# Secrets (KV v2 at apps/)
+path "apps/*" {
   capabilities = ["create", "read", "update", "patch", "delete", "list"]
 }
 

@@ -21,9 +21,9 @@ AppRole auth, instead of reading `DATABASE_URL` directly from the environment.
 
    This initializes OpenBao (single unseal key/share — fine for a personal
    laptop, not for anything shared), unseals it, enables the KV v2 engine,
-   writes `POSTGRES_USER`/`POSTGRES_PASSWORD`/`POSTGRES_DB`/`WEBUI_SECRET_KEY`
-   from `.env` into `secret/custom-backend`, and creates two AppRoles scoped
-   to that one path: `custom-backend` (read-only, long-lived token, used by
+   writes each app's secrets from `.env` into its own folder under
+   `apps/default/` (see "Secret layout" below), and creates two
+   AppRoles scoped to `apps/default/custom-backend` only: `custom-backend` (read-only, long-lived token, used by
    the running FastAPI app) and `custom-backend-admin` (read/write,
    short-lived token, for a future rotation script only — never give its
    creds to the app itself).
@@ -57,10 +57,10 @@ cd openbao && ./auto-unseal.sh
 - `auto-unseal.sh` — unseals using the key saved by `bootstrap.sh`. Run after
   every container restart or host reboot.
 - `policy-readonly.hcl` — read-only policy for the `custom-backend` AppRole,
-  scoped to `secret/data/custom-backend` only.
+  scoped to `apps/data/default/custom-backend` only.
 - `policy-admin.hcl` — read/write policy for the `custom-backend-admin`
-  AppRole, scoped to `secret/data/custom-backend` and
-  `secret/metadata/custom-backend` — intended for a future credential
+  AppRole, scoped to `apps/data/default/custom-backend` and
+  `apps/metadata/default/custom-backend` — intended for a future credential
   rotation script, not for the running app.
 - `setup-users.sh` — creates the human logins (userpass): `bao-admin` and
   `bao-readonly`, with passwords from `OPENBAO_ADMIN_PASSWORD` /
@@ -68,7 +68,7 @@ cd openbao && ./auto-unseal.sh
   at the end once both passwords are set. Run it on its own to add or change
   the users, since `bootstrap.sh` issues new AppRole secret IDs every run.
 - `policy-user-readonly.hcl` — `bao-readonly`'s policy: read/list every secret
-  under `secret/`, no writes, no policy/auth access.
+  under `apps/`, no writes, no policy/auth access.
 - `policy-user-admin.hcl` — `bao-admin`'s policy: secrets, policies, auth
   methods (users, AppRoles), mounts, identity, leases. No seal, generate-root
   or rekey (those still need `keys.json`). It can write policies and users,
@@ -119,3 +119,31 @@ re-derives the AppRole secrets from whatever is currently in `.env` (fine for
 this stack, since `.env` itself is the ultimate source of truth for the
 Postgres/webui values — OpenBao is a broker in front of it, not the only
 copy).
+
+## Secret layout
+
+Secrets are grouped as `apps/<environment>/<app>` (the KV v2 engine is mounted at
+`apps/`, so the UI shows Secrets engines → apps → default); this stack is the
+`default` environment, so another one (say `apps/prod/…`) could sit beside it.
+
+| Path | Holds | Read by |
+|---|---|---|
+| `apps/default/custom-backend` | Postgres user/password/db, WebUI secret key, SMTP, Milvus root password | `custom-backend` (`db.py`, `resolve_db_url.py`) through its AppRole |
+| `apps/default/postgres` | Postgres user/password/db | people (bao-admin / bao-readonly) |
+| `apps/default/open-webui` | WebUI secret key | people |
+| `apps/default/milvus` | Milvus root password | people |
+| `apps/default/authentik` | secret key, bootstrap login, Open WebUI OIDC client, Open WebUI API token | people |
+| `apps/default/passbolt` | SMTP relay, MariaDB password | people |
+| `apps/default/openobserve` | root login, basic-auth header value | people |
+| `apps/default/searxng` | secret | people |
+
+Only `custom-backend` reads from OpenBao; the other services still take their
+secrets from `.env`, so these are reference copies. After changing a value in
+`.env`, re-run `./bootstrap.sh` to update OpenBao. It stops on any empty or
+misspelled `.env` value instead of writing a blank secret. `custom-backend`'s
+path can be overridden with `OPENBAO_SECRET_PATH` (default
+`default/custom-backend`) and the mount with `OPENBAO_SECRET_MOUNT` (default `apps`).
+
+The KV v2 engine used to be mounted at `secret/` (then briefly `secrets/`); re-running
+`bootstrap.sh` on an older install moves it to `apps/` (`bao secrets move`) and removes
+the old-layout paths.
