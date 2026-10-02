@@ -75,9 +75,11 @@ cd openbao && ./auto-unseal.sh
   the users, since `bootstrap.sh` issues new AppRole secret IDs every run.
   With `OPENBAO_OIDC_CLIENT_ID`/`OPENBAO_OIDC_CLIENT_SECRET` set, it also sets
   up sign-in through authentik (method **OIDC** on the login page, or
-  `bao login -method=oidc`): same password + TOTP as Open WebUI, and what you
-  can do depends on your authentik group — `openbao-admins` gets
-  `user-admin`, `openbao-readers` gets `user-readonly`, anyone else is refused.
+  `bao login -method=oidc`): same password + TOTP as Open WebUI. The role you
+  sign in with sets what you can do: `readonly` (the default) gets
+  `user-readonly` and is open to authentik groups `openbao-admins` and
+  `openbao-readers`; `admin` gets `user-admin` and is open to `openbao-admins`
+  only. Anyone in neither group is refused.
   Add people under authentik's Directory → Groups. The authentik side is
   `authentik/blueprints/openbao-sso.yaml`. The `bao-admin`/`bao-readonly`
   passwords keep working as the fallback for when authentik is down.
@@ -92,8 +94,10 @@ cd openbao && ./auto-unseal.sh
 
 ## UI
 
-http://localhost:8200/ui — Method: **OIDC** (leave Role empty) to sign in
-through authentik with your password + TOTP; you need to be in authentik group
+http://localhost:8200/ui — Method: **OIDC** to sign in through authentik with
+your password + TOTP. Leave Role empty (= `readonly`) to look secrets up, or
+enter `admin` to change things (authentik group `openbao-admins` only; on the
+CLI `bao login -method=oidc role=admin`). You need to be in authentik group
 `openbao-admins` or `openbao-readers`. If authentik is down, use Method:
 **Username** as `bao-readonly` to look secrets up or `bao-admin` to change
 things (passwords in `.env`, created by `setup-users.sh`). Keep the root token

@@ -6,10 +6,11 @@
 #   bao-readonly  policy user-readonly  read/list every secret under apps/ (policy-user-readonly.hcl)
 #
 # and, when OPENBAO_OIDC_CLIENT_ID/SECRET are set in .env, sign-in through authentik (OIDC, same
-# password + TOTP as Open WebUI) with access by authentik group:
+# password + TOTP as Open WebUI). The OIDC role picked at sign-in sets the access, limited by
+# authentik group:
 #
-#   openbao-admins   policy user-admin
-#   openbao-readers  policy user-readonly
+#   role readonly (default)  policy user-readonly  for openbao-admins and openbao-readers
+#   role admin               policy user-admin     for openbao-admins only
 #
 # (authentik side: authentik/blueprints/openbao-sso.yaml). The userpass logins stay as the
 # fallback for when authentik is down.
@@ -64,46 +65,47 @@ if [ -n "${OPENBAO_OIDC_CLIENT_ID:-}" ] && [ -n "${OPENBAO_OIDC_CLIENT_SECRET:-}
   jq -n --arg url "https://$OPEN_WEBUI_HOST:9443/application/o/openbao/" \
     --arg id "$OPENBAO_OIDC_CLIENT_ID" --arg secret "$OPENBAO_OIDC_CLIENT_SECRET" --arg ca "$CA_PEM" \
     '{oidc_discovery_url: $url, oidc_client_id: $id, oidc_client_secret: $secret,
-      oidc_discovery_ca_pem: $ca, default_role: "authentik"}' |
+      oidc_discovery_ca_pem: $ca, default_role: "readonly"}' |
     bao write auth/oidc/config - >/dev/null
 
-  # One role for everyone; what a login may do comes from the identity groups below. bound_claims
-  # refuses anyone in neither group (authentik already does, this is the second check).
-  # Redirect URIs must match authentik/blueprints/openbao-sso.yaml.
-  jq -n --arg host "$OPEN_WEBUI_HOST" '{
-      role_type: "oidc",
-      user_claim: "preferred_username",
-      groups_claim: "groups",
-      oidc_scopes: ["profile", "email"],
-      bound_claims: {groups: ["openbao-admins", "openbao-readers"]},
-      claim_mappings: {preferred_username: "username", email: "email"},
-      allowed_redirect_uris: [
-        "http://localhost:8200/ui/vault/auth/oidc/oidc/callback",
-        "http://127.0.0.1:8200/ui/vault/auth/oidc/oidc/callback",
-        ("http://" + $host + ":8200/ui/vault/auth/oidc/oidc/callback"),
-        "http://localhost:8250/oidc/callback"
-      ],
-      token_ttl: "1h",
-      token_max_ttl: "8h"
-    }' | bao write auth/oidc/role/authentik - >/dev/null
+  # One role per access level; the policy comes from the role entered at sign-in (Role field in
+  # the UI, role=... on the CLI), so admins sign in read-only unless they ask for `admin`.
+  # bound_claims refuses anyone outside the role's authentik groups (authentik already refuses
+  # anyone in neither group, this is the second check). Redirect URIs must match
+  # authentik/blueprints/openbao-sso.yaml.
+  for spec in "readonly:user-readonly:openbao-admins,openbao-readers" "admin:user-admin:openbao-admins"; do
+    IFS=: read -r role policy groups <<<"$spec"
+    jq -n --arg host "$OPEN_WEBUI_HOST" --arg policy "$policy" --arg groups "$groups" '{
+        role_type: "oidc",
+        user_claim: "preferred_username",
+        oidc_scopes: ["profile", "email"],
+        bound_claims: {groups: ($groups | split(","))},
+        claim_mappings: {preferred_username: "username", email: "email"},
+        allowed_redirect_uris: [
+          "http://localhost:8200/ui/vault/auth/oidc/oidc/callback",
+          "http://127.0.0.1:8200/ui/vault/auth/oidc/oidc/callback",
+          ("http://" + $host + ":8200/ui/vault/auth/oidc/oidc/callback"),
+          "http://localhost:8250/oidc/callback"
+        ],
+        token_policies: [$policy],
+        token_ttl: "1h",
+        token_max_ttl: "8h"
+      }' | bao write "auth/oidc/role/$role" - >/dev/null
+  done
 
-  # authentik group name → OpenBao external group (with the policy) + alias on the oidc mount.
-  OIDC_ACCESSOR=$(bao auth list -format=json | jq -r '."oidc/".accessor')
-  for pair in openbao-admins:user-admin openbao-readers:user-readonly; do
-    group=${pair%%:*}
-    bao write identity/group/name/"$group" type=external policies="${pair#*:}" >/dev/null
-    group_json=$(bao read -format=json identity/group/name/"$group")
-    if ! jq -e --arg a "$OIDC_ACCESSOR" '.data.alias.mount_accessor == $a' <<<"$group_json" >/dev/null; then
-      bao write identity/group-alias name="$group" mount_accessor="$OIDC_ACCESSOR" \
-        canonical_id="$(jq -r .data.id <<<"$group_json")" >/dev/null
-    fi
+  # Earlier setup: a single role `authentik` with access from identity groups openbao-admins /
+  # openbao-readers. Those groups would add user-admin to every admin login whatever the role, so
+  # remove them.
+  bao delete auth/oidc/role/authentik >/dev/null
+  for group in openbao-admins openbao-readers; do
+    bao delete identity/group/name/"$group" >/dev/null
   done
 
   # Show both sign-in methods as tabs on the UI's login page.
   bao auth tune -listing-visibility=unauth oidc/ >/dev/null
   bao auth tune -listing-visibility=unauth userpass/ >/dev/null
   echo "OIDC ready. Add people to authentik groups openbao-admins / openbao-readers, then sign in with"
-  echo "method 'OIDC' in the UI, or: bao login -method=oidc"
+  echo "method 'OIDC' in the UI (Role empty = readonly, or 'admin'), or: bao login -method=oidc [role=admin]"
 fi
 
 echo "Done. Fallback login: method 'Username', or: bao login -method=userpass username=bao-readonly"
