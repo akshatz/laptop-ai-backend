@@ -1,0 +1,41 @@
+# Applied automatically by authentik-worker (mounted into /blueprints/custom), and re-applied
+# whenever this file changes. Values in !Env come from the worker's environment (devops/.env).
+#
+# API access for Open WebUI's "authentik User Cleanup" Function
+# (devops/open-webui/functions/authentik_user_cleanup.py): when an admin deletes a user in Open
+# WebUI, the Function deletes the matching authentik user through authentik's API with this token.
+# The service account can only view and delete users (role below), nothing else.
+version: 1
+metadata:
+  name: laptop-ai-backend - Open WebUI user sync
+entries:
+  - model: authentik_rbac.role
+    id: role
+    identifiers:
+      name: open-webui-user-sync
+    attrs:
+      permissions:
+        - authentik_core.view_user
+        - authentik_core.delete_user
+
+  # Service accounts can't log in interactively; this one only authenticates with the token below.
+  - model: authentik_core.user
+    id: service-account
+    identifiers:
+      username: open-webui-user-sync
+    attrs:
+      name: Open WebUI user sync
+      type: service_account
+      path: goauthentik.io/service-accounts
+      roles:
+        - !KeyOf role
+
+  - model: authentik_core.token
+    identifiers:
+      identifier: open-webui-user-sync
+    attrs:
+      user: !KeyOf service-account
+      intent: api
+      expiring: false
+      description: Used by Open WebUI's authentik User Cleanup Function to delete removed users.
+      key: !Env OPEN_WEBUI_AUTHENTIK_API_TOKEN
