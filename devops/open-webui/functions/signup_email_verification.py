@@ -1,14 +1,20 @@
 """
 title: Signup Email Verification
 author: akshatz
-version: 1.3.0
+version: 1.4.0
 required_open_webui_version: 0.11.3
 description: Emails pending signups a signed, expiring verification link; confirming it promotes them from pending to user once.
 
 Open WebUI event Function (Admin → Functions → import this file, then enable it).
 
-- On `auth.signup` (password signup) or `user.created` with source `oauth` (first SSO login, which
-  never emits `auth.signup`) for a `pending` user, emails a verification link.
+- On `auth.signup` (password signup) for a `pending` user, emails a verification link.
+- On `user.created` with source `oauth` (first SSO login, which never emits `auth.signup`), the
+  identity provider has already confirmed the address (authentik's sign-up and invitation flows keep
+  an account inactive until its emailed link is opened), so with `activate_sso_users` on (default) the
+  user is promoted pending → user straight away and recorded as verified, without a second email.
+  Off: SSO users get the verification email like password signups. Event Functions run in a
+  background task, so the promotion races the browser's redirect after login; it's one DB update
+  against a full page load, but if a user ever does see the pending screen, a reload fixes it.
 - On `system.startup.completed` (and, defensively, on any event) it registers three routes on
   Open WebUI's own app, since event Functions can't declare HTTP routes themselves:
     GET  /api/v1/auths/verify-email            confirm page; the token is in the URL fragment
@@ -137,6 +143,11 @@ class Event:
             default="http://localhost:8082", description="Public URL of Open WebUI, used to build the link."
         )
         token_max_age_seconds: int = Field(default=2 * 3600, description="How long a verification link stays valid.")
+        activate_sso_users: bool = Field(
+            default=True,
+            description="Accounts created by SSO sign-in become `user` immediately (the identity provider already "
+            "confirmed the email) instead of pending with a verification email.",
+        )
         smtp_host: str = Field(default="", description="Empty → $SMTP_HOST, else smtp.gmail.com.")
         smtp_port: int = Field(default=0, description="0 → $SMTP_PORT, else 465 (implicit TLS).")
         smtp_user: str = Field(default="", description="Empty → $SMTP_USER.")
@@ -292,5 +303,12 @@ class Event:
         if not user_id:
             return
         user = await Users.get_user_by_id(user_id)
-        if user and user.role == "pending":
-            self._send_in_background(user.id, user.email, user.name)
+        if not user or user.role != "pending":
+            return
+        if name == "user.created" and self.valves.activate_sso_users:
+            # Recorded as verified like a clicked link, so an admin can still suspend them later.
+            if await self._mark_verified(user.id):
+                await Users.update_user_role_by_id(user.id, "user")
+                log.info("Activated SSO user %s, role pending -> user", user.email)
+            return
+        self._send_in_background(user.id, user.email, user.name)
