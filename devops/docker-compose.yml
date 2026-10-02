@@ -92,6 +92,27 @@ services:
     networks:
       - ai-network
 
+  # 🧾 OPENBAO AUDIT SHIPPER: OpenTelemetry Collector tailing OpenBao's audit log (read-only mount of
+  # the openbao-logs volume) into OpenObserve stream "openbao_audit". Config:
+  # devops/otel-collector/openbao-audit.yaml. Read offsets persist in otelcol-openbao-audit-storage.
+  openbao-audit-shipper:
+    image: otel/opentelemetry-collector-contrib:0.161.0
+    container_name: laptop-openbao-audit-shipper
+    restart: unless-stopped
+    # Root only so it can write read offsets to the fresh named volume and read OpenBao's 0600 log.
+    user: "0:0"
+    command: ["--config=/etc/otelcol-contrib/openbao-audit.yaml"]
+    environment:
+      - OPENOBSERVE_BASIC_AUTH=${OPENOBSERVE_BASIC_AUTH}
+    volumes:
+      - ./otel-collector/openbao-audit.yaml:/etc/otelcol-contrib/openbao-audit.yaml:ro
+      - openbao-logs:/openbao-logs:ro
+      - otelcol-openbao-audit-storage:/var/lib/otelcol/file_storage
+    depends_on:
+      - openobserve
+    networks:
+      - ai-network
+
   # 🔎 SEARXNG: self-hosted metasearch (Google, Bing, DuckDuckGo, … without API keys) used by Open WebUI's
   # web search. Internal only (no published port); config in devops/searxng/settings.yml.
   searxng:
@@ -173,6 +194,11 @@ services:
       - USER_PERMISSIONS_CHAT_VALVES=false
       - USER_PERMISSIONS_CHAT_SYSTEM_PROMPT=false
       - USER_PERMISSIONS_CHAT_PARAMS=false
+      # Global default model params for every chat (Admin → Settings → Models → Default model
+      # params). A model's own Advanced Params, and params an admin sets in a chat, override it.
+      # Only seeds a fresh DB: the saved models.default_params row wins once it exists.
+      # custom-backend uses the same temperature (CHAT_TEMPERATURE, default 0.1).
+      - 'DEFAULT_MODEL_PARAMS={"temperature": 0.1}'
       # Use Milvus as the vector store for RAG document embeddings
       - VECTOR_DB=milvus
       - MILVUS_URI=http://milvus:19530
@@ -405,6 +431,9 @@ services:
       OPEN_WEBUI_HOST: ${OPEN_WEBUI_HOST}
       OPEN_WEBUI_OIDC_CLIENT_ID: ${OPEN_WEBUI_OIDC_CLIENT_ID}
       OPEN_WEBUI_OIDC_CLIENT_SECRET: ${OPEN_WEBUI_OIDC_CLIENT_SECRET}
+      # Read by authentik/blueprints/openbao-sso.yaml (!Env).
+      OPENBAO_OIDC_CLIENT_ID: ${OPENBAO_OIDC_CLIENT_ID}
+      OPENBAO_OIDC_CLIENT_SECRET: ${OPENBAO_OIDC_CLIENT_SECRET}
       # Read by authentik/blueprints/open-webui-user-sync.yaml (!Env).
       OPEN_WEBUI_AUTHENTIK_API_TOKEN: ${OPEN_WEBUI_AUTHENTIK_API_TOKEN}
     volumes:
@@ -538,6 +567,8 @@ services:
       - "8200:8200"
     volumes:
       - openbao-data:/openbao/data
+      # Audit log (audit "file" device in config.hcl), tailed by openbao-audit-shipper
+      - openbao-logs:/openbao/logs
       - ../openbao/config.hcl:/openbao/config/config.hcl:ro
     command: ["server", "-config=/openbao/config/config.hcl"]
     networks:
@@ -634,6 +665,8 @@ volumes:
   openobserve-data: # Persists OpenObserve's logs/metrics/traces storage
   otelcol-audit-storage: # openwebui-audit-shipper's read offsets into Open WebUI's audit log
   openbao-data: # Persists sealed/unsealed OpenBao secret data across restarts
+  openbao-logs: # OpenBao's audit log (audit.log)
+  otelcol-openbao-audit-storage: # openbao-audit-shipper's read offsets into OpenBao's audit log
   passbolt-gpg: # Passbolt server GPG keypair, generated on first run
   passbolt-jwt: # Passbolt JWT signing keys, generated on first run
   passbolt-db-data: # MariaDB data for passbolt-db

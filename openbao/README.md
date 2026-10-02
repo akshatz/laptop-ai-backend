@@ -62,11 +62,25 @@ cd openbao && ./auto-unseal.sh
   AppRole, scoped to `apps/data/default/custom-backend` and
   `apps/metadata/default/custom-backend` — intended for a future credential
   rotation script, not for the running app.
+- `config.hcl` also declares the audit log (`audit "file" "file"`, written to
+  `/openbao/logs/audit.log` in the `openbao-logs` volume). The
+  `openbao-audit-shipper` service sends it to OpenObserve stream `openbao_audit`:
+  who read or changed which path, from which address, and any error. Secret
+  values in it are HMAC-hashed. OpenBao refuses requests it can't write to the
+  audit log, so a full disk stops OpenBao.
 - `setup-users.sh` — creates the human logins (userpass): `bao-admin` and
   `bao-readonly`, with passwords from `OPENBAO_ADMIN_PASSWORD` /
   `OPENBAO_READONLY_PASSWORD` in `.env`. Safe to re-run; `bootstrap.sh` runs it
   at the end once both passwords are set. Run it on its own to add or change
   the users, since `bootstrap.sh` issues new AppRole secret IDs every run.
+  With `OPENBAO_OIDC_CLIENT_ID`/`OPENBAO_OIDC_CLIENT_SECRET` set, it also sets
+  up sign-in through authentik (method **OIDC** on the login page, or
+  `bao login -method=oidc`): same password + TOTP as Open WebUI, and what you
+  can do depends on your authentik group — `openbao-admins` gets
+  `user-admin`, `openbao-readers` gets `user-readonly`, anyone else is refused.
+  Add people under authentik's Directory → Groups. The authentik side is
+  `authentik/blueprints/openbao-sso.yaml`. The `bao-admin`/`bao-readonly`
+  passwords keep working as the fallback for when authentik is down.
 - `policy-user-readonly.hcl` — `bao-readonly`'s policy: read/list every secret
   under `apps/`, no writes, no policy/auth access.
 - `policy-user-admin.hcl` — `bao-admin`'s policy: secrets, policies, auth
@@ -78,11 +92,13 @@ cd openbao && ./auto-unseal.sh
 
 ## UI
 
-http://localhost:8200/ui — Method: **Username**, as `bao-readonly` to look
-secrets up or `bao-admin` to change things (passwords in `.env`, created by
-`setup-users.sh`). Keep the root token from `keys.json` (Method: **Token**) for
-break-glass only, e.g. if the userpass method is broken. There's no OIDC/SSO or
-MFA on OpenBao logins; AppRole is for `custom-backend` only.
+http://localhost:8200/ui — Method: **OIDC** (leave Role empty) to sign in
+through authentik with your password + TOTP; you need to be in authentik group
+`openbao-admins` or `openbao-readers`. If authentik is down, use Method:
+**Username** as `bao-readonly` to look secrets up or `bao-admin` to change
+things (passwords in `.env`, created by `setup-users.sh`). Keep the root token
+from `keys.json` (Method: **Token**) for break-glass only, e.g. if both are
+broken. AppRole is for `custom-backend` only.
 
 ## Backup (do this — a laptop crash otherwise loses all secrets)
 

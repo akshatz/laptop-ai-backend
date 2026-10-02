@@ -1,0 +1,90 @@
+  # OpenTelemetry Collector config for the `openbao-audit-shipper` service: tails OpenBao's audit log
+# (the `audit "file"` device in openbao/config.hcl, one JSON object per line) from the openbao-logs
+# volume and sends it to OpenObserve stream `openbao_audit`. Secret values, tokens and accessors in
+# the log are already HMAC-hashed by OpenBao.
+extensions:
+  # Remembers how far the file has been read, so restarts don't re-send old entries.
+  file_storage:
+    directory: /var/lib/otelcol/file_storage
+
+receivers:
+  filelog/openbao_audit:
+    include: [/openbao-logs/audit.log]
+    start_at: beginning
+    storage: file_storage
+    operators:
+      - type: json_parser
+        timestamp:
+          parse_from: attributes.time
+          layout_type: gotime
+          layout: "2006-01-02T15:04:05.999999999Z07:00"
+      # OpenBao writes a "request" line before handling a call and a "response" line after it; the
+      # response line repeats the request, adds the outcome and (for logins) who logged in, so keep
+      # only those.
+      - type: filter
+        expr: 'attributes.type != "response"'
+      # A few flat columns to search on in O2 instead of hundreds of flattened request/response
+      # fields. `user` is the userpass username, the AppRole role name, or the token's display name
+      # ("root" for the root token); logins without valid credentials have no auth, so "-".
+      - type: add
+        field: attributes.user
+        value: EXPR(attributes.auth?.metadata?.username ?? attributes.auth?.metadata?.role_name ?? attributes.auth?.display_name ?? "-")
+      - type: add
+        field: attributes.policies
+        value: EXPR(join(attributes.auth?.policies ?? [], ","))
+      - type: add
+        field: attributes.operation
+        value: EXPR(attributes.request.operation)
+      - type: add
+        field: attributes.path
+        value: EXPR(attributes.request.path)
+      - type: add
+        field: attributes.remote_address
+        value: EXPR(attributes.request?.remote_address ?? "")
+      # OpenBao wraps errors as "1 error occurred:\n\t* permission denied\n\n"; keep just the message.
+      - type: add
+        field: attributes.error
+        value: EXPR(trim(replace(replace(attributes.error ?? "", "1 error occurred:", ""), "* ", "")))
+      # The whole original line stays available as one string.
+      - type: move
+        from: body
+        to: attributes.entry
+      - type: remove
+        field: attributes.auth
+      - type: remove
+        field: attributes.request
+      - type: remove
+        field: attributes.response
+      - type: remove
+        field: attributes.time
+      - type: remove
+        field: attributes.type
+      # Readable one-line body for O2's log view, e.g. "bao-readonly read apps/data/default/postgres"
+      # or "bao-readonly create apps/data/default/x -> permission denied".
+      # (quoted: the ": " inside would otherwise make YAML read this line as a map)
+      - type: add
+        field: body
+        value: 'EXPR(attributes.user + " " + attributes.operation + " " + attributes.path + (attributes.error == "" ? "" : " -> " + attributes.error))'
+
+processors:
+  resource:
+    attributes:
+      - key: service.name
+        value: openbao
+        action: upsert
+  batch: {}
+
+exporters:
+  otlphttp/openobserve:
+    logs_endpoint: http://openobserve:5080/api/default/v1/logs
+    headers:
+      Authorization: Basic ${env:OPENOBSERVE_BASIC_AUTH}
+      stream-name: openbao_audit
+
+service:
+  extensions: [file_storage]
+  pipelines:
+    logs:
+      receivers: [filelog/openbao_audit]
+      processors: [resource, batch]
+      exporters: [otlphttp/openobserve]
