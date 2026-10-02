@@ -252,7 +252,7 @@ A third event Function, [devops/open-webui/functions/password_expiry.py](devops/
 - The 180 days and other settings are the Function's Valves (**Admin → Functions → Password Expiry → ⚙**), stored in Open WebUI's database — not environment variables.
 - Only the email/password sign-in is checked (not LDAP, OAuth or API keys), and already-signed-in sessions last until they expire.
 
-### Deleting users removes their authentik account
+### Deleting users
 
 Another event Function, [devops/open-webui/functions/authentik_user_cleanup.py](devops/open-webui/functions/authentik_user_cleanup.py), makes **Admin → Users → Delete** in Open WebUI also delete the person's authentik (SSO) account, so they can't sign in again or come back as a new pending user. Import and enable it the same way, then restart `open-webui` once (it hooks Open WebUI's delete endpoint at startup).
 
@@ -260,6 +260,9 @@ Another event Function, [devops/open-webui/functions/authentik_user_cleanup.py](
 - authentik superusers (such as `akadmin`) and service accounts are never deleted.
 - It calls authentik's API as the `open-webui-user-sync` service account ([authentik/blueprints/open-webui-user-sync.yaml](authentik/blueprints/open-webui-user-sync.yaml)), which may only view and delete users. Its token is `OPEN_WEBUI_AUTHENTIK_API_TOKEN` in `.env` (generate with `openssl rand -hex 32`), passed to authentik and to `open-webui` as `AUTHENTIK_API_TOKEN`.
 - If authentik can't be reached, the Open WebUI user is still deleted and the failure is logged. Delete the authentik user by hand under **Directory → Users**.
+- **Their chats are kept.** Open WebUI deletes a user's chats with the account, so the Function first copies them into an admin-only archive (`fn_archived_chats`). If that copy fails, the user isn't deleted. Browse it at **`/api/v1/archived-chats`** on Open WebUI while signed in as an admin (e.g. `https://<OPEN_WEBUI_HOST>:8444/api/v1/archived-chats`): each chat opens as a readable transcript, can be downloaded as JSON, or deleted. Attachments aren't kept. Archived chats stay until you delete them.
+- **Deleting someone who asked to be erased completely:** switch off the Function's `archive_chats` Valve (**Admin → Functions → authentik User Cleanup → ⚙**) before deleting them, then switch it back on.
+- It also removes what Open WebUI leaves behind after a delete: the user's memories, notes, tags and uploaded files, including their embeddings in Milvus (Open WebUI's own file delete leaves the Milvus collection), and their rows in `fn_email_verified` / `fn_password_age`. `fn_user_sso_status` keeps them, marked `removed` by its sync script.
 
 ### Function tables
 
@@ -269,6 +272,7 @@ The Functions (and the SSO status script) keep their state in Postgres, in Open 
 |---|---|---|
 | `fn_email_verified` | Signup Email Verification | Users verified once (`user_id`, `verified_at`) |
 | `fn_password_age` | Password Expiry | When each password was last set, and the last reminder (`user_id`, `changed_at`, `last_warned_at`) |
+| `fn_archived_chats` | authentik User Cleanup | Chats of deleted users, copied just before deletion (full chat JSON and messages, the user's email/name, when and by whom) — see [Deleting users](#deleting-users) |
 | `fn_user_sso_status` | `devops/open-webui/sync-user-status.sh` (not a Function) | Each person's SSO onboarding stage and when they reached each step, keyed by lowercased email (see [Inviting users](#inviting-users)) |
 
 They're created by a separate Alembic setup, [devops/open-webui/migrations/](devops/open-webui/migrations/), which tracks its history in `fn_alembic_version` so it never touches Open WebUI's own migrations in the same database. The one-shot `open-webui-fn-migrate` service applies it on every `docker compose up` (a no-op once current), and `open-webui` waits for it. Its first revision also imports rows from the Functions' earlier SQLite files (`email_verification.db` / `password_expiry.db` on the `open-webui-data` volume), if present. Once that's done, those files are unused and can be deleted.
