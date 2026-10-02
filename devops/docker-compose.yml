@@ -257,8 +257,9 @@ services:
       - ENABLE_TAG_GENERATION=false
       # Total time Open WebUI waits for a model response (whole stream, not per chunk). 60s cut
       # off longer answers mid-generation ("Error submitting message"), especially with web search
-      # results in the prompt.
-      - AIOHTTP_CLIENT_TIMEOUT=300
+      # results in the prompt. 600s since fast-ai searches before every answer (function_calling
+      # legacy) and CPU-only answers already take up to ~2.5 min.
+      - AIOHTTP_CLIENT_TIMEOUT=600
       # Signup email verification (event Function): new users start pending and are promoted
       # once they confirm the emailed link. Reuses Passbolt's Gmail SMTP relay credentials,
       # which the Function falls back to when its SMTP Valves are left empty.
