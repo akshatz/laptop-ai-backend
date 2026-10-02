@@ -161,6 +161,10 @@ services:
       - WEB_SEARCH_ENGINE=searxng
       - SEARXNG_QUERY_URL=http://searxng:8080/search
       - WEB_SEARCH_RESULT_COUNT=3
+      # Web search on by default in every chat for all users (the user setting Settings → Interface →
+      # Web Search = "Always"). A user's own choice there still wins. Saved DB setting
+      # ui.default_interface_settings overrides this once it exists — see README "Web search".
+      - 'DEFAULT_INTERFACE_SETTINGS={"webSearch": "always"}'
       # Use Milvus as the vector store for RAG document embeddings
       - VECTOR_DB=milvus
       - MILVUS_URI=http://milvus:19530
@@ -214,9 +218,19 @@ services:
       - OAUTH_SCOPES=openid email profile
       - OAUTH_CODE_CHALLENGE_METHOD=S256
       - ENABLE_OAUTH_SIGNUP=true
+      # Skip Open WebUI's own sign-in page and go straight to authentik (only applies while authentik
+      # is the sole provider and the login form is off). Not done right after logout or on a login
+      # error, so the page — with its "Sign up" button (open-webui/static/loader.js) — still shows then.
+      - OAUTH_AUTO_REDIRECT=true
       # Links existing Open WebUI accounts to the authentik user with the same email on first SSO
-      # login. Safe only because authentik accounts are created by the admin (no self-enrollment).
+      # login. Safe only because every authentik account's email is confirmed: invitations are
+      # admin-issued, and self sign-up (authentik/blueprints/self-enrollment.yaml) keeps the account
+      # inactive until the emailed link is opened.
       - OAUTH_MERGE_ACCOUNTS_BY_EMAIL=true
+      # authentik User Cleanup Function (devops/open-webui/functions/authentik_user_cleanup.py): deleting
+      # a user in Open WebUI also deletes their authentik account, via this API token.
+      - AUTHENTIK_API_URL=http://authentik-server:9000
+      - AUTHENTIK_API_TOKEN=${OPEN_WEBUI_AUTHENTIK_API_TOKEN}
       # Rejects email/password sign-in at the API. The login form itself is a saved DB setting
       # (ui.enable_login_form) that overrides ENABLE_LOGIN_FORM once set — turn it off in
       # Admin → Settings too, or password signups still work (see README "Open WebUI SSO + MFA").
@@ -239,6 +253,9 @@ services:
     volumes:
       - open-webui-data:/app/backend/data
       - caddy-ca-public:/caddy-ca:ro
+      # "Sign up" button on the sign-in page → authentik's self-enrollment flow. Open WebUI copies
+      # this into /static/loader.js at startup, so recreate the container after editing it.
+      - ./open-webui/static/loader.js:/app/build/static/loader.js:ro
     depends_on:
       searxng:
         condition: service_started
@@ -380,8 +397,12 @@ services:
       OPEN_WEBUI_HOST: ${OPEN_WEBUI_HOST}
       OPEN_WEBUI_OIDC_CLIENT_ID: ${OPEN_WEBUI_OIDC_CLIENT_ID}
       OPEN_WEBUI_OIDC_CLIENT_SECRET: ${OPEN_WEBUI_OIDC_CLIENT_SECRET}
+      # Read by authentik/blueprints/open-webui-user-sync.yaml (!Env).
+      OPEN_WEBUI_AUTHENTIK_API_TOKEN: ${OPEN_WEBUI_AUTHENTIK_API_TOKEN}
     volumes:
       - authentik-data:/data
+      # Custom email templates (authentik's email.template_dir); the server renders flow emails.
+      - ../authentik/email-templates:/templates:ro
     depends_on:
       authentik-db-init:
         condition: service_completed_successfully
@@ -406,6 +427,8 @@ services:
     volumes:
       - authentik-data:/data
       - ../authentik/blueprints:/blueprints/custom:ro
+      # Also here so blueprints/admin forms can list the custom templates.
+      - ../authentik/email-templates:/templates:ro
     depends_on:
       authentik-db-init:
         condition: service_completed_successfully

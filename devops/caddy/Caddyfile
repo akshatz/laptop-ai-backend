@@ -16,5 +16,12 @@ https://{$OPEN_WEBUI_HOST}, https://localhost {
 # live at https://{$OPEN_WEBUI_HOST}:9443 for browsers and for Open WebUI's server-side calls alike.
 https://{$OPEN_WEBUI_HOST}:9443, https://localhost:9443 {
 	tls internal
+	# authentik flows that finish without a destination (password reset, signing in at :9443
+	# directly, logout) end at "/", which would show authentik's app dashboard. Send those to Open
+	# WebUI instead; it auto-redirects to SSO and the already-signed-in user lands in the chat.
+	# Only the bare "/" — authentik's own pages (/if/user/ settings, /if/admin/, /if/flow/,
+	# /application/o/ OIDC, /api/) are untouched.
+	@root path /
+	redir @root https://{host}:8444/ 302
 	reverse_proxy authentik-server:9000
 }

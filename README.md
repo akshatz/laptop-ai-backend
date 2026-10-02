@@ -148,10 +148,10 @@ Note: OpenBao starts **sealed** after every container restart or host reboot —
 
 Open WebUI sign-in goes through [authentik](https://goauthentik.io) (`authentik-server` + `authentik-worker`, using a separate `authentik` database in `postgres-db`), which requires a TOTP code from Google Authenticator or any other TOTP app on every login. Open WebUI's own email/password sign-in is turned off.
 
-- authentik is served by `open-webui-proxy` at `https://<OPEN_WEBUI_HOST>:9443` (same Caddy CA as Open WebUI on 8444). Open WebUI shows a **Continue with authentik** button.
-- Its configuration is the blueprint [authentik/blueprints/open-webui-sso.yaml](authentik/blueprints/open-webui-sso.yaml), applied by the worker on start and whenever the file changes. It makes MFA mandatory in authentik's default login flow (users without a TOTP device get a QR code to set one up before their first login completes; TOTP and static recovery codes only) and registers the Open WebUI OIDC client.
+- authentik is served by `open-webui-proxy` at `https://<OPEN_WEBUI_HOST>:9443` (same Caddy CA as Open WebUI on 8444). The login page's password field has an eye icon to show/hide the password (`allow_show_password` in [open-webui-sso.yaml](authentik/blueprints/open-webui-sso.yaml); authentik has no such option for the password boxes on the sign-up, invitation and reset forms). Opening Open WebUI goes straight to authentik's login page (`OAUTH_AUTO_REDIRECT`, done early by [devops/open-webui/static/loader.js](devops/open-webui/static/loader.js) so Open WebUI's own sign-in page doesn't flash first), so there's one sign-in, not two. Flows that finish without a destination (password reset, signing in at `:9443` directly, logout) would end on authentik's app dashboard at `/`; Caddy redirects that bare `/` to Open WebUI, which signs the user straight in. Use `https://<OPEN_WEBUI_HOST>:9443/if/admin/` for authentik's admin UI and `/if/user/` for a user's own authentik settings (password, authenticators). Open WebUI's own page, with **Continue with authentik** and **Sign up**, only shows after logging out or after a sign-in error.
+- Its configuration is the blueprint [authentik/blueprints/open-webui-sso.yaml](authentik/blueprints/open-webui-sso.yaml), applied by the worker on start and whenever the file changes. It makes MFA mandatory in authentik's default login flow (users without a TOTP device get a QR code to set one up before their first login completes; TOTP and static recovery codes only; after a code is entered, that browser isn't asked again for 3 hours — the password still is, and other browsers/devices still need a code) and registers the Open WebUI OIDC client.
 - Open WebUI calls authentik server-side at the same `https://<OPEN_WEBUI_HOST>:9443` URL browsers use, so issuer and endpoint URLs match. It trusts Caddy's CA through `caddy-ca-export`, a one-shot service that copies only Caddy's public root cert (never the CA key) into the `caddy-ca-public` volume.
-- Sign-up is invite-only (see [Inviting users](#inviting-users)); there's no public sign-up page. The first SSO login links an existing Open WebUI account with the same email (`OAUTH_MERGE_ACCOUNTS_BY_EMAIL`). A new email gets a new Open WebUI account in the default role (`pending`) and is sent the signup verification email; clicking its link promotes the account to `user` (an admin can also approve it under **Admin → Users**).
+- Anyone can sign up: Open WebUI's sign-in page has a **Sign up** button under **Continue with authentik** (added by [devops/open-webui/static/loader.js](devops/open-webui/static/loader.js); recreate `open-webui` after editing it), and authentik's own login page has a **Sign up** link. Both go to the `self-enrollment` flow ([authentik/blueprints/self-enrollment.yaml](authentik/blueprints/self-enrollment.yaml)); afterwards authentik sends the user on to Open WebUI. It asks for name, email and password only (the email doubles as the authentik username), refuses an email that's already registered, and creates the account **inactive** until the emailed confirmation link (valid 30 minutes) is opened. Only then does it continue to TOTP setup and login. Confirming the email matters because of the account linking below. Admins can also invite people (see [Inviting users](#inviting-users)). The first SSO login links an existing Open WebUI account with the same email (`OAUTH_MERGE_ACCOUNTS_BY_EMAIL`). A new email gets a new Open WebUI account that's active (`user`) straight away: authentik has already confirmed the address, so the signup verification Function skips its own email for SSO accounts (Valve `activate_sso_users`).
 
 ### First-time setup
 
@@ -167,7 +167,7 @@ Open WebUI sign-in goes through [authentik](https://goauthentik.io) (`authentik-
    sudo ufw allow from 172.16.0.0/12 to any port 9443 proto tcp comment 'open-webui -> authentik'
    ```
 3. `docker compose -f devops/docker-compose.yml up -d`. From here, Open WebUI password sign-in is rejected (`ENABLE_PASSWORD_AUTH=false`).
-4. Open `https://<OPEN_WEBUI_HOST>:9443`, sign in as `akadmin`, and scan the QR code with Google Authenticator when asked.
+4. Open `https://<OPEN_WEBUI_HOST>:9443/if/admin/`, sign in as `akadmin`, and scan the QR code with Google Authenticator when asked.
 5. Invite each existing Open WebUI user (see [Inviting users](#inviting-users)) with their **same email**, so their accounts get linked. They choose their own password and set up TOTP while signing up.
 6. Turn off Open WebUI's login form. `ENABLE_LOGIN_FORM=false` in compose is ignored because Open WebUI has already saved `ui.enable_login_form` in its database, and while that form is on, `/api/v1/auths/signup` still accepts password signups. Delete the saved value so the compose setting applies, then restart:
    ```bash
@@ -177,13 +177,15 @@ Open WebUI sign-in goes through [authentik](https://goauthentik.io) (`authentik-
 
 **Rollback:** set `ENABLE_PASSWORD_AUTH=true` and `ENABLE_LOGIN_FORM=true` on `open-webui` and run `up -d` again. If authentik is down, nobody can sign in to Open WebUI, and the rollback is how you get back in.
 
+**Forgot password:** on authentik's login page, click **Forgot username or password?** (also offered on the password step), or an admin sends a recovery link from **Directory → Users**. Flow `password-recovery` ([authentik/blueprints/password-recovery.yaml](authentik/blueprints/password-recovery.yaml)): enter email or username → type the **6-digit code** emailed to the account's address (valid 15 minutes, wrong guesses slow down further attempts; same tab, no link). The email ([authentik/email-templates/password_reset_code.html](authentik/email-templates/password_reset_code.html), mounted at `/templates` in authentik) puts the code in the preview line, so Gmail and iOS Mail offer **Copy code**, and one tap or double-click selects the whole code; a real copy button isn't possible because email clients strip scripts → enter a TOTP or static recovery code → set a new password (same rules as sign-up) → signed in. Unknown emails/usernames are refused straight away (the sign-up form already reveals which emails are registered). The TOTP step means a stolen mailbox alone can't reset an account; someone who lost both password and authenticator needs an admin (below, then an admin recovery link).
+
 **Lost authenticator:** in authentik, open the user under **Directory → Users → MFA Authenticators** and delete the TOTP device. The user enrolls a new one on their next login.
 
 ### Inviting users
 
-New users join through a one-time invite link ([authentik/blueprints/invitations.yaml](authentik/blueprints/invitations.yaml)):
+Besides self sign-up, you can send new users a one-time invite link ([authentik/blueprints/invitations.yaml](authentik/blueprints/invitations.yaml)):
 
-1. In authentik's admin UI (`https://<OPEN_WEBUI_HOST>:9443`), go to **Directory → Invitations → Create**.
+1. In authentik's admin UI (`https://<OPEN_WEBUI_HOST>:9443/if/admin/`), go to **Directory → Invitations → Create**.
 2. Fill in:
    - **Name**: e.g. `invite-jatin`
    - **Flow**: `invitation-enrollment`
@@ -191,8 +193,8 @@ New users join through a one-time invite link ([authentik/blueprints/invitations
    - **Single use**: on
    - **Custom attributes**: `{"email": "their@email.com"}`. Use the email of their existing Open WebUI account, if they have one, so the accounts get linked.
 3. Open the new invitation's row, copy the **link**, and send it to them.
-4. They open the link, choose a username, name and password (the [password rules](#password-rules) apply), and scan a QR code with Google Authenticator. That creates and signs in their authentik account.
-5. They click **Continue with authentik** on Open WebUI. People with an existing Open WebUI account (same email) go straight in. New people get a **pending** account, which you approve under **Admin → Users**.
+4. They open the link, choose a username, name and password (the [password rules](#password-rules) apply), confirm their email from the link authentik sends (valid 24 hours; the account stays inactive until then, since the pre-filled email can be changed — if the link expires, delete the inactive user under **Directory → Users** and send a new invite, because the single-use invite is already spent), and scan a QR code with Google Authenticator. That creates and signs in their authentik account.
+5. They click **Continue with authentik** on Open WebUI. People with an existing Open WebUI account (same email) go straight in. New people get an active account straight away.
 
 Links without a valid invitation are refused ("Invalid invite/invite not found"). Delete an unused invitation to revoke it. Don't open a link yourself to check it: opening it uses up a single-use invitation.
 
@@ -213,7 +215,7 @@ New passwords must be **at least 8 characters, with an uppercase letter, a lower
 
 ## Open WebUI signup verification
 
-New Open WebUI signups start as `pending` (`DEFAULT_USER_ROLE=pending`) and are emailed a verification link; confirming it promotes them to `user`. This is an Open WebUI event Function, [devops/open-webui/functions/signup_email_verification.py](devops/open-webui/functions/signup_email_verification.py) (Open WebUI declined adding it to core — [discussion #31626](https://github.com/open-webui/open-webui/discussions/31626)).
+New Open WebUI password signups start as `pending` (`DEFAULT_USER_ROLE=pending`) and are emailed a verification link; confirming it promotes them to `user`. Accounts created by SSO sign-in are promoted to `user` immediately without the email (Valve `activate_sso_users`, on by default), because authentik's sign-up and invitation flows already confirm the address. This is an Open WebUI event Function, [devops/open-webui/functions/signup_email_verification.py](devops/open-webui/functions/signup_email_verification.py) (Open WebUI declined adding it to core — [discussion #31626](https://github.com/open-webui/open-webui/discussions/31626)).
 
 One-time setup, after the stack is up:
 
@@ -249,6 +251,15 @@ A third event Function, [devops/open-webui/functions/password_expiry.py](devops/
 - **Overview:** while signed in to Open WebUI as an admin, open `/api/v1/auths/password-expiry` (e.g. http://localhost:8082/api/v1/auths/password-expiry) for every user's password date, expiry date, days left and status, soonest first; add `?format=json` for JSON. Dates marked * are estimated for users the Function hasn't recorded yet, and viewing the page doesn't start anyone's clock.
 - The 180 days and other settings are the Function's Valves (**Admin → Functions → Password Expiry → ⚙**), stored in Open WebUI's database — not environment variables.
 - Only the email/password sign-in is checked (not LDAP, OAuth or API keys), and already-signed-in sessions last until they expire.
+
+### Deleting users removes their authentik account
+
+Another event Function, [devops/open-webui/functions/authentik_user_cleanup.py](devops/open-webui/functions/authentik_user_cleanup.py), makes **Admin → Users → Delete** in Open WebUI also delete the person's authentik (SSO) account, so they can't sign in again or come back as a new pending user. Import and enable it the same way, then restart `open-webui` once (it hooks Open WebUI's delete endpoint at startup).
+
+- It finds the authentik account by the SSO link Open WebUI stored at the user's first login. For users who never signed in with SSO, it uses the single authentik account with the same email (Valve `match_by_email`) and does nothing if several share it.
+- authentik superusers (such as `akadmin`) and service accounts are never deleted.
+- It calls authentik's API as the `open-webui-user-sync` service account ([authentik/blueprints/open-webui-user-sync.yaml](authentik/blueprints/open-webui-user-sync.yaml)), which may only view and delete users. Its token is `OPEN_WEBUI_AUTHENTIK_API_TOKEN` in `.env` (generate with `openssl rand -hex 32`), passed to authentik and to `open-webui` as `AUTHENTIK_API_TOKEN`.
+- If authentik can't be reached, the Open WebUI user is still deleted and the failure is logged. Delete the authentik user by hand under **Directory → Users**.
 
 ### Function tables
 
@@ -306,7 +317,8 @@ Documents are embedded with Ollama's **`embeddinggemma`** (Google, 768-dim, 2048
 
 Open WebUI can search the web through **SearXNG** (`searxng` service, [devops/searxng/settings.yml](devops/searxng/settings.yml)), a self-hosted metasearch engine that queries Google, Bing, Brave, DuckDuckGo and others without API keys or accounts. It's only reachable inside the Docker network.
 
-- In a chat, click **Web Search** (the globe icon under the message box) for questions that need current information. Open WebUI searches, fetches the top 3 result pages (`WEB_SEARCH_RESULT_COUNT`), picks the relevant parts with the embedding model, and answers from them with sources. It works with any model.
+- Web search is **on by default in every chat for all users** (`DEFAULT_INTERFACE_SETTINGS={"webSearch": "always"}` in compose, the same as each user choosing **Settings → Interface → Web Search: Always**). A user can switch it off for themselves there. The default is a saved setting (`ui.default_interface_settings`); once saved it overrides compose, so change it under **Admin → Settings → General** (default interface settings) or delete that row so compose applies again.
+- For each message, Open WebUI searches, fetches the top 3 result pages (`WEB_SEARCH_RESULT_COUNT`), picks the relevant parts with the embedding model, and answers from them with sources. It works with any model.
 - Searches leave your machine through SearXNG, so each engine sees your IP but not who asked.
 - Enable/engine/URL are saved Open WebUI settings (`web.search.*`), which override the compose values once saved. Change them under **Admin → Settings → Web Search**.
 - `SEARXNG_SECRET` in `.env` signs SearXNG's cookies. Generate it with `openssl rand -hex 32`.

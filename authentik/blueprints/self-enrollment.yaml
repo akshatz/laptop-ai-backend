@@ -1,0 +1,205 @@
+# Applied automatically by authentik-worker (mounted into /blueprints/custom), and re-applied
+# whenever this file changes.
+#
+# Public sign-up, linked as "Sign up" from authentik's login page (and so from Open WebUI's
+# "Continue with authentik"). Anyone can start it; the new user:
+#   1. enters name, email and password — no username field, the email is used as the username
+#      (password creation rules from password-policy.yaml apply — same policy object). An email
+#      already used by an authentik account is refused.
+#   2. is created inactive and emailed a confirmation link (authentik's global email settings,
+#      AUTHENTIK_EMAIL__* on the server/worker). Opening it activates the account. This proves
+#      they own the address, which matters because Open WebUI merges SSO logins into an existing
+#      account with the same email (OAUTH_MERGE_ACCOUNTS_BY_EMAIL) — without it anyone could sign
+#      up with an admin's email and get linked to the admin account.
+#   3. sets up a TOTP authenticator (same required-MFA stage as the login flow), and is logged in.
+# Open WebUI then creates their account as pending on first "Continue with authentik", as for
+# invited users. The invite-only flow (invitations.yaml) still works alongside this one.
+version: 1
+metadata:
+  name: laptop-ai-backend - Self-service sign-up
+entries:
+  - model: authentik_blueprints.metaapplyblueprint
+    attrs:
+      identifiers:
+        name: Default - Authentication flow
+      required: true
+  - model: authentik_blueprints.metaapplyblueprint
+    attrs:
+      identifiers:
+        name: laptop-ai-backend - Open WebUI SSO with required TOTP
+      required: true
+  - model: authentik_blueprints.metaapplyblueprint
+    attrs:
+      identifiers:
+        name: laptop-ai-backend - Password creation rules
+      required: true
+
+  - model: authentik_flows.flow
+    id: flow
+    identifiers:
+      slug: self-enrollment
+    attrs:
+      name: Self-service sign-up
+      title: Create your account
+      designation: enrollment
+      authentication: require_unauthenticated
+
+  - model: authentik_stages_prompt.prompt
+    id: field-name
+    identifiers:
+      name: self-enrollment-field-name
+    attrs:
+      field_key: name
+      label: Name
+      type: text
+      required: true
+      placeholder: Full name
+      order: 1
+  - model: authentik_stages_prompt.prompt
+    id: field-email
+    identifiers:
+      name: self-enrollment-field-email
+    attrs:
+      field_key: email
+      label: Email
+      type: email
+      required: true
+      placeholder: Email
+      sub_text: We'll send a confirmation link to this address.
+      order: 2
+  - model: authentik_stages_prompt.prompt
+    id: field-password
+    identifiers:
+      name: self-enrollment-field-password
+    attrs:
+      field_key: password
+      label: Password
+      type: password
+      required: true
+      placeholder: Password
+      sub_text: At least 8 characters, with an uppercase letter, a lowercase letter, a number and a symbol.
+      order: 3
+  - model: authentik_stages_prompt.prompt
+    id: field-password-repeat
+    identifiers:
+      name: self-enrollment-field-password-repeat
+    attrs:
+      field_key: password_repeat
+      label: Password (repeat)
+      type: password
+      required: true
+      placeholder: Password (repeat)
+      order: 4
+
+  # authentik doesn't require unique emails; refuse one that's taken so a second (unconfirmable)
+  # account isn't created for it. Existing users who forgot their password need a reset instead.
+  - model: authentik_policies_expression.expressionpolicy
+    id: email-unused
+    identifiers:
+      name: self-enrollment-email-unused
+    attrs:
+      expression: |
+        from authentik.core.models import User
+        email = (request.context.get("prompt_data") or {}).get("email", "").strip()
+        # The email also becomes the username (see username-from-email).
+        if email and (User.objects.filter(email__iexact=email).exists()
+                      or User.objects.filter(username__iexact=email).exists()):
+            ak_message("An account with this email already exists.")
+            return False
+        return True
+
+  - model: authentik_stages_prompt.promptstage
+    id: prompt-stage
+    identifiers:
+      name: self-enrollment-prompt
+    attrs:
+      fields:
+        - !KeyOf field-name
+        - !KeyOf field-email
+        - !KeyOf field-password
+        - !KeyOf field-password-repeat
+      validation_policies:
+        - !Find [authentik_policies_password.passwordpolicy, [name, default-password-change-password-policy]]
+        - !KeyOf email-unused
+
+  # The form has no username field; authentik needs one, so use the email. Runs when the
+  # write stage is reached (bound below with evaluate_on_plan off), after the prompt has filled
+  # prompt_data.
+  - model: authentik_policies_expression.expressionpolicy
+    id: username-from-email
+    identifiers:
+      name: self-enrollment-username-from-email
+    attrs:
+      expression: |
+        prompt_data = request.context["flow_plan"].context.get("prompt_data", {})
+        prompt_data["username"] = prompt_data.get("email", "").strip().lower()
+        return True
+
+  # Inactive until the emailed link is opened (the email stage activates it).
+  - model: authentik_stages_user_write.userwritestage
+    id: write-stage
+    identifiers:
+      name: self-enrollment-write
+    attrs:
+      user_creation_mode: always_create
+      create_users_as_inactive: true
+      user_type: internal
+
+  - model: authentik_stages_email.emailstage
+    id: email-stage
+    identifiers:
+      name: self-enrollment-email-verification
+    attrs:
+      use_global_settings: true
+      subject: Confirm your account
+      template: email/account_confirmation.html
+      activate_user_on_success: true
+      token_expiry: minutes=30
+
+  - model: authentik_flows.flowstagebinding
+    identifiers:
+      target: !KeyOf flow
+      stage: !KeyOf prompt-stage
+      order: 10
+  - model: authentik_flows.flowstagebinding
+    id: write-binding
+    identifiers:
+      target: !KeyOf flow
+      stage: !KeyOf write-stage
+      order: 20
+    attrs:
+      evaluate_on_plan: false
+      re_evaluate_policies: true
+  - model: authentik_policies.policybinding
+    identifiers:
+      target: !KeyOf write-binding
+      policy: !KeyOf username-from-email
+      order: 0
+  - model: authentik_flows.flowstagebinding
+    identifiers:
+      target: !KeyOf flow
+      stage: !KeyOf email-stage
+      order: 30
+  # Required TOTP setup before the account is usable.
+  - model: authentik_flows.flowstagebinding
+    identifiers:
+      target: !KeyOf flow
+      stage: !Find [authentik_stages_authenticator_validate.authenticatorvalidatestage, [name, default-authentication-mfa-validation]]
+      order: 40
+  - model: authentik_flows.flowstagebinding
+    identifiers:
+      target: !KeyOf flow
+      stage: !Find [authentik_stages_user_login.userloginstage, [name, default-authentication-login]]
+      order: 50
+
+  # The "Sign up" link on the login page. authentik's default blueprint only sets user_fields on
+  # this stage, so enrollment_flow isn't reset when that blueprint re-applies. user_fields is
+  # repeated (same value as the default) because validation rejects the stage without it.
+  - model: authentik_stages_identification.identificationstage
+    identifiers:
+      name: default-authentication-identification
+    attrs:
+      user_fields:
+        - email
+        - username
+      enrollment_flow: !KeyOf flow

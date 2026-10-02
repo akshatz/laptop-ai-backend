@@ -6,10 +6,13 @@
 # The invitee then:
 #   1. chooses a username, name, email and password (password creation rules from
 #      password-policy.yaml apply — same policy object),
-#   2. sets up a TOTP authenticator (Google Authenticator etc.) — same required-MFA stage as the
+#   2. is created inactive and emailed a confirmation link; opening it activates the account. The
+#      pre-filled email can be edited, and Open WebUI trusts authentik's emails (it merges accounts by
+#      email and activates SSO users without its own verification), so it must be confirmed here,
+#   3. sets up a TOTP authenticator (Google Authenticator etc.) — same required-MFA stage as the
 #      login flow in open-webui-sso.yaml,
-#   3. is logged in, and can use "Continue with authentik" on Open WebUI. Open WebUI creates their
-#      account there as pending (or links an existing one with the same email).
+#   4. is logged in, and can use "Continue with authentik" on Open WebUI. Open WebUI creates their
+#      account there (active straight away) or links an existing one with the same email.
 # Without a valid invitation token the flow stops at the first stage.
 version: 1
 metadata:
@@ -129,8 +132,22 @@ entries:
       name: invitation-enrollment-write
     attrs:
       user_creation_mode: always_create
-      create_users_as_inactive: false
+      # Inactive until the emailed link is opened (the email stage activates it).
+      create_users_as_inactive: true
       user_type: internal
+
+  - model: authentik_stages_email.emailstage
+    id: email-stage
+    identifiers:
+      name: invitation-enrollment-email-verification
+    attrs:
+      use_global_settings: true
+      subject: Confirm your account
+      template: email/account_confirmation.html
+      activate_user_on_success: true
+      # Invitees often aren't watching their inbox, and the single-use invite is already spent by the
+      # time this email goes out (an expired link leaves an inactive user to delete before re-inviting).
+      token_expiry: hours=24
 
   - model: authentik_flows.flowstagebinding
     identifiers:
@@ -147,6 +164,11 @@ entries:
       target: !KeyOf flow
       stage: !KeyOf write-stage
       order: 20
+  - model: authentik_flows.flowstagebinding
+    identifiers:
+      target: !KeyOf flow
+      stage: !KeyOf email-stage
+      order: 25
   # Required TOTP setup before the account is usable (the login flow's MFA stage, which sends
   # users without a device through TOTP setup).
   - model: authentik_flows.flowstagebinding
