@@ -1,7 +1,7 @@
 """
 title: authentik User Cleanup
 author: akshatz
-version: 1.1.0
+version: 1.2.0
 required_open_webui_version: 0.11.3
 description: When an admin deletes a user in Open WebUI, archives their chats, deletes their authentik (SSO) account, and removes what Open WebUI leaves behind.
 
@@ -37,7 +37,10 @@ How it works:
 - Archived chats are listed for admins at GET /api/v1/archived-chats (add `?format=json` for JSON),
   one chat at /api/v1/archived-chats/{chat_id} (readable transcript; `?format=json` downloads it),
   and DELETE /api/v1/archived-chats/{chat_id} removes one. Admin-only via Open WebUI's own
-  get_admin_user, which accepts the browser's login cookie. Attachments aren't archived.
+  get_admin_user, which accepts the browser's login cookie. Attachments aren't archived. The same
+  table also holds single chats copied by the Chat Soft Delete Function (reason `chat_deleted`);
+  the pages show the reason, and a Restore button for those (POST .../{chat_id}/restore, served by
+  that Function).
 
 Limits: if the authentik call or the purge fails, the Open WebUI user is still deleted and the failure
 is logged — delete the authentik user by hand under Directory → Users. Users deleted outside the
@@ -102,6 +105,13 @@ async function del(id){
   const r = await fetch("ARCHIVE_PATH/" + encodeURIComponent(id), {method: "DELETE", credentials: "include"});
   if (r.ok) location.href = "ARCHIVE_PATH"; else alert("Delete failed: " + r.status);
 }
+async function restore(id){
+  if(!confirm("Restore this chat to its owner?")) return;
+  const r = await fetch("ARCHIVE_PATH/" + encodeURIComponent(id) + "/restore", {method: "POST", credentials: "include"});
+  const b = await r.json().catch(() => ({}));
+  if (r.ok) { alert("Restored for " + b.user_email); location.href = "ARCHIVE_PATH"; }
+  else alert("Restore failed: " + (b.detail || r.status));
+}
 </script></body></html>
 """.replace("ARCHIVE_PATH", ARCHIVE_PATH)
 
@@ -113,6 +123,16 @@ def _fmt(ts) -> str:
     if ts > 10**12:  # some Open WebUI timestamps are in nanoseconds
         ts //= 10**9
     return datetime.fromtimestamp(ts, timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+
+
+_REASONS = {"account_deleted": "Account deleted", "chat_deleted": "Chat deleted by owner"}
+
+
+def _restore_button(row) -> str:
+    """Restore is served by the Chat Soft Delete Function, for chats deleted by their owner only."""
+    if row.get("reason") != "chat_deleted":
+        return ""
+    return f"<button onclick='restore({json.dumps(row['chat_id'])})'>Restore</button> "
 
 
 def _page(title: str, body: str) -> HTMLResponse:
@@ -219,11 +239,11 @@ class Event:
                 text(
                     """
                     INSERT INTO fn_archived_chats (chat_id, user_id, user_email, user_name, title, chat, messages,
-                                                   meta, created_at, updated_at, archived_at, archived_by)
+                                                   meta, created_at, updated_at, archived_at, archived_by, reason)
                     SELECT c.id, c.user_id, :email, :name, c.title, c.chat,
                            (SELECT json_agg(row_to_json(m) ORDER BY m.created_at)
                               FROM chat_message m WHERE m.chat_id = c.id),
-                           c.meta, c.created_at, c.updated_at, :stamp, :by
+                           c.meta, c.created_at, c.updated_at, :stamp, :by, 'account_deleted'
                       FROM chat c WHERE c.user_id = :uid
                     ON CONFLICT (chat_id) DO NOTHING
                     """
@@ -364,7 +384,7 @@ class Event:
             rows = (
                 await session.execute(
                     text(
-                        "SELECT chat_id, user_email, user_name, title, created_at, updated_at, archived_at, archived_by "
+                        "SELECT chat_id, user_email, user_name, title, created_at, updated_at, archived_at, archived_by, reason "
                         "FROM fn_archived_chats ORDER BY archived_at DESC, updated_at DESC"
                     )
                 )
@@ -377,15 +397,17 @@ class Event:
             f"<td><a href='{ARCHIVE_PATH}/{html.escape(r['chat_id'])}'>{html.escape(r['title'] or '(untitled)')}</a></td>"
             f"<td>{_fmt(r['updated_at'])}</td><td>{_fmt(r['archived_at'])}"
             f"<br><span class=muted>{html.escape(r['archived_by'] or '')}</span></td>"
-            f"<td><button onclick='del({json.dumps(r['chat_id'])})'>Delete</button></td></tr>"
+            f"<td>{_REASONS.get(r['reason'], html.escape(r['reason'] or ''))}</td>"
+            f"<td>{_restore_button(r)}<button onclick='del({json.dumps(r['chat_id'])})'>Delete</button></td></tr>"
             for r in rows
-        ) or "<tr><td colspan=5 class=muted>No archived chats.</td></tr>"
+        ) or "<tr><td colspan=6 class=muted>No archived chats.</td></tr>"
         return _page(
             "Archived chats",
-            "<h1>Archived chats</h1><p class=muted>Chats of deleted users, copied just before deletion. "
+            "<h1>Archived chats</h1><p class=muted>Chats copied just before they were deleted: a whole user "
+            "deleted by an admin, or a chat deleted by its owner (restorable). "
             f"{len(rows)} chat(s). <a href='{ARCHIVE_PATH}?format=json'>JSON</a> · <a href='/'>Back to Open WebUI</a></p>"
             "<div class=wrap><table><thead><tr><th>User</th><th>Chat</th><th>Last message</th><th>Archived</th>"
-            f"<th></th></tr></thead><tbody>{body}</tbody></table></div>",
+            f"<th>Reason</th><th></th></tr></thead><tbody>{body}</tbody></table></div>",
         )
 
     async def _archive_get(self, chat_id: str, format: str = "html", user=Depends(get_admin_user)):
@@ -410,8 +432,9 @@ class Event:
             f"<h1>{html.escape(row.get('title') or '(untitled)')}</h1>"
             f"<p class=muted>{html.escape(row.get('user_name') or '')} &lt;{html.escape(row['user_email'])}&gt; · "
             f"created {_fmt(row.get('created_at'))} · archived {_fmt(row.get('archived_at'))} · "
+            f"{_REASONS.get(row.get('reason'), html.escape(row.get('reason') or ''))} · "
             f"<a href='{ARCHIVE_PATH}/{html.escape(chat_id)}?format=json'>Download JSON</a> · "
-            f"<button onclick='del({json.dumps(chat_id)})'>Delete</button></p>{messages}",
+            f"{_restore_button(row)}<button onclick='del({json.dumps(chat_id)})'>Delete</button></p>{messages}",
         )
 
     async def _archive_delete(self, chat_id: str, user=Depends(get_admin_user)):
