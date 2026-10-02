@@ -1,0 +1,88 @@
+# OpenTelemetry Collector config for the `ollama-log-shipper` service: tails Docker's json-file log
+# of the ollama container (its container directory mounted read-only at /ollama-container, see
+# OLLAMA_CONTAINER_ID in docker-compose.yml) into OpenObserve stream `ollama`. Read this way instead
+# of a logging driver so ollama never has to be recreated.
+#
+# Ollama's output is three kinds of line; only the first two are kept:
+#   [GIN] 2026/10/02 - 13:11:18 | 500 | 56.1437s | 172.21.0.18 | POST "/api/chat"   one per API request
+#   time=... level=INFO source=server.go:123 msg="..."                              server events (model loads, errors)
+#   slot ... / srv ... / llama ... / print_info ...                                  llama.cpp runner internals (~80%, dropped)
+extensions:
+  # Remembers how far the file has been read, so restarts don't re-send old lines.
+  file_storage:
+    directory: /var/lib/otelcol/file_storage
+
+receivers:
+  filelog/ollama:
+    include: [/ollama-container/*-json.log]
+    start_at: beginning
+    storage: file_storage
+    operators:
+      # Docker json-file format: {"log": "...\n", "stream": "stderr", "time": "..."} → body + time.
+      - type: container
+        format: docker
+        add_metadata_from_filepath: false
+      - type: filter
+        expr: 'not (body matches "^\\[GIN\\]" or body matches "^time=\\S+ level=")'
+
+      # API requests: status, duration, client, method, path as columns.
+      - type: regex_parser
+        if: 'body matches "^\\[GIN\\]"'
+        regex: '^\[GIN\] [^|]+\|\s*(?P<status>\d+)\s*\|\s*(?P<duration>\S+)\s*\|\s*(?P<client_ip>\S+)\s*\|\s*(?P<method>\S+)\s+"(?P<path>[^"]*)"'
+      - type: add
+        if: 'attributes.status != nil'
+        field: attributes.duration_ms
+        value: EXPR(duration(attributes.duration).Milliseconds())
+      - type: add
+        if: 'attributes.status != nil'
+        field: attributes.level
+        value: 'EXPR(int(attributes.status) >= 500 ? "ERROR" : (int(attributes.status) >= 400 ? "WARN" : "INFO"))'
+      - type: add
+        if: 'attributes.status != nil'
+        field: attributes.summary
+        value: 'EXPR(attributes.method + " " + attributes.path + " " + attributes.status + " " + attributes.duration)'
+
+      # Server events: logfmt (time, level, source, msg, plus per-event keys) as columns.
+      - type: key_value_parser
+        if: 'attributes.status == nil'
+        parse_from: body
+      - type: remove
+        if: 'attributes.status == nil'
+        field: attributes.time
+      - type: add
+        if: 'attributes.summary == nil'
+        field: attributes.summary
+        value: 'EXPR(attributes.level + " " + (attributes.msg ?? ""))'
+
+      - type: severity_parser
+        parse_from: attributes.level
+      # Readable one-line body for O2's log view, time first like openwebui_audit, e.g.
+      # "2026-10-02 13:11:18 POST /api/chat 500 56.143706568s" or "2026-10-02 06:37:26 INFO starting runner".
+      - type: add
+        field: body
+        value: 'EXPR(timestamp.UTC().Format("2006-01-02 15:04:05") + " " + attributes.summary)'
+      - type: remove
+        field: attributes.summary
+
+processors:
+  resource:
+    attributes:
+      - key: service.name
+        value: ollama
+        action: upsert
+  batch: {}
+
+exporters:
+  otlphttp/openobserve:
+    logs_endpoint: http://openobserve:5080/api/default/v1/logs
+    headers:
+      Authorization: Basic ${env:OPENOBSERVE_BASIC_AUTH}
+      stream-name: ollama
+
+service:
+  extensions: [file_storage]
+  pipelines:
+    logs:
+      receivers: [filelog/ollama]
+      processors: [resource, batch]
+      exporters: [otlphttp/openobserve]

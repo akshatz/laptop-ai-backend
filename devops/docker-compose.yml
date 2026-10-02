@@ -92,6 +92,30 @@ services:
     networks:
       - ai-network
 
+  # 🧾 OLLAMA LOG SHIPPER: OpenTelemetry Collector tailing ollama's Docker json-file log (only that
+  # container's directory, read-only) into OpenObserve stream "ollama": API requests and server
+  # events, not llama.cpp runner output. Config: devops/otel-collector/ollama-logs.yaml. Reads the
+  # file instead of using a logging driver so ollama is never recreated for it; the path holds the
+  # container ID, so after ollama IS recreated set OLLAMA_CONTAINER_ID in .env to the new
+  # `docker inspect -f '{{.Id}}' laptop-ollama` and recreate this service.
+  ollama-log-shipper:
+    image: otel/opentelemetry-collector-contrib:0.161.0
+    container_name: laptop-ollama-log-shipper
+    restart: unless-stopped
+    # Root only so it can read Docker's root-owned log file and write offsets to the named volume.
+    user: "0:0"
+    command: ["--config=/etc/otelcol-contrib/ollama-logs.yaml"]
+    environment:
+      - OPENOBSERVE_BASIC_AUTH=${OPENOBSERVE_BASIC_AUTH}
+    volumes:
+      - ./otel-collector/ollama-logs.yaml:/etc/otelcol-contrib/ollama-logs.yaml:ro
+      - /var/lib/docker/containers/${OLLAMA_CONTAINER_ID:?set OLLAMA_CONTAINER_ID in .env}:/ollama-container:ro
+      - otelcol-ollama-storage:/var/lib/otelcol/file_storage
+    depends_on:
+      - openobserve
+    networks:
+      - ai-network
+
   # 🧾 OPENBAO AUDIT SHIPPER: OpenTelemetry Collector tailing OpenBao's audit log (read-only mount of
   # the openbao-logs volume) into OpenObserve stream "openbao_audit". Config:
   # devops/otel-collector/openbao-audit.yaml. Read offsets persist in otelcol-openbao-audit-storage.
@@ -225,6 +249,9 @@ services:
       # REQUEST, which would log sign-in passwords. By default only POST/PUT/PATCH/DELETE are
       # audited, excluding /chats, /chat and /folders (AUDIT_EXCLUDED_PATHS).
       - AUDIT_LOG_LEVEL=METADATA
+      # Only warnings and errors on stdout and to OpenObserve (stream openwebui_backend); INFO was
+      # ~97% of that stream. The audit log above has its own INFO-level file sink, unaffected.
+      - GLOBAL_LOG_LEVEL=WARNING
       # Laptop Performance tweaks
       - ENABLE_TITLE_GENERATION=false
       - ENABLE_TAG_GENERATION=false
@@ -667,6 +694,7 @@ volumes:
   openbao-data: # Persists sealed/unsealed OpenBao secret data across restarts
   openbao-logs: # OpenBao's audit log (audit.log)
   otelcol-openbao-audit-storage: # openbao-audit-shipper's read offsets into OpenBao's audit log
+  otelcol-ollama-storage: # ollama-log-shipper's read offsets into ollama's Docker log
   passbolt-gpg: # Passbolt server GPG keypair, generated on first run
   passbolt-jwt: # Passbolt JWT signing keys, generated on first run
   passbolt-db-data: # MariaDB data for passbolt-db
