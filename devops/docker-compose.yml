@@ -401,6 +401,8 @@ services:
       OPEN_WEBUI_AUTHENTIK_API_TOKEN: ${OPEN_WEBUI_AUTHENTIK_API_TOKEN}
     volumes:
       - authentik-data:/data
+      # Custom email templates (authentik's email.template_dir); the server renders flow emails.
+      - ../authentik/email-templates:/templates:ro
     depends_on:
       authentik-db-init:
         condition: service_completed_successfully
@@ -425,6 +427,8 @@ services:
     volumes:
       - authentik-data:/data
       - ../authentik/blueprints:/blueprints/custom:ro
+      # Also here so blueprints/admin forms can list the custom templates.
+      - ../authentik/email-templates:/templates:ro
     depends_on:
       authentik-db-init:
         condition: service_completed_successfully
