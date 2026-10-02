@@ -3,12 +3,13 @@
 #
 # Registers OpenBao as an OIDC application, so its UI and CLI sign in through authentik (same
 # password + required TOTP as Open WebUI) instead of the bao-admin / bao-readonly passwords, which
-# stay as a fallback for when authentik is down. Access is by group:
-#   openbao-admins   → OpenBao policy user-admin   (manage secrets, policies, auth, mounts)
-#   openbao-readers  → OpenBao policy user-readonly (read/list apps/)
+# stay as a fallback for when authentik is down. The OpenBao role picked at sign-in sets the
+# access, limited by group:
+#   role readonly (default) → policy user-readonly (read/list apps/)  — openbao-admins, openbao-readers
+#   role admin              → policy user-admin (secrets, policies, auth, mounts) — openbao-admins
 # Add people to these groups under Directory → Groups. Members of neither group are refused here,
-# before OpenBao is reached. The OpenBao side (oidc auth method, role, groups → policies) is set
-# up by openbao/setup-users.sh, which reads the groups from the `groups` claim of the profile scope.
+# before OpenBao is reached. The OpenBao side (oidc auth method, the two roles with bound_claims on
+# the `groups` claim of the profile scope) is set up by openbao/setup-users.sh.
 version: 1
 metadata:
   name: laptop-ai-backend - OpenBao SSO
