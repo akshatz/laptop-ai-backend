@@ -193,7 +193,7 @@ Besides self sign-up, you can send new users a one-time invite link ([authentik/
    - **Single use**: on
    - **Custom attributes**: `{"email": "their@email.com"}`. Use the email of their existing Open WebUI account, if they have one, so the accounts get linked.
 3. Open the new invitation's row, copy the **link**, and send it to them.
-4. They open the link, choose a username, name and password (the [password rules](#password-rules) apply), confirm their email from the link authentik sends (the account stays inactive until then, since the pre-filled email can be changed), and scan a QR code with Google Authenticator. That creates and signs in their authentik account.
+4. They open the link, choose a username, name and password (the [password rules](#password-rules) apply), confirm their email from the link authentik sends (valid 24 hours; the account stays inactive until then, since the pre-filled email can be changed — if the link expires, delete the inactive user under **Directory → Users** and send a new invite, because the single-use invite is already spent), and scan a QR code with Google Authenticator. That creates and signs in their authentik account.
 5. They click **Continue with authentik** on Open WebUI. People with an existing Open WebUI account (same email) go straight in. New people get an active account straight away.
 
 Links without a valid invitation are refused ("Invalid invite/invite not found"). Delete an unused invitation to revoke it. Don't open a link yourself to check it: opening it uses up a single-use invitation.
