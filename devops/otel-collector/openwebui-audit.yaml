@@ -21,11 +21,15 @@ receivers:
           parse_from: attributes.timestamp
           layout_type: epoch
           layout: s
-      # Readable one-line body for O2's log view, e.g. "alice@example.com POST /api/v1/... 200".
-      # Requests without a signed-in user (e.g. sign-in itself) show "-".
+      # Readable one-line body for O2's log view: time (UTC), user, method, URL, status, e.g.
+      # "2026-10-02 13:11:55 alice@example.com POST https://<host>:8444/api/v1/... 200".
+      # Requests without a signed-in user (e.g. sign-in itself) show "-". The status comes from the
+      # Audit Status Code Function (devops/open-webui/functions/audit_status_code.py) — Open WebUI
+      # leaves it null at AUDIT_LOG_LEVEL=METADATA — and is "-" when missing (unhandled error, or the
+      # Function not active). (quoted: the ": " inside would otherwise make YAML read this as a map)
       - type: add
         field: body
-        value: EXPR((attributes.user?.email ?? "-") + " " + attributes.verb + " " + attributes.request_uri + " " + string(attributes.response_status_code))
+        value: 'EXPR(timestamp.UTC().Format("2006-01-02 15:04:05") + " " + (attributes.user?.email ?? "-") + " " + attributes.verb + " " + attributes.request_uri + " " + (attributes.response_status_code == nil ? "-" : string(attributes.response_status_code)))'
 
 processors:
   resource:
