@@ -3,10 +3,10 @@
 # deletes the plaintext original, so only the encrypted copy is ever safe to
 # upload to Google Drive / a pendrive / anywhere off this laptop.
 #
-# Usage: ./encrypt-recovery-kit.sh /path/to/passbolt-recovery-kit.asc
+# Usage: devops/passbolt/encrypt-recovery-kit.sh /path/to/passbolt-recovery-kit.asc
 set -euo pipefail
 
-SRC="${1:?Usage: ./encrypt-recovery-kit.sh /path/to/passbolt-recovery-kit.asc}"
+SRC="${1:?Usage: devops/passbolt/encrypt-recovery-kit.sh /path/to/passbolt-recovery-kit.asc}"
 
 if [ ! -f "$SRC" ]; then
   echo "File not found: $SRC" >&2
@@ -14,7 +14,7 @@ if [ ! -f "$SRC" ]; then
 fi
 
 TS=$(date +%Y%m%d-%H%M%S)
-OUT_DIR="$(dirname "$0")/backups"
+OUT_DIR="$(dirname "$0")/../backups"
 mkdir -p "$OUT_DIR"
 OUT="$OUT_DIR/passbolt-recovery-kit-$TS.asc.gpg"
 

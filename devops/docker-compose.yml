@@ -1,0 +1,618 @@
+name: laptop-ai-backend
+
+services:
+  # 🐘 POSTGRESQL: High-efficiency relational database
+  postgres-db:
+    image: postgres:16-alpine
+    container_name: laptop-postgres
+    restart: unless-stopped
+    ports:
+      - "5433:5432"
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    volumes:
+      - pg-data:/var/lib/postgresql/data
+      - ../database/init-openwebui-db.sh:/docker-entrypoint-initdb.d/init-openwebui-db.sh:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 3
+    networks:
+      - ai-network
+
+  # 🧠 OLLAMA: Local AI Engine
+  ollama:
+    image: ollama/ollama:latest
+    container_name: laptop-ollama
+    restart: unless-stopped
+    volumes:
+      # 👇 Maps your existing host models directory straight into the container
+      - ${OLLAMA_MODELS_PATH:-/usr/share/ollama/.ollama}:/root/.ollama
+    environment:
+      # Default context window for every model (Ollama's own default is ~2k tokens, which
+      # silently truncated chat history and web search results). A model's num_ctx, set in
+      # its Modelfile or Open WebUI's Advanced Params, still overrides this. Costs RAM/VRAM.
+      - OLLAMA_CONTEXT_LENGTH=8192
+    networks:
+      - ai-network
+
+  # 📊 GRAFANA LGTM: Unified OpenTelemetry Monitoring Platform (Grafana, Loki, Tempo, Mimir)
+  lgtm:
+    image: grafana/otel-lgtm:latest
+    container_name: laptop-lgtm
+    environment:
+      - PYROSCOPE_MEMBERLIST_INTERFACE_NAMES=lo
+    restart: unless-stopped
+    ports:
+      - "3001:3000" # 👈 Grafana Dashboard UI
+      - "4317:4317" # OTLP gRPC Ingestion Port
+      - "4318:4318" # OTLP HTTP Ingestion Port
+    volumes:
+      - lgtm-data:/data
+    networks:
+      - ai-network
+
+  # 🔭 OPENOBSERVE (O2): Unified logs/metrics/traces observability platform
+  openobserve:
+    image: openobserve/openobserve:latest
+    container_name: laptop-openobserve
+    restart: unless-stopped
+    ports:
+      - "5080:5080"   # Web UI + HTTP API + OTLP/HTTP ingestion
+    environment:
+      - ZO_ROOT_USER_EMAIL=${OPENOBSERVE_ROOT_USER_EMAIL}
+      - ZO_ROOT_USER_PASSWORD=${OPENOBSERVE_ROOT_USER_PASSWORD}
+    volumes:
+      - openobserve-data:/data
+    networks:
+      - ai-network
+
+  # 🧾 OPEN WEBUI AUDIT SHIPPER: OpenTelemetry Collector tailing Open WebUI's audit log (read-only
+  # mount of its data volume) into OpenObserve stream "openwebui_audit". Config:
+  # devops/otel-collector/openwebui-audit.yaml. Read offsets persist in otelcol-audit-storage.
+  openwebui-audit-shipper:
+    image: otel/opentelemetry-collector-contrib:0.161.0
+    container_name: laptop-openwebui-audit-shipper
+    restart: unless-stopped
+    # Root only so it can write read offsets to the fresh named volume (the image's default user
+    # can't); everything else it touches is mounted read-only.
+    user: "0:0"
+    command: ["--config=/etc/otelcol-contrib/openwebui-audit.yaml"]
+    environment:
+      - OPENOBSERVE_BASIC_AUTH=${OPENOBSERVE_BASIC_AUTH}
+    volumes:
+      - ./otel-collector/openwebui-audit.yaml:/etc/otelcol-contrib/openwebui-audit.yaml:ro
+      - open-webui-data:/open-webui-data:ro
+      - otelcol-audit-storage:/var/lib/otelcol/file_storage
+    depends_on:
+      - openobserve
+    networks:
+      - ai-network
+
+  # 🔎 SEARXNG: self-hosted metasearch (Google, Bing, DuckDuckGo, … without API keys) used by Open WebUI's
+  # web search. Internal only (no published port); config in devops/searxng/settings.yml.
+  searxng:
+    image: searxng/searxng:2026.9.29-4e2c1ea7f
+    container_name: laptop-searxng
+    restart: unless-stopped
+    environment:
+      - SEARXNG_SECRET=${SEARXNG_SECRET}
+      - SEARXNG_BASE_URL=http://searxng:8080/
+    volumes:
+      - ./searxng/settings.yml:/etc/searxng/settings.yml:ro
+    networks:
+      - ai-network
+
+  # 🛂 AUTHENTIK EVENTS SHIPPER: OpenTelemetry Collector receiving authentik-server/-worker output from
+  # Docker's fluentd logging driver and sending authentik's audit events (logins, failed logins,
+  # password changes, app authorizations, admin changes) to OpenObserve stream "authentik_events".
+  # Config: devops/otel-collector/authentik-events.yaml. The port is published on 127.0.0.1 only
+  # because the Docker daemon (on the host) is what connects to it.
+  authentik-events-shipper:
+    image: otel/opentelemetry-collector-contrib:0.161.0
+    container_name: laptop-authentik-events-shipper
+    restart: unless-stopped
+    command: ["--config=/etc/otelcol-contrib/authentik-events.yaml"]
+    ports:
+      - "127.0.0.1:24224:24224"
+    environment:
+      - OPENOBSERVE_BASIC_AUTH=${OPENOBSERVE_BASIC_AUTH}
+    volumes:
+      - ./otel-collector/authentik-events.yaml:/etc/otelcol-contrib/authentik-events.yaml:ro
+    depends_on:
+      - openobserve
+    networks:
+      - ai-network
+
+  # 🌐 OPEN WEBUI: Main Dashboard Interface for your family
+  open-webui:
+    # Signup email verification is an Open WebUI event Function
+    # (devops/open-webui/functions/signup_email_verification.py, imported via Admin → Functions).
+    # It registers routes on Open WebUI's app, so the image is pinned by digest rather than
+    # tracking :main — bump it deliberately and re-test signup verification.
+    image: ghcr.io/open-webui/open-webui@sha256:1a6399d237dc392a2313e0ca826020b3fd5d22536357840eb63393d18dc8b924  # v0.11.3-era :main, 2026-09-04
+    container_name: laptop-open-webui
+    restart: unless-stopped
+    ports:
+      - "8082:8080"
+    environment:
+      - OLLAMA_BASE_URL=http://ollama:11434
+      - WEBUI_SECRET_KEY=${WEBUI_SECRET_KEY}
+      - DATABASE_URL=postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres-db:5432/open_webui
+      # Use Ollama for embeddings instead of downloading from HuggingFace. embeddinggemma (Google,
+      # 768-dim, 2048-token context) retrieves better than nomic-embed-text; pull it first with
+      # `docker exec laptop-ollama ollama pull embeddinggemma`. Engine/model are saved DB settings
+      # (rag.embedding_engine/rag.embedding_model) that override these once saved — see README.
+      # Changing the model means re-indexing documents (Admin → Settings → Documents → Reindex).
+      - RAG_EMBEDDING_ENGINE=ollama
+      - RAG_EMBEDDING_MODEL=embeddinggemma
+      - RAG_OLLAMA_BASE_URL=http://ollama:11434
+      # embeddinggemma's task prefixes (env-only settings; prepended to the text since no prefix field
+      # is set). Keep in sync with custom-backend/chat_service.py.
+      - "RAG_EMBEDDING_QUERY_PREFIX=task: search result | query: "
+      - "RAG_EMBEDDING_CONTENT_PREFIX=title: none | text: "
+      # 🔎 Web search via the searxng service: users click "Web Search" under the chat box. Results pages
+      # are fetched and the relevant parts picked with the embedding model above. Enable/engine/URL are
+      # saved DB settings (web.search.*) that override these once saved — see README "Web search".
+      - ENABLE_WEB_SEARCH=true
+      - WEB_SEARCH_ENGINE=searxng
+      - SEARXNG_QUERY_URL=http://searxng:8080/search
+      - WEB_SEARCH_RESULT_COUNT=3
+      # Use Milvus as the vector store for RAG document embeddings
+      - VECTOR_DB=milvus
+      - MILVUS_URI=http://milvus:19530
+      - MILVUS_TOKEN=root:${MILVUS_ROOT_PASSWORD}
+      # 🚀 OPENTELEMETRY LIFEOFF: Feeds all UI metrics, traces, and logs to Grafana
+      - ENABLE_OTEL=true
+      - ENABLE_OTEL_TRACES=true
+      - ENABLE_OTEL_METRICS=true
+      - ENABLE_OTEL_LOGS=true
+      - OTEL_SERVICE_NAME=open-webui
+      - OTEL_EXPORTER_OTLP_ENDPOINT=http://lgtm:4317 # Points directly to your LGTM container
+      - OTEL_EXPORTER_OTLP_INSECURE=true
+      - OTEL_METRICS_EXPORT_INTERVAL_MILLIS=10000
+      # Logs go to OpenObserve instead (OTLP/HTTP, org "default", stream "openwebui_backend" — O2
+      # doesn't allow hyphens in stream names); traces and metrics stay on lgtm.
+      # Auth and stream both go in OTEL_EXPORTER_OTLP_LOGS_HEADERS: the OTel exporter only reads it
+      # when Open WebUI passes no headers itself, so don't also set OTEL_LOGS_BASIC_AUTH_*.
+      - OTEL_LOGS_OTLP_SPAN_EXPORTER=http
+      - OTEL_LOGS_EXPORTER_OTLP_ENDPOINT=http://openobserve:5080/api/default/v1/logs
+      - OTEL_EXPORTER_OTLP_LOGS_HEADERS=Authorization=Basic%20${OPENOBSERVE_BASIC_AUTH},stream-name=openwebui_backend
+      # Audit log: who did what (user id/name/email/role, method, path, status, IP, user agent) to
+      # data/audit.log, shipped to O2 stream "openwebui_audit" by openwebui-audit-shipper — the
+      # logs above carry no user. METADATA records no request/response bodies; don't raise it to
+      # REQUEST, which would log sign-in passwords. By default only POST/PUT/PATCH/DELETE are
+      # audited, excluding /chats, /chat and /folders (AUDIT_EXCLUDED_PATHS).
+      - AUDIT_LOG_LEVEL=METADATA
+      # Laptop Performance tweaks
+      - ENABLE_TITLE_GENERATION=false
+      - ENABLE_TAG_GENERATION=false
+      # Total time Open WebUI waits for a model response (whole stream, not per chunk). 60s cut
+      # off longer answers mid-generation ("Error submitting message"), especially with web search
+      # results in the prompt.
+      - AIOHTTP_CLIENT_TIMEOUT=300
+      # Signup email verification (event Function): new users start pending and are promoted
+      # once they confirm the emailed link. Reuses Passbolt's Gmail SMTP relay credentials,
+      # which the Function falls back to when its SMTP Valves are left empty.
+      - DEFAULT_USER_ROLE=pending
+      # Shown to pending users; the Markdown link points at the Function's resend page. Only
+      # used while Admin → Settings → Authentication has no saved overlay text of its own.
+      - PENDING_USER_OVERLAY_TITLE=Check your email
+      - "PENDING_USER_OVERLAY_CONTENT=We sent a verification link to the email address you signed up with. Click it to activate your account, then refresh this page. Link expired or no email? [Send a new link](/api/v1/auths/verify-email/resend) (check your spam folder too)."
+      - SMTP_USER=${PASSBOLT_SMTP_USER}
+      - SMTP_PASSWORD=${PASSBOLT_SMTP_PASSWORD}
+      # 🔐 SSO + MFA: sign-in goes through authentik (authentik/blueprints/open-webui-sso.yaml),
+      # which requires a TOTP code (Google Authenticator etc.). The discovery URL is the Caddy
+      # front, reached via the host so issuer/endpoint URLs match what browsers see.
+      - OAUTH_PROVIDER_NAME=authentik
+      - OAUTH_CLIENT_ID=${OPEN_WEBUI_OIDC_CLIENT_ID}
+      - OAUTH_CLIENT_SECRET=${OPEN_WEBUI_OIDC_CLIENT_SECRET}
+      - OPENID_PROVIDER_URL=https://${OPEN_WEBUI_HOST}:9443/application/o/open-webui/.well-known/openid-configuration
+      - OAUTH_SCOPES=openid email profile
+      - OAUTH_CODE_CHALLENGE_METHOD=S256
+      - ENABLE_OAUTH_SIGNUP=true
+      # Links existing Open WebUI accounts to the authentik user with the same email on first SSO
+      # login. Safe only because authentik accounts are created by the admin (no self-enrollment).
+      - OAUTH_MERGE_ACCOUNTS_BY_EMAIL=true
+      # Rejects email/password sign-in at the API. The login form itself is a saved DB setting
+      # (ui.enable_login_form) that overrides ENABLE_LOGIN_FORM once set — turn it off in
+      # Admin → Settings too, or password signups still work (see README "Open WebUI SSO + MFA").
+      - ENABLE_PASSWORD_AUTH=false
+      - ENABLE_LOGIN_FORM=false
+      # Password creation rules for any Open WebUI password that still gets set (signup, change,
+      # admin create/edit, the Password Reset Function; matters if password sign-in is re-enabled).
+      # Same length/character rules as authentik/blueprints/password-policy.yaml — keep in sync.
+      # `$$` is Compose's escape for a literal `$`.
+      - ENABLE_PASSWORD_VALIDATION=true
+      - "PASSWORD_VALIDATION_REGEX_PATTERN=^(?=.*[a-z])(?=.*[A-Z])(?=.*\\d)(?=.*[^\\w\\s]).{8,}$$"
+      - PASSWORD_VALIDATION_HINT=at least 8 characters, with an uppercase letter, a lowercase letter, a number and a symbol
+      # Trust Caddy's local CA for the server-side OIDC calls (bundle built in `command` below).
+      - SSL_CERT_FILE=/tmp/ca-bundle.crt
+      - REQUESTS_CA_BUNDLE=/tmp/ca-bundle.crt
+    # System CAs + Caddy's public root cert (exported by caddy-ca-export), then the image's normal start.
+    command: >
+      bash -c "cat /etc/ssl/certs/ca-certificates.crt /caddy-ca/root.crt > /tmp/ca-bundle.crt
+      && exec bash start.sh"
+    volumes:
+      - open-webui-data:/app/backend/data
+      - caddy-ca-public:/caddy-ca:ro
+    depends_on:
+      searxng:
+        condition: service_started
+      caddy-ca-export:
+        condition: service_completed_successfully
+      authentik-server:
+        condition: service_started
+      ollama:
+        condition: service_started
+      lgtm:
+        condition: service_started
+      milvus-init-auth:
+        condition: service_completed_successfully
+      open-webui-fn-migrate:
+        condition: service_completed_successfully
+    networks:
+      - ai-network
+
+  # 🗃️ OPEN WEBUI FUNCTION MIGRATIONS: one-shot Alembic run creating the tables this repo's event
+  # Functions (devops/open-webui/functions/) keep their state in, inside Open WebUI's `open_webui`
+  # database. Separate history table (fn_alembic_version) so it never touches Open WebUI's own
+  # migrations. Mounts the open-webui data volume read-only to import the Functions' old SQLite files.
+  # Runs on every `up`; a no-op once at head.
+  open-webui-fn-migrate:
+    image: python:3.12-slim
+    container_name: laptop-open-webui-fn-migrate
+    restart: "no"
+    environment:
+      - OPEN_WEBUI_FN_DATABASE_URL=postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres-db:5432/open_webui
+      - LEGACY_FUNCTION_DATA_DIR=/legacy-data
+    volumes:
+      - ./open-webui/migrations:/migrations:ro
+      - open-webui-data:/legacy-data:ro
+    command: >
+      bash -c "pip install --quiet --root-user-action=ignore alembic==1.16.1 sqlalchemy==2.1.1 'psycopg[binary]==3.3.6'
+      && alembic -c /migrations/alembic.ini upgrade head"
+    depends_on:
+      postgres-db:
+        condition: service_healthy
+    networks:
+      - ai-network
+
+  # 🔒 OPEN WEBUI HTTPS PROXY: serves Open WebUI at https://${OPEN_WEBUI_HOST}:8444 with a cert from
+  # Caddy's local CA. Needed for LAN access: browsers only expose secure-context APIs
+  # (crypto.randomUUID, which Open WebUI's frontend requires) over HTTPS or on localhost.
+  # Trust the CA once per device, e.g. export it with
+  #   docker cp laptop-open-webui-proxy:/data/caddy/pki/authorities/local/root.crt caddy-root.crt
+  # and import it into the OS/browser trust store.
+  open-webui-proxy:
+    image: caddy:2
+    container_name: laptop-open-webui-proxy
+    restart: unless-stopped
+    # Also fronts authentik on 9443. No depends_on open-webui: open-webui waits for this proxy's CA
+    # (via caddy-ca-export), and Caddy resolves upstreams per request anyway.
+    ports:
+      - "8444:443"
+      - "9443:9443"
+    environment:
+      - OPEN_WEBUI_HOST=${OPEN_WEBUI_HOST}
+    volumes:
+      - ./caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+    networks:
+      - ai-network
+
+  # 📜 CADDY CA EXPORT: one-shot copy of Caddy's public root cert (only root.crt — never the CA key)
+  # into caddy-ca-public, so open-webui can trust authentik's HTTPS endpoint without mounting
+  # caddy-data. Waits for Caddy to create its CA on first start. Runs on every `up`.
+  caddy-ca-export:
+    image: caddy:2
+    container_name: laptop-caddy-ca-export
+    restart: "no"
+    volumes:
+      - caddy-data:/data:ro
+      - caddy-ca-public:/export
+    command: >
+      sh -c "for i in $$(seq 60); do [ -f /data/caddy/pki/authorities/local/root.crt ] && break; sleep 1; done
+      && cp /data/caddy/pki/authorities/local/root.crt /export/root.crt"
+    depends_on:
+      - open-webui-proxy
+    networks:
+      - ai-network
+
+  # 🗃️ AUTHENTIK DB: one-shot creation of the `authentik` database in postgres-db. The initdb
+  # scripts only run on a fresh volume, so this covers existing installs too. No-op once it exists.
+  authentik-db-init:
+    image: postgres:16-alpine
+    container_name: laptop-authentik-db-init
+    restart: "no"
+    environment:
+      - PGHOST=postgres-db
+      - PGUSER=${POSTGRES_USER}
+      - PGPASSWORD=${POSTGRES_PASSWORD}
+      - PGDATABASE=${POSTGRES_DB}
+    command: >
+      sh -c "echo \"SELECT 'CREATE DATABASE authentik' WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = 'authentik')\\gexec\" | psql -v ON_ERROR_STOP=1"
+    depends_on:
+      postgres-db:
+        condition: service_healthy
+    networks:
+      - ai-network
+
+  # 🛂 AUTHENTIK: identity provider for Open WebUI sign-in, with TOTP (Google Authenticator) required.
+  # Web UI/admin at https://${OPEN_WEBUI_HOST}:9443 (through open-webui-proxy); not published directly.
+  # Configuration lives in authentik/blueprints/, applied by the worker.
+  authentik-server:
+    image: ghcr.io/goauthentik/server:2026.8.3
+    container_name: laptop-authentik-server
+    restart: unless-stopped
+    command: server
+    # Container output goes to authentik-events-shipper (fluentd driver → OpenObserve stream
+    # authentik_events). Async, so authentik starts even if the shipper is down; `docker logs`
+    # still works through Docker's local log cache.
+    logging:
+      driver: fluentd
+      options:
+        fluentd-address: 127.0.0.1:24224
+        fluentd-async: "true"
+        tag: authentik-server
+    environment: &authentik-env
+      AUTHENTIK_SECRET_KEY: ${AUTHENTIK_SECRET_KEY}
+      AUTHENTIK_POSTGRESQL__HOST: postgres-db
+      AUTHENTIK_POSTGRESQL__USER: ${POSTGRES_USER}
+      AUTHENTIK_POSTGRESQL__PASSWORD: ${POSTGRES_PASSWORD}
+      AUTHENTIK_POSTGRESQL__NAME: authentik
+      AUTHENTIK_ERROR_REPORTING__ENABLED: "false"
+      AUTHENTIK_DISABLE_STARTUP_ANALYTICS: "true"
+      # Initial `akadmin` login; only read on the very first start.
+      AUTHENTIK_BOOTSTRAP_EMAIL: ${AUTHENTIK_BOOTSTRAP_EMAIL}
+      AUTHENTIK_BOOTSTRAP_PASSWORD: ${AUTHENTIK_BOOTSTRAP_PASSWORD}
+      # Same Gmail relay as Passbolt/Open WebUI (recovery emails, notifications).
+      AUTHENTIK_EMAIL__HOST: smtp.gmail.com
+      AUTHENTIK_EMAIL__PORT: "587"
+      AUTHENTIK_EMAIL__USE_TLS: "true"
+      AUTHENTIK_EMAIL__USERNAME: ${PASSBOLT_SMTP_USER}
+      AUTHENTIK_EMAIL__PASSWORD: ${PASSBOLT_SMTP_PASSWORD}
+      AUTHENTIK_EMAIL__FROM: ${PASSBOLT_SMTP_USER}
+      # Read by authentik/blueprints/open-webui-sso.yaml (!Env).
+      OPEN_WEBUI_HOST: ${OPEN_WEBUI_HOST}
+      OPEN_WEBUI_OIDC_CLIENT_ID: ${OPEN_WEBUI_OIDC_CLIENT_ID}
+      OPEN_WEBUI_OIDC_CLIENT_SECRET: ${OPEN_WEBUI_OIDC_CLIENT_SECRET}
+    volumes:
+      - authentik-data:/data
+    depends_on:
+      authentik-db-init:
+        condition: service_completed_successfully
+    networks:
+      - ai-network
+
+  authentik-worker:
+    image: ghcr.io/goauthentik/server:2026.8.3
+    container_name: laptop-authentik-worker
+    restart: unless-stopped
+    command: worker
+    # Container output goes to authentik-events-shipper (fluentd driver → OpenObserve stream
+    # authentik_events). Async, so authentik starts even if the shipper is down; `docker logs`
+    # still works through Docker's local log cache.
+    logging:
+      driver: fluentd
+      options:
+        fluentd-address: 127.0.0.1:24224
+        fluentd-async: "true"
+        tag: authentik-worker
+    environment: *authentik-env
+    volumes:
+      - authentik-data:/data
+      - ../authentik/blueprints:/blueprints/custom:ro
+    depends_on:
+      authentik-db-init:
+        condition: service_completed_successfully
+    networks:
+      - ai-network
+
+  # 🗂️ MILVUS DEPENDENCIES: etcd (metadata) + MinIO (object storage) for standalone Milvus
+  milvus-etcd:
+    image: quay.io/coreos/etcd:v3.5.16
+    container_name: laptop-milvus-etcd
+    restart: unless-stopped
+    environment:
+      - ETCD_AUTO_COMPACTION_MODE=revision
+      - ETCD_AUTO_COMPACTION_RETENTION=1000
+      - ETCD_QUOTA_BACKEND_BYTES=4294967296
+      - ETCD_SNAPSHOT_COUNT=50000
+    volumes:
+      - milvus-etcd-data:/etcd
+    command: etcd -advertise-client-urls=http://127.0.0.1:2379 -listen-client-urls http://0.0.0.0:2379 --data-dir /etcd
+    networks:
+      - ai-network
+
+  # Note: image is bitnamilegacy/minio, not minio/minio - Docker Hub removed
+  # the official minio/minio repo entirely (not just gated it) in 2024/2025,
+  # so this Bitnami legacy mirror is the closest still-pullable free option.
+  milvus-minio:
+    image: bitnamilegacy/minio:2024.5.28-debian-12-r0
+    container_name: laptop-milvus-minio
+    restart: unless-stopped
+    environment:
+      - MINIO_ROOT_USER=minioadmin
+      - MINIO_ROOT_PASSWORD=minioadmin
+      - MINIO_DEFAULT_BUCKETS=milvus-bucket
+    volumes:
+      - milvus-minio-data:/bitnami/minio/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 30s
+      timeout: 20s
+      retries: 3
+    networks:
+      - ai-network
+
+  # 🧬 MILVUS: Vector database backing Open WebUI's RAG document search
+  milvus:
+    image: milvusdb/milvus:v2.4.15
+    container_name: laptop-milvus
+    restart: unless-stopped
+    command: ["milvus", "run", "standalone"]
+    environment:
+      - ETCD_ENDPOINTS=milvus-etcd:2379
+      - MINIO_ADDRESS=milvus-minio:9000
+      - COMMON_SECURITY_AUTHORIZATIONENABLED=true
+    volumes:
+      - milvus-data:/var/lib/milvus
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9091/healthz"]
+      interval: 30s
+      start_period: 90s
+      timeout: 20s
+      retries: 3
+    depends_on:
+      - milvus-etcd
+      - milvus-minio
+    networks:
+      - ai-network
+
+  # 🔑 Rotates Milvus's default root password on first boot, then exits.
+  # Auth is enabled via COMMON_SECURITY_AUTHORIZATIONENABLED above; Milvus has
+  # no env var for the initial password, so it always starts as root/Milvus.
+  # Idempotent: on every run it first tries logging in with MILVUS_ROOT_PASSWORD
+  # (already rotated -> exits 0 immediately) before falling back to the
+  # root/Milvus default and rotating it, so repeat `docker compose up` runs
+  # don't fail once the password has already been changed.
+  milvus-init-auth:
+    image: python:3.12-slim
+    container_name: laptop-milvus-init-auth
+    restart: "no"
+    environment:
+      - MILVUS_ROOT_PASSWORD=${MILVUS_ROOT_PASSWORD}
+    volumes:
+      - ../milvus/init_auth.py:/init_auth.py:ro
+    command: >
+      bash -c "pip install --quiet 'setuptools<81' pymilvus==2.4.15 && python /init_auth.py"
+    depends_on:
+      milvus:
+        condition: service_healthy
+    networks:
+      - ai-network
+
+  # 🔐 OPENBAO: Secrets storage and dynamic credential broker
+  openbao:
+    image: openbao/openbao:latest
+    container_name: laptop-openbao
+    restart: unless-stopped
+    cap_add:
+      - IPC_LOCK
+    ports:
+      - "8200:8200"
+    volumes:
+      - openbao-data:/openbao/data
+      - ../openbao/config.hcl:/openbao/config/config.hcl:ro
+    command: ["server", "-config=/openbao/config/config.hcl"]
+    networks:
+      - ai-network
+
+  # 🔑 PASSBOLT-DB: Dedicated MariaDB instance for Passbolt (its officially
+  # tested/supported database — kept separate from the app's postgres-db)
+  passbolt-db:
+    image: mariadb:11
+    container_name: laptop-passbolt-db
+    restart: unless-stopped
+    environment:
+      - MYSQL_RANDOM_ROOT_PASSWORD=true
+      - MYSQL_DATABASE=passbolt
+      - MYSQL_USER=passbolt
+      - MYSQL_PASSWORD=${PASSBOLT_DB_PASSWORD}
+    volumes:
+      - passbolt-db-data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - ai-network
+
+  # 🔑 PASSBOLT: Self-hosted password manager, for storing OpenBao root token,
+  # unseal key, and AppRole credentials somewhere more usable than raw files
+  passbolt:
+    image: passbolt/passbolt:latest-ce
+    container_name: laptop-passbolt
+    restart: unless-stopped
+    ports:
+      - "8443:443"
+    environment:
+      - APP_FULL_BASE_URL=https://localhost:8443
+      - DATASOURCES_DEFAULT_HOST=passbolt-db
+      - DATASOURCES_DEFAULT_PORT=3306
+      - DATASOURCES_DEFAULT_USERNAME=passbolt
+      - DATASOURCES_DEFAULT_PASSWORD=${PASSBOLT_DB_PASSWORD}
+      - DATASOURCES_DEFAULT_DATABASE=passbolt
+      - EMAIL_DEFAULT_FROM=${PASSBOLT_SMTP_FROM}
+      - EMAIL_TRANSPORT_DEFAULT_HOST=smtp.gmail.com
+      - EMAIL_TRANSPORT_DEFAULT_PORT=587
+      - EMAIL_TRANSPORT_DEFAULT_USERNAME=${PASSBOLT_SMTP_USER}
+      - EMAIL_TRANSPORT_DEFAULT_PASSWORD=${PASSBOLT_SMTP_PASSWORD}
+      - EMAIL_TRANSPORT_DEFAULT_TLS=true
+    volumes:
+      - passbolt-gpg:/etc/passbolt/gpg
+      - passbolt-jwt:/etc/passbolt/jwt
+      # HTTPS cert from devops/passbolt/make-cert.sh, so it survives container recreates
+      # (the image otherwise generates a new self-signed one each time, which the browser
+      # extension then rejects). Run the script before the first `up`.
+      - ./passbolt/certs/certificate.crt:/etc/ssl/certs/certificate.crt:ro
+      - ./passbolt/certs/certificate.key:/etc/ssl/certs/certificate.key:ro
+    depends_on:
+      passbolt-db:
+        condition: service_healthy
+    networks:
+      - ai-network
+
+  # ⚙️ CUSTOM BACKEND CONTAINER: Your private development sandbox
+  custom-backend:
+    build:
+      context: ..
+      dockerfile: custom-backend/Dockerfile
+    container_name: local-dev-backend
+    restart: unless-stopped
+    ports:
+      - "8011:8000"
+    environment:
+      - OPENBAO_ADDR=http://openbao:8200
+      - OPENBAO_ROLE_ID=${OPENBAO_ROLE_ID}
+      - OPENBAO_SECRET_ID=${OPENBAO_SECRET_ID}
+      - OLLAMA_BASE_URL=http://ollama:11434
+      - MILVUS_URI=http://milvus:19530
+      # Same embedding model as open-webui's RAG_EMBEDDING_MODEL; picks collection custom_backend_docs_<model>
+      - EMBEDDING_MODEL=embeddinggemma
+    depends_on:
+      postgres-db:
+        condition: service_healthy
+      openbao:
+        condition: service_started
+      milvus-init-auth:
+        condition: service_completed_successfully
+    networks:
+      - ai-network
+
+volumes:
+  pg-data:
+  ollama-models:
+  open-webui-data:
+  lgtm-data: # Preserves your Grafana dashboards, metrics, and trace histories safely
+  openobserve-data: # Persists OpenObserve's logs/metrics/traces storage
+  otelcol-audit-storage: # openwebui-audit-shipper's read offsets into Open WebUI's audit log
+  openbao-data: # Persists sealed/unsealed OpenBao secret data across restarts
+  passbolt-gpg: # Passbolt server GPG keypair, generated on first run
+  passbolt-jwt: # Passbolt JWT signing keys, generated on first run
+  passbolt-db-data: # MariaDB data for passbolt-db
+  milvus-etcd-data: # Milvus metadata store
+  milvus-minio-data: # Milvus object storage (segment/index files)
+  milvus-data: # Milvus standalone data directory
+  caddy-data: # Caddy's local CA + issued certs for open-webui-proxy (keep stable so devices stay trusting it)
+  caddy-ca-public: # Copy of Caddy's public root cert only, mounted into open-webui (see caddy-ca-export)
+  authentik-data: # authentik media/uploads
+
+networks:
+  ai-network:
+    driver: bridge

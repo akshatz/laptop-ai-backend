@@ -1,0 +1,161 @@
+# Applied automatically by authentik-worker (mounted into /blueprints/custom), and re-applied
+# whenever this file changes.
+#
+# Invite-only sign-up. authentik has no public enrollment; instead an admin creates a one-time
+# invitation (Directory → Invitations → Create, flow "invitation-enrollment") and sends its link.
+# The invitee then:
+#   1. chooses a username, name, email and password (password creation rules from
+#      password-policy.yaml apply — same policy object),
+#   2. sets up a TOTP authenticator (Google Authenticator etc.) — same required-MFA stage as the
+#      login flow in open-webui-sso.yaml,
+#   3. is logged in, and can use "Continue with authentik" on Open WebUI. Open WebUI creates their
+#      account there as pending (or links an existing one with the same email).
+# Without a valid invitation token the flow stops at the first stage.
+version: 1
+metadata:
+  name: laptop-ai-backend - Invite-only enrollment
+entries:
+  - model: authentik_blueprints.metaapplyblueprint
+    attrs:
+      identifiers:
+        name: Default - Authentication flow
+      required: true
+  - model: authentik_blueprints.metaapplyblueprint
+    attrs:
+      identifiers:
+        name: laptop-ai-backend - Open WebUI SSO with required TOTP
+      required: true
+  - model: authentik_blueprints.metaapplyblueprint
+    attrs:
+      identifiers:
+        name: laptop-ai-backend - Password creation rules
+      required: true
+
+  - model: authentik_flows.flow
+    id: flow
+    identifiers:
+      slug: invitation-enrollment
+    attrs:
+      name: Invitation enrollment
+      title: Create your account
+      designation: enrollment
+      authentication: require_unauthenticated
+
+  # Stops the flow unless the link carries a valid invitation (?itoken=...).
+  - model: authentik_stages_invitation.invitationstage
+    id: invitation-stage
+    identifiers:
+      name: invitation-enrollment-invitation
+    attrs:
+      continue_flow_without_invitation: false
+
+  - model: authentik_stages_prompt.prompt
+    id: field-username
+    identifiers:
+      name: invitation-enrollment-field-username
+    attrs:
+      field_key: username
+      label: Username
+      type: username
+      required: true
+      placeholder: Username
+      order: 0
+  - model: authentik_stages_prompt.prompt
+    id: field-name
+    identifiers:
+      name: invitation-enrollment-field-name
+    attrs:
+      field_key: name
+      label: Name
+      type: text
+      required: true
+      placeholder: Full name
+      order: 1
+  # Pre-filled when the invitation's "Custom attributes" set {"email": "..."}; use the same email
+  # as the person's existing Open WebUI account so the two get linked.
+  - model: authentik_stages_prompt.prompt
+    id: field-email
+    identifiers:
+      name: invitation-enrollment-field-email
+    attrs:
+      field_key: email
+      label: Email
+      type: email
+      required: true
+      placeholder: Email
+      order: 2
+  - model: authentik_stages_prompt.prompt
+    id: field-password
+    identifiers:
+      name: invitation-enrollment-field-password
+    attrs:
+      field_key: password
+      label: Password
+      type: password
+      required: true
+      placeholder: Password
+      sub_text: At least 8 characters, with an uppercase letter, a lowercase letter, a number and a symbol.
+      order: 3
+  - model: authentik_stages_prompt.prompt
+    id: field-password-repeat
+    identifiers:
+      name: invitation-enrollment-field-password-repeat
+    attrs:
+      field_key: password_repeat
+      label: Password (repeat)
+      type: password
+      required: true
+      placeholder: Password (repeat)
+      order: 4
+
+  - model: authentik_stages_prompt.promptstage
+    id: prompt-stage
+    identifiers:
+      name: invitation-enrollment-prompt
+    attrs:
+      fields:
+        - !KeyOf field-username
+        - !KeyOf field-name
+        - !KeyOf field-email
+        - !KeyOf field-password
+        - !KeyOf field-password-repeat
+      # The password rules (password-policy.yaml); it checks the "password" field.
+      validation_policies:
+        - !Find [authentik_policies_password.passwordpolicy, [name, default-password-change-password-policy]]
+
+  - model: authentik_stages_user_write.userwritestage
+    id: write-stage
+    identifiers:
+      name: invitation-enrollment-write
+    attrs:
+      user_creation_mode: always_create
+      create_users_as_inactive: false
+      user_type: internal
+
+  - model: authentik_flows.flowstagebinding
+    identifiers:
+      target: !KeyOf flow
+      stage: !KeyOf invitation-stage
+      order: 0
+  - model: authentik_flows.flowstagebinding
+    identifiers:
+      target: !KeyOf flow
+      stage: !KeyOf prompt-stage
+      order: 10
+  - model: authentik_flows.flowstagebinding
+    identifiers:
+      target: !KeyOf flow
+      stage: !KeyOf write-stage
+      order: 20
+  # Required TOTP setup before the account is usable (the login flow's MFA stage, which sends
+  # users without a device through TOTP setup).
+  - model: authentik_flows.flowstagebinding
+    identifiers:
+      target: !KeyOf flow
+      stage: !Find [authentik_stages_authenticator_validate.authenticatorvalidatestage, [name, default-authentication-mfa-validation]]
+      order: 30
+  - model: authentik_flows.flowstagebinding
+    identifiers:
+      target: !KeyOf flow
+      stage: !Find [authentik_stages_user_login.userloginstage, [name, default-authentication-login]]
+      order: 40

@@ -8,7 +8,7 @@ AppRole auth, instead of reading `DATABASE_URL` directly from the environment.
 1. Start OpenBao (and Postgres, since bootstrap reads `.env` for the values to store):
 
    ```bash
-   docker compose up -d postgres-db openbao
+   docker compose -f devops/docker-compose.yml up -d postgres-db openbao
    ```
 
 2. Make sure `jq` is installed on the host (`sudo apt install jq`). The `bao` CLI itself doesn't need a host install — the scripts run it inside the `laptop-openbao` container via `docker exec`.
@@ -22,16 +22,21 @@ AppRole auth, instead of reading `DATABASE_URL` directly from the environment.
    This initializes OpenBao (single unseal key/share — fine for a personal
    laptop, not for anything shared), unseals it, enables the KV v2 engine,
    writes `POSTGRES_USER`/`POSTGRES_PASSWORD`/`POSTGRES_DB`/`WEBUI_SECRET_KEY`
-   from `.env` into `secret/custom-backend`, and creates an AppRole scoped to
-   read-only access on that one path.
+   from `.env` into `secret/custom-backend`, and creates two AppRoles scoped
+   to that one path: `custom-backend` (read-only, long-lived token, used by
+   the running FastAPI app) and `custom-backend-admin` (read/write,
+   short-lived token, for a future rotation script only — never give its
+   creds to the app itself).
 
-   It prints `OPENBAO_ROLE_ID` and `OPENBAO_SECRET_ID` at the end — copy those
-   into the repo root `.env`.
+   It prints `OPENBAO_ROLE_ID`/`OPENBAO_SECRET_ID` (for the app's `.env`) and
+   `OPENBAO_ADMIN_ROLE_ID`/`OPENBAO_ADMIN_SECRET_ID` (for whatever rotation
+   tooling ends up using them — not currently consumed by anything) at the
+   end.
 
 4. Start the backend:
 
    ```bash
-   docker compose up -d custom-backend
+   docker compose -f devops/docker-compose.yml up -d custom-backend
    ```
 
 ## After a restart
@@ -51,16 +56,33 @@ cd openbao && ./auto-unseal.sh
   re-run (skips init if `keys.json` exists).
 - `auto-unseal.sh` — unseals using the key saved by `bootstrap.sh`. Run after
   every container restart or host reboot.
-- `policy.hcl` — read-only policy for the `custom-backend` AppRole, scoped to
-  `secret/data/custom-backend` only.
+- `policy-readonly.hcl` — read-only policy for the `custom-backend` AppRole,
+  scoped to `secret/data/custom-backend` only.
+- `policy-admin.hcl` — read/write policy for the `custom-backend-admin`
+  AppRole, scoped to `secret/data/custom-backend` and
+  `secret/metadata/custom-backend` — intended for a future credential
+  rotation script, not for the running app.
+- `setup-users.sh` — creates the human logins (userpass): `bao-admin` and
+  `bao-readonly`, with passwords from `OPENBAO_ADMIN_PASSWORD` /
+  `OPENBAO_READONLY_PASSWORD` in `.env`. Safe to re-run; `bootstrap.sh` runs it
+  at the end once both passwords are set. Run it on its own to add or change
+  the users, since `bootstrap.sh` issues new AppRole secret IDs every run.
+- `policy-user-readonly.hcl` — `bao-readonly`'s policy: read/list every secret
+  under `secret/`, no writes, no policy/auth access.
+- `policy-user-admin.hcl` — `bao-admin`'s policy: secrets, policies, auth
+  methods (users, AppRoles), mounts, identity, leases. No seal, generate-root
+  or rekey (those still need `keys.json`). It can write policies and users,
+  so it can grant itself more — treat it as fully trusted.
 - `keys.json` (gitignored, created by `bootstrap.sh`) — root token + unseal
   key. Treat this like a master password.
 
 ## UI
 
-http://localhost:8200/ui — Method: **Token**, using the root token from
-`keys.json` (there's no username/password or OIDC method configured, only
-Token for humans and AppRole for `custom-backend`).
+http://localhost:8200/ui — Method: **Username**, as `bao-readonly` to look
+secrets up or `bao-admin` to change things (passwords in `.env`, created by
+`setup-users.sh`). Keep the root token from `keys.json` (Method: **Token**) for
+break-glass only, e.g. if the userpass method is broken. There's no OIDC/SSO or
+MFA on OpenBao logins; AppRole is for `custom-backend` only.
 
 ## Backup (do this — a laptop crash otherwise loses all secrets)
 

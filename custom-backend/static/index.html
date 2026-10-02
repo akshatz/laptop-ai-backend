@@ -1,0 +1,140 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Laptop Dev Backend — Chat</title>
+<style>
+  body { font-family: system-ui, sans-serif; max-width: 720px; margin: 2rem auto; padding: 0 1rem; }
+  fieldset { margin-bottom: 1rem; }
+  label { display: block; margin-top: 0.5rem; font-size: 0.9rem; }
+  input, textarea { width: 100%; box-sizing: border-box; padding: 0.4rem; margin-top: 0.2rem; }
+  textarea { min-height: 4rem; }
+  button { margin-top: 0.6rem; padding: 0.4rem 1rem; cursor: pointer; }
+  #messages { border: 1px solid #ccc; border-radius: 6px; padding: 0.75rem; min-height: 8rem; margin-bottom: 0.5rem; }
+  .msg { margin-bottom: 0.5rem; }
+  .msg .role { font-weight: 600; }
+  #status { color: #a00; font-size: 0.85rem; min-height: 1.2rem; }
+</style>
+</head>
+<body>
+<h1>Laptop Dev Backend — Chat</h1>
+<p id="status"></p>
+
+<fieldset>
+  <legend>1. Create a chat</legend>
+  <label>User ID (UUID)
+    <input id="userId" placeholder="an existing user's id from /users">
+  </label>
+  <label>Model
+    <input id="modelId" value="llama3.2">
+  </label>
+  <button onclick="createChat()">Create chat</button>
+  <div>Chat ID: <code id="chatId">(none yet)</code></div>
+</fieldset>
+
+<fieldset>
+  <legend>2. Ingest documents (optional, for RAG context — up to 5 at once)</legend>
+  <label>Text 1<textarea class="docText" placeholder="paste some text to give the assistant context for this chat"></textarea></label>
+  <label>Text 2 (optional)<textarea class="docText"></textarea></label>
+  <label>Text 3 (optional)<textarea class="docText"></textarea></label>
+  <label>Text 4 (optional)<textarea class="docText"></textarea></label>
+  <label>Text 5 (optional)<textarea class="docText"></textarea></label>
+  <button onclick="ingestDocs()">Ingest</button>
+</fieldset>
+
+<fieldset>
+  <legend>3. Chat</legend>
+  <div id="messages"></div>
+  <label>Message
+    <input id="messageInput" placeholder="say something">
+  </label>
+  <button onclick="sendMessage()">Send</button>
+</fieldset>
+
+<script>
+let chatId = null;
+
+function setStatus(text) {
+  document.getElementById('status').textContent = text || '';
+}
+
+async function createChat() {
+  setStatus('');
+  const userId = document.getElementById('userId').value.trim();
+  const modelId = document.getElementById('modelId').value.trim() || 'llama3.2';
+  if (!userId) { setStatus('Enter a user ID first.'); return; }
+
+  try {
+    const res = await fetch('/chats', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ user_id: userId, model_id: modelId }),
+    });
+    if (!res.ok) throw new Error(await res.text());
+    const chat = await res.json();
+    chatId = chat.id;
+    document.getElementById('chatId').textContent = chatId;
+    document.getElementById('messages').innerHTML = '';
+  } catch (err) {
+    setStatus('Failed to create chat: ' + err.message);
+  }
+}
+
+async function ingestDocs() {
+  setStatus('');
+  if (!chatId) { setStatus('Create a chat first.'); return; }
+  const texts = Array.from(document.querySelectorAll('.docText'))
+    .map(el => el.value.trim())
+    .filter(Boolean);
+  if (!texts.length) return;
+
+  try {
+    const res = await fetch(`/chats/${chatId}/documents`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ documents: texts.map(text => ({ text })) }),
+    });
+    if (!res.ok) throw new Error(await res.text());
+    const result = await res.json();
+    setStatus(`Ingested ${result.documents_ingested} document(s), ${result.chunks_ingested} chunk(s).`);
+  } catch (err) {
+    setStatus('Failed to ingest documents: ' + err.message);
+  }
+}
+
+function appendMessage(role, content) {
+  const div = document.createElement('div');
+  div.className = 'msg';
+  const roleSpan = document.createElement('span');
+  roleSpan.className = 'role';
+  roleSpan.textContent = `${role}: `;
+  div.append(roleSpan, document.createTextNode(content));
+  document.getElementById('messages').appendChild(div);
+}
+
+async function sendMessage() {
+  setStatus('');
+  if (!chatId) { setStatus('Create a chat first.'); return; }
+  const input = document.getElementById('messageInput');
+  const content = input.value.trim();
+  if (!content) return;
+
+  appendMessage('user', content);
+  input.value = '';
+
+  try {
+    const res = await fetch(`/chats/${chatId}/messages`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ content }),
+    });
+    if (!res.ok) throw new Error(await res.text());
+    const reply = await res.json();
+    appendMessage('assistant', reply.content);
+  } catch (err) {
+    setStatus('Failed to send message: ' + err.message);
+  }
+}
+</script>
+</body>
+</html>

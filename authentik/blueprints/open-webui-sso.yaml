@@ -1,0 +1,99 @@
+# Applied automatically by authentik-worker (mounted into /blueprints/custom), and re-applied
+# whenever this file changes. Values in !Env come from the worker's environment (devops/.env).
+#
+# 1. Makes MFA mandatory in authentik's default login flow: users without a TOTP device are
+#    sent through TOTP setup (QR code for Google Authenticator or any TOTP app) before their
+#    first login completes. Only TOTP and static recovery codes are accepted.
+# 2. Registers Open WebUI as an OIDC application (confidential client, redirect URIs for the
+#    Caddy HTTPS front and plain localhost).
+version: 1
+metadata:
+  name: laptop-ai-backend - Open WebUI SSO with required TOTP
+entries:
+  # The default flows below are created by authentik's own blueprints; wait for them first.
+  - model: authentik_blueprints.metaapplyblueprint
+    attrs:
+      identifiers:
+        name: Default - Authentication flow
+      required: true
+  - model: authentik_blueprints.metaapplyblueprint
+    attrs:
+      identifiers:
+        name: Default - TOTP MFA setup flow
+      required: true
+  - model: authentik_blueprints.metaapplyblueprint
+    attrs:
+      identifiers:
+        name: Default - Provider authorization flow (implicit consent)
+      required: true
+  - model: authentik_blueprints.metaapplyblueprint
+    attrs:
+      identifiers:
+        name: Default - Provider invalidation flow
+      required: true
+
+  # authentik's default blueprint creates this stage without attrs, so the settings here
+  # aren't reset when that blueprint re-applies.
+  - model: authentik_stages_authenticator_validate.authenticatorvalidatestage
+    identifiers:
+      name: default-authentication-mfa-validation
+    attrs:
+      device_classes:
+        - totp
+        - static
+      not_configured_action: configure
+      configuration_stages:
+        - !Find [authentik_stages_authenticator_totp.authenticatortotpstage, [name, default-authenticator-totp-setup]]
+      # Ask for a code on every login.
+      last_auth_threshold: seconds=0
+
+  - model: authentik_providers_oauth2.oauth2provider
+    id: open-webui-provider
+    identifiers:
+      name: Open WebUI
+    attrs:
+      client_type: confidential
+      # Must be listed explicitly: a blueprint-created provider otherwise allows no grant types and
+      # authentik rejects the login ("Invalid grant_type for provider").
+      grant_types:
+        - authorization_code
+        - refresh_token
+      client_id: !Env OPEN_WEBUI_OIDC_CLIENT_ID
+      client_secret: !Env OPEN_WEBUI_OIDC_CLIENT_SECRET
+      authorization_flow: !Find [authentik_flows.flow, [slug, default-provider-authorization-implicit-consent]]
+      invalidation_flow: !Find [authentik_flows.flow, [slug, default-provider-invalidation-flow]]
+      # RS256-signed ID tokens, verifiable through the provider's JWKS.
+      signing_key: !Find [authentik_crypto.certificatekeypair, [name, authentik Self-signed Certificate]]
+      sub_mode: hashed_user_id
+      # Open WebUI sends /oauth/oidc/callback (its `oauth_login_callback` route resolves to that path);
+      # /oauth/oidc/login/callback is the same handler, kept in case a future version switches.
+      redirect_uris:
+        - matching_mode: strict
+          url: !Format ["https://%s:8444/oauth/oidc/callback", !Env OPEN_WEBUI_HOST]
+        - matching_mode: strict
+          url: https://localhost:8444/oauth/oidc/callback
+        - matching_mode: strict
+          url: http://localhost:8082/oauth/oidc/callback
+        # Plain HTTP on the LAN IP (direct to the open-webui port). Works because the code exchange
+        # still needs the client secret + PKCE, but prefer https://<host>:8444.
+        - matching_mode: strict
+          url: !Format ["http://%s:8082/oauth/oidc/callback", !Env OPEN_WEBUI_HOST]
+        - matching_mode: strict
+          url: !Format ["https://%s:8444/oauth/oidc/login/callback", !Env OPEN_WEBUI_HOST]
+        - matching_mode: strict
+          url: https://localhost:8444/oauth/oidc/login/callback
+        - matching_mode: strict
+          url: http://localhost:8082/oauth/oidc/login/callback
+      property_mappings:
+        - !Find [authentik_providers_oauth2.scopemapping, [managed, goauthentik.io/providers/oauth2/scope-openid]]
+        - !Find [authentik_providers_oauth2.scopemapping, [managed, goauthentik.io/providers/oauth2/scope-email]]
+        - !Find [authentik_providers_oauth2.scopemapping, [managed, goauthentik.io/providers/oauth2/scope-profile]]
+
+  - model: authentik_core.application
+    identifiers:
+      slug: open-webui
+    attrs:
+      name: Open WebUI
+      provider: !KeyOf open-webui-provider
+      meta_launch_url: !Format ["https://%s:8444/", !Env OPEN_WEBUI_HOST]
+      policy_engine_mode: any
