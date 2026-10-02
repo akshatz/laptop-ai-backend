@@ -165,6 +165,14 @@ services:
       # Web Search = "Always"). A user's own choice there still wins. Saved DB setting
       # ui.default_interface_settings overrides this once it exists — see README "Web search".
       - 'DEFAULT_INTERFACE_SETTINGS={"webSearch": "always"}'
+      # Hide the chat "Controls" panel (system prompt, temperature and other model params, valves)
+      # from regular users; admins keep it. Only the UI hides it — Open WebUI doesn't reject those
+      # fields if sent through the API directly. Saved DB setting user.permissions overrides these
+      # once it exists (Admin → Users → Groups → Default permissions) — see README.
+      - USER_PERMISSIONS_CHAT_CONTROLS=false
+      - USER_PERMISSIONS_CHAT_VALVES=false
+      - USER_PERMISSIONS_CHAT_SYSTEM_PROMPT=false
+      - USER_PERMISSIONS_CHAT_PARAMS=false
       # Use Milvus as the vector store for RAG document embeddings
       - VECTOR_DB=milvus
       - MILVUS_URI=http://milvus:19530
