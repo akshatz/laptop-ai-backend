@@ -1,0 +1,327 @@
+# Open WebUI settings tuned for this stack. Open WebUI keeps them in its database, where a saved
+# value wins over docker-compose's env; devops/open-webui/settings.py syncs them with this file:
+#   export: DB → this file    diff: what apply would change    apply: this file → DB
+# Change a setting here and apply it, or change it in the Admin UI and export, then commit.
+# Only what's listed here is managed. Secret-looking Function valves stay in the DB (REDACTED).
+config:
+  rag.template: |-
+    ### Task:
+    Answer the question using the sources in <context>.
+
+    ### Rules:
+    - For facts, numbers and dates, use only what the sources say. Never fill gaps from memory.
+    - Copy numbers exactly, with what they measure and the date they are for. A target price is not a stop-loss, and a company's share price is not an index level.
+    - If the sources don't have what was asked (for example the figure for that exact date), say so plainly, then give the closest figure the sources do have, with its date.
+    - If the question doesn't ask for facts (writing a poem, translating, a greeting), just do it; the sources are optional.
+    - Answer in the language of the question. Be short and direct.
+    - When a <source> tag has an id attribute, cite it as [id], e.g. "Sales rose 20% [1]." Never write XML tags.
+
+    <context>
+    {{CONTEXT}}
+    </context>
+  models.default_params:
+    temperature: 0.1
+  rag.embedding_engine: ollama
+  rag.embedding_model: embeddinggemma
+  rag.chunk_size: 1000
+  rag.chunk_overlap: 100
+  rag.enable_hybrid_search: true
+  rag.hybrid_bm25_weight: 0.5
+  rag.reranking_engine: ''
+  rag.reranking_model: cross-encoder/ms-marco-MiniLM-L6-v2
+  rag.top_k: 6
+  rag.top_k_reranker: 3
+  rag.relevance_threshold: 0.0
+  web.search.result_count: 8
+  web.search.domain.filter_list:
+  - '!investing.com'
+  - '!youtube.com'
+  - '!timeanddate.com'
+  - '!facebook.com'
+  - '!bseindia.com'
+  - '!mybharat.gov.in'
+  - '!findoc.com'
+  - '!linkedin.com'
+  task.model.default: fast-ai:latest
+  task.model.external: fast-ai:latest
+  task.model.params:
+    temperature: 0.05
+    presence_penalty: 0
+  task.query.prompt_template: |-
+    ### Task:
+    Write web search queries for the QUESTION at the end. Every query must be about that question.
+
+    ### Rules:
+    - The earlier conversation is background only and may be about a different topic. Use it ONLY to resolve words in the question such as "he", "it", "that company", "and yesterday?".
+    - Do not write any query about a topic that is not in the question. If the question mentions a new topic, the earlier conversation does not matter.
+    - Write at most 2 short, specific queries, each worded differently (one close to the question, one from another angle). Never repeat a query with only the date format or spelling changed.
+    - Keep names, numbers and dates from the question exactly as written.
+    - Today's date is {{CURRENT_DATE}}. Write short or relative dates (e.g. "01 Oct 26", "yesterday") as full dates.
+    - Respond ONLY with JSON: {"queries": ["query1", "query2"]}
+
+    ### Earlier conversation (background, may be unrelated):
+    <chat_history>
+    {{MESSAGES:END:3}}
+    </chat_history>
+
+    ### QUESTION to search for:
+    {{prompt}}
+  task.query.search.enable: true
+  task.query.retrieval.enable: true
+  task.follow_up.enable: true
+  task.follow_up.prompt_template: |
+    ### Task:
+    Suggest exactly 3 short follow-up questions the user might ask next about the LATEST question and answer below.
+    ### Guidelines:
+    - Exactly 3 questions, no more, no fewer.
+    - Write them from the user's point of view, directed to the assistant.
+    - Only about the topic of the latest question and answer; never about other topics.
+    - Concise and clear; don't repeat what was already answered.
+    - Use the language of the latest question.
+    ### Output:
+    Reply with only this JSON, starting with { and ending with }, no tags, no code fences, no other text:
+    {"follow_ups": ["Question 1?", "Question 2?", "Question 3?"]}
+    ### Latest question and answer:
+    <chat_history>
+    {{MESSAGES:END:2}}
+    </chat_history>
+  task.title.enable: true
+  task.tags.enable: false
+  task.autocomplete.enable: false
+  ui.banners:
+  - id: family-guide-1
+    type: info
+    title: ''
+    content: |-
+      **Welcome to our family AI chat — tips for good answers**
+      • Start a New Chat for every new topic. Mixing topics in one chat confuses the AI.
+      • Write complete questions, for example "SBI share closing price on 1 October 2026" rather than "and SBI?".
+      • Answers take 1 to 2 minutes because the AI searches the web first. Please wait; don't press Stop or ask again.
+      • Not happy with an answer? Press Regenerate (up to 3 answers per question).
+      • For important numbers (money, health, dates), open the source links under the answer and check them.
+      • Deleted a chat by mistake? Akshat can restore it.
+      • Forgot your password? On the sign-in page choose "Forgot username or password?" and enter the 6-digit code emailed to you.
+      Questions? Ask Akshat. Close this note with × once you've read it.
+    dismissible: true
+    timestamp: 1791029217
+  user.permissions:
+    chat:
+      stt: true
+      tts: false
+      call: true
+      edit: false
+      share: true
+      delete: true
+      export: true
+      import: false
+      params: false
+      valves: false
+      controls: false
+      temporary: true
+      web_upload: true
+      file_upload: true
+      rate_response: true
+      system_prompt: false
+      delete_message: true
+      multiple_models: true
+      continue_response: true
+      temporary_enforced: false
+      regenerate_response: true
+    sharing:
+      notes: false
+      tools: false
+      models: false
+      skills: false
+      folders: false
+      prompts: false
+      knowledge: false
+      open_chats: false
+      public_chats: false
+      public_notes: false
+      public_tools: false
+      public_models: false
+      public_skills: false
+      public_prompts: false
+      public_calendars: false
+      public_knowledge: false
+    features:
+      notes: true
+      folders: true
+      api_keys: false
+      calendar: true
+      channels: true
+      memories: true
+      webhooks: false
+      web_search: true
+      automations: false
+      code_interpreter: true
+      image_generation: true
+      direct_tool_servers: false
+    settings:
+      interface: true
+    workspace:
+      tools: false
+      models: false
+      skills: false
+      prompts: false
+      knowledge: false
+      tools_export: false
+      tools_import: false
+      models_export: false
+      models_import: false
+      skills_export: false
+      skills_import: false
+      prompts_export: false
+      prompts_import: false
+    access_grants:
+      allow_users: true
+      allow_groups: true
+models:
+  arena-model:
+    is_active: false
+    params: {}
+    meta:
+      description: null
+      capabilities: null
+      knowledge: null
+  codegemma:7b:
+    is_active: false
+    params: {}
+    meta:
+      description: null
+      capabilities: null
+      knowledge: null
+  embeddinggemma:latest:
+    is_active: false
+    params: {}
+    meta:
+      description: null
+      capabilities:
+        file_context: true
+        vision: true
+        file_upload: true
+        web_search: true
+        image_generation: true
+        code_interpreter: true
+        terminal: true
+        citations: true
+        status_updates: true
+        memory: true
+        builtin_tools: true
+      knowledge: null
+      defaultFeatureIds:
+      - web_search
+      suggestion_prompts: null
+      tags: []
+  fast-ai:latest:
+    is_active: true
+    params:
+      system: Today is {{CURRENT_WEEKDAY}}, {{CURRENT_DATE}}. The current time is {{CURRENT_TIME}}.
+      function_calling: legacy
+    meta:
+      description: null
+      capabilities:
+        memory: true
+        vision: true
+        terminal: true
+        citations: true
+        web_search: true
+        file_upload: true
+        file_context: true
+        builtin_tools: true
+        status_updates: true
+        code_interpreter: true
+        image_generation: true
+      knowledge: []
+      filterIds:
+      - chat_history_trim
+      defaultFeatureIds:
+      - web_search
+      suggestion_prompts: null
+      tags: []
+  gemma3:12b:
+    is_active: false
+    params: {}
+    meta:
+      description: null
+      capabilities: null
+      knowledge: null
+  llama3.2:latest:
+    is_active: false
+    params: {}
+    meta:
+      description: null
+      capabilities:
+        file_context: true
+        vision: true
+        file_upload: true
+        web_search: true
+        image_generation: true
+        code_interpreter: true
+        terminal: true
+        citations: true
+        status_updates: true
+        memory: true
+        builtin_tools: true
+      knowledge: null
+      defaultFeatureIds:
+      - web_search
+      suggestion_prompts: null
+      tags: []
+  nomic-embed-text:latest:
+    is_active: false
+    params: {}
+    meta:
+      description: null
+      capabilities: null
+      knowledge: null
+  smart-ai:latest:
+    is_active: false
+    params: {}
+    meta:
+      description: null
+      capabilities: null
+      knowledge: null
+functions:
+  audit_status_code:
+    is_active: true
+    is_global: false
+    valves: {}
+  authentik_user_cleanup:
+    is_active: true
+    is_global: false
+    valves: null
+  chat_history_trim:
+    is_active: true
+    is_global: false
+    valves: null
+  chat_soft_delete:
+    is_active: true
+    is_global: false
+    valves: {}
+  feedback_review:
+    is_active: true
+    is_global: false
+    valves: {}
+  password_expiry:
+    is_active: true
+    is_global: false
+    valves: null
+  password_reset:
+    is_active: true
+    is_global: false
+    valves: null
+  query_log:
+    is_active: true
+    is_global: true
+    valves: null
+  regenerate_limit:
+    is_active: true
+    is_global: true
+    valves: null
+  signup_email_verification:
+    is_active: true
+    is_global: false
+    valves:
+      base_url: http://192.168.29.119:8082
+      token_max_age_seconds: 7200

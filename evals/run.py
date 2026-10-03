@@ -111,6 +111,26 @@ def settings_snapshot(env: dict, model: str) -> dict:
         return {"error": str(e)[:200]}
 
 
+def settings_file_state() -> dict:
+    """Which version of devops/open-webui/settings.yaml this run tested: its last commit, whether it has
+    uncommitted edits, and whether Open WebUI's DB matched it (settings.py diff; None if that failed)."""
+    path = REPO / "devops" / "open-webui" / "settings.yaml"
+
+    def git(*args: str) -> str:
+        return subprocess.run(["git", "-C", str(REPO), *args], capture_output=True, text=True, timeout=30).stdout.strip()
+
+    try:
+        sync = subprocess.run([sys.executable, str(path.with_name("settings.py")), "diff", "--quiet"],
+                              capture_output=True, timeout=120).returncode
+    except Exception:
+        sync = None
+    return {
+        "commit": git("log", "-1", "--format=%h", "--", str(path)) or None,
+        "uncommitted_edits": bool(git("status", "--porcelain", "--", str(path))),
+        "db_matches_file": {0: True, 1: False}.get(sync),
+    }
+
+
 def ask(env: dict, model: str, messages: list, web_search: bool, timeout: int) -> dict:
     """One streamed chat completion. Open WebUI sends the sources as the first SSE events."""
     body = json.dumps(
@@ -304,6 +324,7 @@ def run(args, env: dict) -> None:
             "url": env.get("OPEN_WEBUI_URL", "http://127.0.0.1:8082"),
             "cases": len(cases),
             "settings": settings_snapshot(env, args.model),
+            "settings_file": settings_file_state(),
         }
     }
     print(f"{len(cases)} case(s), model {args.model} → {out_path.relative_to(REPO)}")
@@ -363,6 +384,12 @@ def compare(path_a: str, path_b: str) -> None:
     (head_a, a), (head_b, b) = load_run(path_a), load_run(path_b)
     print(f"A: {Path(path_a).name}  ({head_a.get('label') or 'no label'})")
     print(f"B: {Path(path_b).name}  ({head_b.get('label') or 'no label'})")
+    for name, head in (("A", head_a), ("B", head_b)):
+        state = head.get("settings_file")
+        if state:
+            print(f"{name} settings.yaml: commit {state.get('commit') or 'none'}"
+                  f"{', uncommitted edits' if state.get('uncommitted_edits') else ''}"
+                  f", DB {'matched' if state.get('db_matches_file') else 'did NOT match' if state.get('db_matches_file') is False else 'not checked'}")
     settings_a, settings_b = head_a.get("settings", {}), head_b.get("settings", {})
     changed = sorted(k for k in set(settings_a) | set(settings_b) if settings_a.get(k) != settings_b.get(k))
     if changed:

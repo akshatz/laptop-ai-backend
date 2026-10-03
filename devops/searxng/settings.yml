@@ -20,3 +20,12 @@ search:
     - html
     - json
   safe_search: 1
+
+# The defaults enable only three web engines (brave, duckduckgo, google cse). On 2026-10-03 a burst
+# of eval searches got all three blocked at once (too many requests / CAPTCHA), and Open WebUI then
+# answered without sources. Two more engines keep search working while some are suspended.
+engines:
+  - name: google
+    disabled: false
+  - name: bing
+    disabled: false
