@@ -1,5 +1,5 @@
 // Mounted over Open WebUI's empty /app/build/static/loader.js (copied to /static/loader.js at
-// startup, and loaded by every page). Four things:
+// startup, and loaded by every page). Five things:
 //
 // 1. Signed-out visitors go straight to authentik. OAUTH_AUTO_REDIRECT does this too, but only
 //    after the SvelteKit app has started and rendered its sign-in page, so "Continue with
@@ -20,6 +20,8 @@
 //
 // 4. For anyone but admins: no Info button under answers (Open WebUI has no permission for it), and
 //    no Regenerate button once an answer has 3 versions.
+//
+// 5. For anyone but admins: signed out after 3 hours without activity, from authentik too.
 (() => {
 	// ---- 1. early SSO redirect ----------------------------------------------------------------
 	const params = new URLSearchParams(location.search);
@@ -196,6 +198,98 @@
 		limitRegenerate();
 	};
 
+	// ---- 5. regular users: signed out after 3 hours without activity ----------------------------
+	// Open WebUI has no idle timeout (its token lasts auth.jwt_expiry, 4 weeks). Activity is a pointer,
+	// key, wheel or touch event in any Open WebUI tab of the browser; its time is kept in localStorage
+	// so tabs share it, and the token's own issue time counts too, so a fresh sign-in always starts a
+	// new 3 hours. Checked every minute, when a tab comes back into view, and on the first activity
+	// after a pause (moving the mouse after a night away signs out rather than counting as activity).
+	// Signing out of Open WebUI alone wouldn't do: authentik's session would still be there, and
+	// section 1 would sign the user straight back in. So it then runs authentik's logout flow, which
+	// ends at "/" and so, through Caddy's redirect and section 1, at authentik's sign-in page.
+	// Client-side only: the token itself stays valid until it expires.
+	const IDLE_LIMIT_MS = 3 * 60 * 60 * 1000;
+	const IDLE_KEY = 'idleSignout.lastActivity';
+	const LOGOUT_URL = `https://${location.hostname}:9443/flows/-/default/invalidation/`;
+	let signingOut = false;
+
+	const signOut = (token) => {
+		if (signingOut) return;
+		signingOut = true;
+		document.documentElement.style.visibility = 'hidden';
+		const toAuthentik = () => location.replace(LOGOUT_URL);
+		if (!token) return toAuthentik();
+		try {
+			localStorage.removeItem('token'); // other tabs follow (storage event below)
+		} catch (e) {}
+		// credentials: 'include' so the response's cookie deletions apply.
+		fetch('/api/v1/auths/signout', {
+			method: 'POST',
+			credentials: 'include',
+			headers: { Authorization: `Bearer ${token}` }
+		})
+			.catch(() => {})
+			.finally(toAuthentik);
+	};
+
+	const watchIdle = (token) => {
+		let issuedAt = 0;
+		try {
+			const payload = token.split('.')[1].replace(/-/g, '+').replace(/_/g, '/');
+			issuedAt = (JSON.parse(atob(payload)).iat || 0) * 1000;
+		} catch (e) {}
+		const stored = () => {
+			try {
+				return Number(localStorage.getItem(IDLE_KEY)) || 0;
+			} catch (e) {
+				return 0;
+			}
+		};
+		const markActive = () => {
+			try {
+				localStorage.setItem(IDLE_KEY, String(Date.now()));
+			} catch (e) {}
+		};
+		const idleTooLong = () => Date.now() - Math.max(stored(), issuedAt) >= IDLE_LIMIT_MS;
+		// Someone else may sign in on this browser later; this tab then stops watching.
+		const current = () => {
+			try {
+				return localStorage.token === token;
+			} catch (e) {
+				return false;
+			}
+		};
+		const check = () => {
+			if (!signingOut && current() && idleTooLong()) signOut(token);
+		};
+
+		if (!stored() && !issuedAt) markActive(); // nothing to go by yet: start counting now
+		let lastMark = 0;
+		const onActivity = () => {
+			const now = Date.now();
+			if (signingOut || now - lastMark < 60 * 1000 || !current()) return;
+			if (idleTooLong()) return signOut(token);
+			lastMark = now;
+			markActive();
+		};
+		for (const type of ['pointerdown', 'pointermove', 'keydown', 'wheel', 'touchstart']) {
+			window.addEventListener(type, onActivity, { capture: true, passive: true });
+		}
+		check();
+		setInterval(check, 60 * 1000);
+		document.addEventListener('visibilitychange', () => {
+			if (document.visibilityState === 'visible') check();
+		});
+		// Another tab signed out for inactivity: follow it to authentik's logout. (Open WebUI's own Sign
+		// out removes the token too, but then the last activity is recent.)
+		window.addEventListener('storage', (event) => {
+			if (event.key === 'token' && event.oldValue === token && !event.newValue && idleTooLong()) {
+				signOut(null);
+			}
+		});
+	};
+
+	// ---- sections 4 and 5 start once /api/v1/auths/ says the user isn't an admin ------------------
 	// Asked with localStorage's token only, never the `token` cookie: /api/v1/auths/ re-sets that
 	// cookie as HttpOnly, and right after an SSO sign-in the cookie is where Open WebUI's sign-in page
 	// reads the new token from (with JavaScript). Sending the cookie then hid the token from the page,
@@ -212,7 +306,9 @@
 		fetch('/api/v1/auths/', { credentials: 'omit', headers: { Authorization: `Bearer ${token}` } })
 			.then((r) => (r.ok ? r.json() : null))
 			.then((user) => {
-				if (user && user.role !== 'admin') restrictRegularUser();
+				if (!user || user.role === 'admin') return;
+				restrictRegularUser();
+				watchIdle(token);
 			})
 			.catch(() => {});
 		return true;
