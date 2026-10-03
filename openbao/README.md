@@ -152,7 +152,7 @@ Secrets are grouped as `apps/<environment>/<app>` (the KV v2 engine is mounted a
 | `apps/default/postgres` | Postgres user/password/db | people (bao-admin / bao-readonly) |
 | `apps/default/open-webui` | WebUI secret key | people |
 | `apps/default/milvus` | Milvus root password | people |
-| `apps/default/authentik` | secret key, bootstrap login, Open WebUI OIDC client, Open WebUI API token | people |
+| `apps/default/authentik` | secret key, bootstrap login, Open WebUI OIDC client, Open WebUI API token, MFA switch (`mfa_required` = `AUTHENTIK_MFA_REQUIRED`) | people |
 | `apps/default/passbolt` | SMTP relay, MariaDB password | people |
 | `apps/default/openobserve` | root login, basic-auth header value | people |
 | `apps/default/searxng` | secret | people |
