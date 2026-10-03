@@ -89,13 +89,16 @@ put "$APPS/open-webui" \
   webui_secret_key="$WEBUI_SECRET_KEY"
 put "$APPS/milvus" \
   root_password="$MILVUS_ROOT_PASSWORD"
+# mfa_required is AUTHENTIK_MFA_REQUIRED, a setting rather than a secret (true when unset, as in
+# compose). Like the rest, changing the copy here does nothing: authentik reads .env.
 put "$APPS/authentik" \
   secret_key="$AUTHENTIK_SECRET_KEY" \
   bootstrap_email="$AUTHENTIK_BOOTSTRAP_EMAIL" \
   bootstrap_password="$AUTHENTIK_BOOTSTRAP_PASSWORD" \
   open_webui_oidc_client_id="$OPEN_WEBUI_OIDC_CLIENT_ID" \
   open_webui_oidc_client_secret="$OPEN_WEBUI_OIDC_CLIENT_SECRET" \
-  open_webui_api_token="$OPEN_WEBUI_AUTHENTIK_API_TOKEN"
+  open_webui_api_token="$OPEN_WEBUI_AUTHENTIK_API_TOKEN" \
+  mfa_required="${AUTHENTIK_MFA_REQUIRED:-true}"
 put "$APPS/passbolt" \
   smtp_from="$PASSBOLT_SMTP_FROM" \
   smtp_user="$PASSBOLT_SMTP_USER" \
