@@ -157,7 +157,7 @@ def _pct(part: int, whole: int) -> str:
     return "—" if not whole else f"{100 * part / whole:.0f}%"
 
 
-class Function:
+class Event:
     class Valves(BaseModel):
         pass
 
