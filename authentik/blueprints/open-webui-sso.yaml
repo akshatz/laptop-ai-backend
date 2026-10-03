@@ -1,9 +1,10 @@
 # Applied automatically by authentik-worker (mounted into /blueprints/custom), and re-applied
 # whenever this file changes. Values in !Env come from the worker's environment (devops/.env).
 #
-# 1. Makes MFA mandatory in authentik's default login flow: users without a TOTP device are
-#    sent through TOTP setup (QR code for Google Authenticator or any TOTP app) before their
-#    first login completes. Only TOTP and static recovery codes are accepted.
+# 1. MFA in authentik's default login flow, switched by AUTHENTIK_MFA_REQUIRED: true (default) →
+#    everyone, and users without a TOTP device are sent through TOTP setup (QR code for Google
+#    Authenticator or any TOTP app) before their first login completes; false → authentik admins
+#    only. Only TOTP and static recovery codes are accepted.
 # 2. Registers Open WebUI as an OIDC application (confidential client, redirect URIs for the
 #    Caddy HTTPS front and plain localhost).
 version: 1
@@ -35,6 +36,7 @@ entries:
   # authentik's default blueprint creates this stage without attrs, so the settings here
   # aren't reset when that blueprint re-applies.
   - model: authentik_stages_authenticator_validate.authenticatorvalidatestage
+    id: mfa-validation-stage
     identifiers:
       name: default-authentication-mfa-validation
     attrs:
@@ -42,8 +44,9 @@ entries:
         - totp
         - static
       # AUTHENTIK_MFA_REQUIRED (.env, true/false or 1/0, default true): true → users without an authenticator
-      # must set one up; false → they skip MFA (users who already have one are still asked for it).
-      # Any other value counts as true. Also governs sign-up/invitation, which reuse this stage.
+      # must set one up; false → they skip it here, and on login the step runs only for authentik admins
+      # (policy default-authentication-mfa-switch below). Any other value counts as true. Also governs
+      # sign-up/invitation, which reuse this stage.
       # authentik only re-applies a blueprint when the FILE changes, so after changing the variable:
       # recreate authentik-worker, then `ak apply_blueprint /blueprints/custom/open-webui-sso.yaml`.
       not_configured_action: !AtIndex [{"true": configure, "1": configure, "false": skip, "0": skip}, !Env [AUTHENTIK_MFA_REQUIRED, "true"], configure]
@@ -54,6 +57,45 @@ entries:
       # Other browsers/devices still ask. The password-recovery flow has its own MFA stage and
       # always asks.
       last_auth_threshold: hours=3
+
+  # With AUTHENTIK_MFA_REQUIRED=false, the login's MFA step runs only for authentik admins
+  # (superusers, e.g. akadmin); everyone else signs in with the password alone, even with an
+  # authenticator (it stays registered for when the switch goes back to true). The value is written
+  # into the expression when this blueprint is applied. Login only: sign-up/invitation need nothing
+  # more (new users have no authenticator, so the stage's skip applies), and password recovery has
+  # its own MFA stage, which still asks users who have one.
+  - model: authentik_policies_expression.expressionpolicy
+    id: mfa-switch-policy
+    identifiers:
+      name: default-authentication-mfa-switch
+    attrs:
+      expression: !Format
+        - |
+          mfa_required = %s  # AUTHENTIK_MFA_REQUIRED, filled in by the blueprint
+          user = request.context.get("pending_user") or request.user
+          return mfa_required or user.is_superuser
+        - !AtIndex [{"true": "True", "1": "True", "false": "False", "0": "False"}, !Env [AUTHENTIK_MFA_REQUIRED, "true"], "True"]
+
+  # The login flow's MFA step (created by authentik's default blueprint, which sets no attrs on it).
+  # Its policies must run when the step is reached, against the user signing in, and all must pass;
+  # the hand-made mfa-exempt group binding on it relies on this too.
+  - model: authentik_flows.flowstagebinding
+    id: login-mfa-binding
+    identifiers:
+      target: !Find [authentik_flows.flow, [slug, default-authentication-flow]]
+      stage: !KeyOf mfa-validation-stage
+    attrs:
+      order: 30
+      evaluate_on_plan: false
+      re_evaluate_policies: true
+      policy_engine_mode: all
+
+  - model: authentik_policies.policybinding
+    identifiers:
+      target: !KeyOf login-mfa-binding
+      policy: !KeyOf mfa-switch-policy
+    attrs:
+      order: 20
 
   # Eye icon to show/hide the password on the login page. authentik's default blueprint sets only
   # backends and configure_flow on this stage (repeated here with the same values, since
