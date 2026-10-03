@@ -18,7 +18,8 @@
 // 3. The Settings dialog closes after a successful Save, back to the chat underneath (Open WebUI
 //    leaves it open). See the comment at that section.
 //
-// 4. No Info button under answers for anyone but admins (Open WebUI has no permission for it).
+// 4. For anyone but admins: no Info button under answers (Open WebUI has no permission for it), and
+//    no Regenerate button once an answer has 3 versions.
 (() => {
 	// ---- 1. early SSO redirect ----------------------------------------------------------------
 	const params = new URLSearchParams(location.search);
@@ -143,11 +144,58 @@
 		attributeFilter: ['data-type']
 	});
 
-	// ---- 4. no Info button under answers for regular users --------------------------------------
-	// The (i) button under each answer (id info-<message id>, ResponseMessage.svelte) shows token
-	// counts and timings. Edit, Read Aloud and Fork are hidden through permissions (chat.edit,
-	// chat.tts, chat.import in user.permissions), but Info has none, so it's hidden with CSS once
-	// /api/v1/auths/ says the signed-in user isn't an admin.
+	// ---- 4. regular users: no Info button, Regenerate only up to 3 answers -----------------------
+	// Both apply once /api/v1/auths/ says the signed-in user isn't an admin.
+	// Info: the (i) button under each answer (id info-<message id>, ResponseMessage.svelte) shows
+	// token counts and timings. Edit, Read Aloud and Fork are hidden through permissions (chat.edit,
+	// chat.tts, chat.import in user.permissions), but Info has none, so CSS hides it.
+	// Regenerate: the Regenerate Limit Function (functions/regenerate_limit.py) refuses a question's
+	// 4th answer, but Open WebUI adds the new answer before asking the server, so the refusal would
+	// show up as a "4/4" answer. So the button (class regenerate-response-button) is disabled and
+	// dimmed as soon as the "x/N" counter in its row (.buttons) reaches MAX_ANSWERS, which must
+	// equal the Function's max_answers Valve. The Function stays the actual limit.
+	const MAX_ANSWERS = 3;
+	const COUNTER = /^\d+\/(\d+)$/;
+
+	const answersIn = (row) => {
+		// While the counter is being edited (double-click), it's an input with max = N.
+		const input = row.querySelector('input[id^="message-index-input-"]');
+		if (input) return Number(input.max) || 1;
+		for (const el of row.querySelectorAll('div')) {
+			const match = el.childElementCount === 0 && el.textContent.trim().match(COUNTER);
+			if (match) return Number(match[1]);
+		}
+		return 1; // no counter: a single answer
+	};
+
+	const limitRegenerate = () => {
+		for (const button of document.querySelectorAll('.buttons .regenerate-response-button')) {
+			const limited = answersIn(button.closest('.buttons')) >= MAX_ANSWERS;
+			button.disabled = limited;
+			button.style.opacity = limited ? '0.3' : '';
+			button.style.cursor = limited ? 'not-allowed' : '';
+			button.title = limited ? `Up to ${MAX_ANSWERS} answers per question` : '';
+		}
+	};
+
+	const restrictRegularUser = () => {
+		const style = document.createElement('style');
+		style.textContent = '[id^="info-"] { display: none !important; }';
+		document.head.appendChild(style);
+
+		// Answers stream in and counters change, so re-check after DOM changes, at most once a frame.
+		let queued = false;
+		new MutationObserver(() => {
+			if (queued) return;
+			queued = true;
+			requestAnimationFrame(() => {
+				queued = false;
+				limitRegenerate();
+			});
+		}).observe(document.documentElement, { childList: true, subtree: true, characterData: true });
+		limitRegenerate();
+	};
+
 	if (hasToken()) {
 		const headers = {};
 		try {
@@ -156,10 +204,7 @@
 		fetch('/api/v1/auths/', { credentials: 'include', headers })
 			.then((r) => (r.ok ? r.json() : null))
 			.then((user) => {
-				if (!user || user.role === 'admin') return;
-				const style = document.createElement('style');
-				style.textContent = '[id^="info-"] { display: none !important; }';
-				document.head.appendChild(style);
+				if (user && user.role !== 'admin') restrictRegularUser();
 			})
 			.catch(() => {});
 	}

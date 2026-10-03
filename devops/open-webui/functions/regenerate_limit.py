@@ -1,20 +1,22 @@
 """
 title: Regenerate Limit
 author: akshatz
-version: 1.0.0
+version: 1.1.0
 required_open_webui_version: 0.11.3
-description: Lets regular users regenerate an answer at most 3 times; admins are exempt.
+description: Lets regular users have at most 3 answers per question (the first plus 2 regenerations); admins are exempt.
 
 Open WebUI filter Function (Admin → Functions → import this file, enable it and switch on Global,
 so it covers every model). Open WebUI's own permission (chat.regenerate_response) is all or nothing.
 
-Regenerate adds another answer under the same question. Open WebUI 0.11 saves the question and a
-placeholder for the new answer in the chat before running filters, so the `inlet` hook loads the
-chat and counts the question's other answers from the same model. More than `max_regenerations` of
-them (the first answer plus that many regenerations) → the request is refused, and Open WebUI shows
-the message in place of the new answer, without calling the model. Asking again in a new message,
-or editing the question, starts a new count. Temporary chats aren't saved, so they aren't limited.
-Uses internals (Chats model, chat history layout): re-test when bumping the image.
+Regenerate adds another answer under the same question (shown as 1/3, 2/3, 3/3). Open WebUI 0.11
+saves the question and a placeholder for the new answer in the chat before running filters, so the
+`inlet` hook loads the chat and counts the question's other answers from the same model. If there
+are already `max_answers`, the request is refused, and Open WebUI shows the message in place of the
+new answer without calling the model. That refused entry still appears as one more answer, so
+devops/open-webui/static/loader.js also hides the Regenerate button once an answer has
+`max_answers` versions (keep the two numbers in sync); this check is the backstop. Asking again in
+a new message, or editing the question, starts a new count. Temporary chats aren't saved, so they
+aren't limited. Uses internals (Chats model, chat history layout): re-test when bumping the image.
 """
 
 from pydantic import BaseModel, Field
@@ -24,9 +26,10 @@ from open_webui.models.chats import Chats
 
 class Filter:
     class Valves(BaseModel):
-        max_regenerations: int = Field(
+        max_answers: int = Field(
             default=3,
-            description="Regenerations allowed per question (per model) for regular users.",
+            description="Answers allowed per question for regular users: the first one plus regenerations "
+            "(same number as MAX_ANSWERS in loader.js).",
         )
         exempt_admins: bool = Field(default=True, description="Admins can regenerate without limit.")
 
@@ -60,9 +63,9 @@ class Filter:
             and m.get("parentId") == question_id
             and m.get("model") == model
         ]
-        if len(other_answers) > self.valves.max_regenerations:
+        if len(other_answers) >= self.valves.max_answers:
             raise Exception(
-                f"This answer can be regenerated up to {self.valves.max_regenerations} times. "
-                "To try again, ask the question in a new message."
+                f"This question already has {self.valves.max_answers} answers, the most allowed. "
+                "To try again, ask it in a new message."
             )
         return body
