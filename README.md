@@ -1,96 +1,108 @@
 # Laptop AI Backend
 
-A local, hybrid AI development stack for a personal laptop: a custom FastAPI backend backed by PostgreSQL, alongside Ollama for local model inference, Open WebUI as a chat frontend, Milvus for RAG vector storage, and Grafana LGTM / OpenObserve for observability.
+A local AI stack on a personal laptop: Open WebUI as the chat frontend on local Ollama models, with web search through SearXNG and RAG on Milvus; sign-in through authentik with Google Authenticator; a custom FastAPI backend on PostgreSQL; OpenBao and Passbolt for secrets; and OpenObserve for logs and audit trails.
 
 ## Architecture
 
 ```mermaid
 flowchart TB
     subgraph client[" "]
-        browser["Browser"]
+        browser["Browser\n(LAN devices and this laptop)"]
+    end
+
+    subgraph edge["HTTPS front"]
+        proxy["open-webui-proxy (Caddy)\n:8444 Open WebUI · :9443 authentik"]
     end
 
     subgraph app["Application layer"]
-        proxy["open-webui-proxy (Caddy)\n:8444 HTTPS"]
-        webui["open-webui\n:8082\n+ email verification Function"]
+        webui["open-webui\n:8082\n+ Functions (sign-up, password, cleanup,\nchat archive, regenerate limit, query log)"]
         backend["custom-backend (FastAPI)\n:8011\nrouters: auth, chats"]
     end
 
-    subgraph inference["Inference"]
-        ollama["ollama\n(local LLM engine)"]
+    subgraph identity["Sign-in"]
+        authentik["authentik server + worker\nSSO + TOTP (Google Authenticator)"]
+    end
+
+    subgraph inference["Models & search"]
+        ollama["ollama\nchat models + embeddinggemma"]
+        searxng["searxng\n(web search)"]
+        internet(("Internet\nGoogle, Bing, …"))
     end
 
     subgraph data["Data"]
-        postgres[("postgres-db\n:5433\n(app / open_webui DBs)")]
-        passboltDb[("passbolt-db\n(MariaDB)")]
+        postgres[("postgres-db\n:5433\napp / open_webui / authentik DBs")]
         milvus["milvus\n(vector store)"]
         milvusEtcd["milvus-etcd\n(metadata)"]
         milvusMinio["milvus-minio\n(object storage)"]
-        milvusInit["milvus-init-auth\n(one-shot password rotation)"]
+        passboltDb[("passbolt-db\n(MariaDB)")]
     end
 
-    subgraph secrets["Secrets & identity"]
+    subgraph secrets["Secrets"]
         openbao["openbao\n:8200"]
         passbolt["passbolt\n:8443"]
     end
 
     subgraph observability["Observability"]
-        lgtm["lgtm (Grafana/Loki/Tempo/Mimir)\n:3001, OTLP 4317/4318"]
-        openobserve["openobserve (O2)\n:5080 (Open WebUI logs + audit)"]
-        auditshipper["openwebui-audit-shipper\n(OTel Collector)"]
+        shippers["log shippers (OTel Collector)\nalso tail Ollama, OpenBao audit\nand authentik event logs"]
+        openobserve["openobserve (O2)\n:5080"]
     end
 
-    browser --> webui
-    browser -- LAN --> proxy
+    browser -- "HTTPS (LAN)" --> proxy
+    browser -. "http :8082" .-> webui
+    browser -. "http :8011" .-> backend
     proxy --> webui
-    browser --> backend
+    proxy --> authentik
 
+    webui -- "OIDC (via :9443)" --> authentik
     webui --> ollama
+    webui --> searxng
+    searxng --> internet
     webui --> milvus
     webui --> postgres
-    webui -. OTEL traces/metrics .-> lgtm
-    webui -. OTEL logs .-> openobserve
-    webui -.->|audit.log| auditshipper
-    auditshipper -. OTLP .-> openobserve
+    authentik --> postgres
 
     backend --> ollama
     backend --> milvus
     backend --> postgres
-    backend -- AppRole auth --> openbao
+    backend -- "AppRole auth" --> openbao
 
     milvus --> milvusEtcd
     milvus --> milvusMinio
-    milvusInit -. rotates root pw, gates startup .-> milvus
-    milvusInit -.-> webui
-    milvusInit -.-> backend
-
     passbolt --> passboltDb
-    openbao -. stores root token/unseal key .-> passbolt
+    openbao -. "root token / unseal key kept in" .-> passbolt
+
+    webui -. "OTel logs" .-> openobserve
+    webui -. "audit.log, query.log" .-> shippers
+    shippers -. OTLP .-> openobserve
 ```
 
-All services share the `ai-network` Docker bridge network, orchestrated via [devops/docker-compose.yml](devops/docker-compose.yml).
+All services share the `ai-network` Docker bridge network, orchestrated via [devops/docker-compose.yml](devops/docker-compose.yml). Not drawn: the optional `lgtm` service and the one-shot setup jobs (see the table below).
 
 ## Stack
 
 | Service | Purpose | Port |
 |---|---|---|
-| `postgres-db` | PostgreSQL 16 database (hosts app and `open_webui` DBs) | 5433 → 5432 |
-| `ollama` | Local LLM inference engine | (internal) |
-| `open-webui` | Chat UI, talks to Ollama + Milvus for RAG; signups need email verification (see [Open WebUI signup verification](#open-webui-signup-verification)) | 8082 → 8080 |
-| `open-webui-proxy` | Caddy HTTPS front for Open WebUI, for other devices on the LAN (cert from Caddy's local CA) | 8444 → 443 |
-| `milvus` + `milvus-etcd` + `milvus-minio` | Vector store for RAG document embeddings | (internal, 19530) |
-| `milvus-init-auth` | One-shot job that rotates Milvus's default root password | (n/a, runs once) |
-| `lgtm` | Grafana + Loki + Tempo + Mimir (metrics/traces/logs) | 3001 (UI), 4317/4318 (OTLP) |
-| `openobserve` | O2 observability platform; receives Open WebUI's logs | 5080 |
+| `postgres-db` | PostgreSQL 16 (custom-backend's database plus the `open_webui` and `authentik` databases) | 5433 → 5432 |
+| `ollama` | Local LLM inference engine (chat models and the `embeddinggemma` embedding model) | (internal) |
+| `open-webui` | Chat UI: Ollama models, web search, RAG on Milvus, sign-in through authentik, extended by the Functions in [devops/open-webui/functions/](devops/open-webui/functions/) | 8082 → 8080 |
+| `open-webui-proxy` | Caddy HTTPS front for devices on the LAN (cert from Caddy's local CA): Open WebUI on 8444, authentik on 9443 | 8444 → 443, 9443 |
+| `authentik-server` + `authentik-worker` | SSO with TOTP (Google Authenticator) for Open WebUI and OpenBao; sign-up, invitations, password reset (see [Open WebUI SSO + MFA](#open-webui-sso--mfa-authentik)) | (through `open-webui-proxy`, 9443) |
 | `searxng` | Self-hosted metasearch engine for Open WebUI's web search | (internal, 8080) |
-| `authentik-events-shipper` | OpenTelemetry Collector shipping authentik's audit events to O2 | 127.0.0.1:24224 (fluentd, from Docker) |
-| `openwebui-audit-shipper` | OpenTelemetry Collector shipping Open WebUI's audit log (who did what) to O2 | (internal) |
+| `milvus` + `milvus-etcd` + `milvus-minio` | Vector store for RAG document embeddings | (internal, 19530) |
 | `openbao` | Secrets storage (Postgres creds, AppRole broker) | 8200 |
 | `passbolt-db` | MariaDB for Passbolt (dedicated, separate from postgres-db) | (internal) |
 | `passbolt` | Password manager (stores OpenBao/AppRole tokens) | 8443 → 443 |
 | `custom-backend` | FastAPI app: auth, chats, RAG document ingestion | 8011 → 8000 |
-
-All services share the `ai-network` Docker bridge network.
+| `openobserve` | O2 observability platform: logs and audit trails (see [Logs in OpenObserve](#logs-in-openobserve)) | 5080 |
+| `openwebui-audit-shipper` | OpenTelemetry Collector shipping Open WebUI's audit log (who did what) and query log to O2 | (internal) |
+| `ollama-log-shipper` | OpenTelemetry Collector shipping Ollama's request log (read from its Docker log file) to O2 | (internal) |
+| `openbao-audit-shipper` | OpenTelemetry Collector shipping OpenBao's audit log to O2 | (internal) |
+| `authentik-events-shipper` | OpenTelemetry Collector shipping authentik's audit events to O2 | 127.0.0.1:24224 (fluentd, from Docker) |
+| `lgtm` | Grafana + Loki + Tempo + Mimir. **Optional**: compose profile `lgtm`, not started by default (saves ~0.8 GB RAM); start it with `docker compose -f devops/docker-compose.yml --profile lgtm up -d lgtm` | 3001 (UI), 4317/4318 (OTLP) |
+| `milvus-init-auth` | One-shot job that rotates Milvus's default root password | (runs on `up`, then exits) |
+| `authentik-db-init` | One-shot job that creates the `authentik` database | (runs on `up`, then exits) |
+| `open-webui-fn-migrate` | One-shot job that creates the Functions' `fn_*` tables (see [Function tables](#function-tables)) | (runs on `up`, then exits) |
+| `caddy-ca-export` | One-shot job that copies Caddy's public root cert for Open WebUI to trust | (runs on `up`, then exits) |
 
 ## Prerequisites
 
@@ -123,6 +135,15 @@ cp .env.example .env
 | `OPENOBSERVE_BASIC_AUTH` | `open-webui`, `openwebui-audit-shipper` | base64 of `email:password` above, used to send Open WebUI's logs to O2's `openwebui_backend` stream and its audit log to `openwebui_audit`. Regenerate when either changes: `printf '%s:%s' "$OPENOBSERVE_ROOT_USER_EMAIL" "$OPENOBSERVE_ROOT_USER_PASSWORD" \| base64 -w0` |
 | `OPEN_WEBUI_HOST` | `open-webui-proxy` | LAN IP or hostname other devices use to reach Open WebUI over HTTPS on port 8444 |
 | `OLLAMA_BASE_URL` / `DEFAULT_CHAT_MODEL` | `custom-backend` | Optional — Ollama endpoint (default `http://ollama:11434`) and chat model (default `llama3.2`, must already be pulled) for the RAG chat endpoints |
+| `OLLAMA_CONTAINER_ID` | `ollama-log-shipper` | Full ID of the running `ollama` container, whose Docker log file the shipper reads (`docker inspect -f '{{.Id}}' laptop-ollama`); update it after recreating `ollama` |
+| `AUTHENTIK_SECRET_KEY` / `AUTHENTIK_BOOTSTRAP_EMAIL` / `AUTHENTIK_BOOTSTRAP_PASSWORD` | `authentik-server`, `authentik-worker` | authentik's signing key and its first admin (`akadmin`, applied on first start only) — see [First-time setup](#first-time-setup) |
+| `AUTHENTIK_MFA_REQUIRED` | authentik | `true` (default) asks everyone for a TOTP code, `false` only authentik admins — see [Open WebUI SSO + MFA](#open-webui-sso--mfa-authentik) |
+| `OPEN_WEBUI_OIDC_CLIENT_ID` / `OPEN_WEBUI_OIDC_CLIENT_SECRET` | authentik, `open-webui` | Open WebUI's OIDC client, written into authentik by its blueprint |
+| `OPEN_WEBUI_AUTHENTIK_API_TOKEN` | authentik, `open-webui` | Token of the service account that deletes a user's authentik account when they're deleted in Open WebUI — see [Deleting users](#deleting-users) |
+| `OPENBAO_ADMIN_PASSWORD` / `OPENBAO_READONLY_PASSWORD` | `openbao/setup-users.sh` | Passwords for the human OpenBao logins `bao-admin` and `bao-readonly` (the root token is for emergencies only) |
+| `OPENBAO_OIDC_CLIENT_ID` / `OPENBAO_OIDC_CLIENT_SECRET` | authentik, `openbao/setup-users.sh` | Optional — lets people sign in to OpenBao through authentik; see [openbao/README.md](openbao/README.md) |
+| `SEARXNG_SECRET` | `searxng` | Signs SearXNG's cookies (`openssl rand -hex 32`) |
+| `RAG_RERANKING_MODEL` | `open-webui` | Reranker for web and document search (default `cross-encoder/ms-marco-MiniLM-L6-v2`); a saved setting in Open WebUI overrides it |
 
 `custom-backend` does not read `POSTGRES_PASSWORD` or a `DATABASE_URL` directly — it fetches its Postgres credentials from OpenBao (see below) at startup.
 
@@ -135,12 +156,14 @@ cd openbao && ./bootstrap.sh               # one-time: unseal, write secrets, cr
 docker compose -f devops/docker-compose.yml up -d   # start everything else
 ```
 
-- Open WebUI: http://localhost:8082 (this machine), or https://`OPEN_WEBUI_HOST`:8444 from other devices on the LAN — plain `http://<LAN-IP>` doesn't work, because Open WebUI's frontend needs a secure context. Trust Caddy's root CA once per device: `docker cp laptop-open-webui-proxy:/data/caddy/pki/authorities/local/root.crt caddy-root.crt`, then import it into the OS/browser trust store.
-- Grafana: http://localhost:3001
+- Open WebUI: https://`OPEN_WEBUI_HOST`:8444 from any device on the LAN, this one included; sign-in goes through authentik. Trust Caddy's root CA once per device to get rid of the certificate warning: `docker cp laptop-open-webui-proxy:/data/caddy/pki/authorities/local/root.crt caddy-root.crt`, then import it into the OS/browser trust store. http://localhost:8082 and `http://<LAN-IP>:8082` reach Open WebUI directly too, but without HTTPS, so on the LAN everything (including the sign-in token) crosses the network unencrypted; point people at 8444.
+- authentik: https://`OPEN_WEBUI_HOST`:9443/if/admin/ (admin UI), `/if/user/` (a user's own password and authenticators)
+- OpenObserve: http://localhost:5080 (root login from `.env`)
 - Custom backend API: http://localhost:8011
-- OpenBao UI: http://localhost:8200/ui (log in with the root token from `openbao/keys.json`)
+- OpenBao UI: http://localhost:8200/ui (sign in as `bao-admin`/`bao-readonly`, or through authentik with method OIDC; the root token in `openbao/keys.json` is for emergencies)
 - Passbolt: https://localhost:8443 (self-signed cert; see [PASSBOLT.md](PASSBOLT.md) for one-time admin registration)
 - Postgres: `localhost:5433` (credentials from `.env`)
+- Grafana: http://localhost:3001, only while the optional `lgtm` service is running
 
 Note: OpenBao starts **sealed** after every container restart or host reboot — run `cd openbao && ./auto-unseal.sh` before `custom-backend` will be able to start.
 
@@ -149,6 +172,7 @@ Note: OpenBao starts **sealed** after every container restart or host reboot —
 Open WebUI sign-in goes through [authentik](https://goauthentik.io) (`authentik-server` + `authentik-worker`, using a separate `authentik` database in `postgres-db`), which asks for a TOTP code from Google Authenticator or any other TOTP app on every login (`AUTHENTIK_MFA_REQUIRED=false` turns that off for everyone except authentik admins, see below). Open WebUI's own email/password sign-in is turned off.
 
 - authentik is served by `open-webui-proxy` at `https://<OPEN_WEBUI_HOST>:9443` (same Caddy CA as Open WebUI on 8444). The login page's password field has an eye icon to show/hide the password (`allow_show_password` in [open-webui-sso.yaml](authentik/blueprints/open-webui-sso.yaml); authentik has no such option for the password boxes on the sign-up, invitation and reset forms). Opening Open WebUI goes straight to authentik's login page (`OAUTH_AUTO_REDIRECT`, done early by [devops/open-webui/static/loader.js](devops/open-webui/static/loader.js) so Open WebUI's own sign-in page doesn't flash first), so there's one sign-in, not two. Flows that finish without a destination (password reset, signing in at `:9443` directly, logout) would end on authentik's app dashboard at `/`; Caddy redirects that bare `/` to Open WebUI, which signs the user straight in. Use `https://<OPEN_WEBUI_HOST>:9443/if/admin/` for authentik's admin UI and `/if/user/` for a user's own authentik settings (password, authenticators). Open WebUI's own page, with **Continue with authentik** and **Sign up**, only shows after logging out or after a sign-in error.
+- **Signed out after 3 hours without activity** (everyone except Open WebUI admins): no mouse, keyboard, scroll or touch in any Open WebUI tab for 3 hours signs the person out of Open WebUI and of authentik, so the next visit asks for the password and authenticator code again. Done in the browser by [devops/open-webui/static/loader.js](devops/open-webui/static/loader.js) (`IDLE_LIMIT_MS`); Open WebUI itself has no idle timeout, so a copied sign-in token would stay valid for its normal 4 weeks.
 - Its configuration is the blueprint [authentik/blueprints/open-webui-sso.yaml](authentik/blueprints/open-webui-sso.yaml), applied by the worker on start and whenever the file changes. It makes MFA mandatory in authentik's default login flow (users without a TOTP device get a QR code to set one up before their first login completes; TOTP and static recovery codes only; after a code is entered, that browser isn't asked again for 3 hours — the password still is, and other browsers/devices still need a code) and registers the Open WebUI OIDC client.
 - **Switching MFA off or on:** set `AUTHENTIK_MFA_REQUIRED` in `.env`: `true`/`1` (default) means everyone, `false`/`0` means authentik admins (akadmin) only. Everyone else then signs in with just the password, even if they have an authenticator; it stays registered for when MFA is switched back on. authentik picks up the value only when the blueprints are applied, so after changing it run:
 
@@ -273,6 +297,15 @@ Another event Function, [devops/open-webui/functions/authentik_user_cleanup.py](
 - **Deleting someone who asked to be erased completely:** switch off the Function's `archive_chats` Valve (**Admin → Functions → authentik User Cleanup → ⚙**) before deleting them, then switch it back on.
 - It also removes what Open WebUI leaves behind after a delete: the user's memories, notes, tags and uploaded files, including their embeddings in Milvus (Open WebUI's own file delete leaves the Milvus collection), and their rows in `fn_email_verified` / `fn_password_age`. `fn_user_sso_status` keeps them, marked `removed` by its sync script.
 
+### Deleted chats
+
+Open WebUI deletes chats for good: there's no trash. The Chat Soft Delete Function, [devops/open-webui/functions/chat_soft_delete.py](devops/open-webui/functions/chat_soft_delete.py), copies a chat into the same admin-only archive just before Open WebUI deletes it, so it can be brought back. Import and enable it like the others, then restart `open-webui` once.
+
+- Covers deleting one chat, **Delete all chats** in Settings, and deleting a folder with its chats. Deleting a single message inside a chat isn't covered.
+- Archived chats show up at **`/api/v1/archived-chats`** next to deleted users' chats, marked by reason. A deleted chat has a **Restore** button that gives it back to its owner (out of any folder, unpinned and unshared) and removes it from the archive.
+- If the copy fails, the chat is still deleted and the error is logged.
+- A whole user's chats are left to the User Cleanup Function's `archive_chats` Valve (above), so switching that off still erases someone completely.
+
 ### Function tables
 
 The Functions (and the SSO status script) keep their state in Postgres, in Open WebUI's `open_webui` database, so it's backed up with the rest of Open WebUI's data:
@@ -281,7 +314,7 @@ The Functions (and the SSO status script) keep their state in Postgres, in Open 
 |---|---|---|
 | `fn_email_verified` | Signup Email Verification | Users verified once (`user_id`, `verified_at`) |
 | `fn_password_age` | Password Expiry | When each password was last set, and the last reminder (`user_id`, `changed_at`, `last_warned_at`) |
-| `fn_archived_chats` | authentik User Cleanup | Chats of deleted users, copied just before deletion (full chat JSON and messages, the user's email/name, when and by whom) — see [Deleting users](#deleting-users) |
+| `fn_archived_chats` | authentik User Cleanup, Chat Soft Delete | Chats of deleted users and deleted chats, copied just before deletion (full chat JSON and messages, the user's email/name, when, by whom and why) — see [Deleting users](#deleting-users) and [Deleted chats](#deleted-chats) |
 | `fn_user_sso_status` | `devops/open-webui/sync-user-status.sh` (not a Function) | Each person's SSO onboarding stage and when they reached each step, keyed by lowercased email (see [Inviting users](#inviting-users)) |
 
 They're created by a separate Alembic setup, [devops/open-webui/migrations/](devops/open-webui/migrations/), which tracks its history in `fn_alembic_version` so it never touches Open WebUI's own migrations in the same database. The one-shot `open-webui-fn-migrate` service applies it on every `docker compose up` (a no-op once current), and `open-webui` waits for it. Its first revision also imports rows from the Functions' earlier SQLite files (`email_verification.db` / `password_expiry.db` on the `open-webui-data` volume), if present. Once that's done, those files are unused and can be deleted.
@@ -335,7 +368,9 @@ Open WebUI can search the web through **SearXNG** (`searxng` service, [devops/se
 - Everyone sees a **welcome banner** at the top of the chat window with tips for good answers (from the family guide) until they close it with ×. Edit it under **Admin → Settings → Interface → Banners**; give it a new ID if people who already closed it should see the new text.
 - Regular users get at most 3 answers per question (the first plus 2 regenerations): at 3/3 the **Regenerate** button is greyed out ([devops/open-webui/static/loader.js](devops/open-webui/static/loader.js)), and the Regenerate Limit Function ([devops/open-webui/functions/regenerate_limit.py](devops/open-webui/functions/regenerate_limit.py)) refuses a 4th answer if one is asked for anyway. Import and enable the Function like the others and switch on **Global**. The number is its `max_answers` Valve, and `MAX_ANSWERS` in `loader.js` must match it.
 - Web search is **on by default in every chat for all users** (`DEFAULT_INTERFACE_SETTINGS={"webSearch": "always"}` in compose, the same as each user choosing **Settings → Interface → Web Search: Always**). A user can switch it off for themselves there. The default is a saved setting (`ui.default_interface_settings`); once saved it overrides compose, so change it under **Admin → Settings → General** (default interface settings) or delete that row so compose applies again.
-- For each message, Open WebUI searches, fetches the top 3 result pages (`WEB_SEARCH_RESULT_COUNT`), picks the relevant parts with the embedding model, and answers from them with sources. It works with any model.
+- For each message, Open WebUI writes one or two search queries, fetches the top 8 result pages, picks the relevant parts with the embedding model and a local reranker (`RAG_RERANKING_MODEL`), and answers from them with sources. It works with any model. The 8 is a saved setting (`web.search.result_count`, **Admin → Settings → Web Search**); compose's `WEB_SEARCH_RESULT_COUNT=3` only applies to a fresh install. Sites that never give the page loader readable text (e.g. investing.com, youtube.com) are blocked in the same place (domain filter), and other results take their place.
+- With `fast-ai`, the model writing the answer sees only the latest question and its search results (Chat History Trim Function, [devops/open-webui/functions/chat_history_trim.py](devops/open-webui/functions/chat_history_trim.py), attached to that model only): the small model kept answering an earlier question in multi-topic chats. Writing the search queries still sees the recent chat, so follow-ups like "where is he from?" work, but "summarize your last answer" has nothing to work from with this model.
+- Answer quality is measured with [evals/](evals/README.md): a fixed set of questions run through the real chat pipeline and scored, so a settings change can be compared before and after.
 - Searches leave your machine through SearXNG, so each engine sees your IP but not who asked.
 - Enable/engine/URL are saved Open WebUI settings (`web.search.*`), which override the compose values once saved. Change them under **Admin → Settings → Web Search**.
 - `SEARXNG_SECRET` in `.env` signs SearXNG's cookies. Generate it with `openssl rand -hex 32`.
@@ -359,6 +394,19 @@ Users can rate any answer with 👍 or 👎, optionally with a reason or a comme
 
 Not built yet: putting admin-approved 👍 answers into a "Verified answers" knowledge collection that the model searches. That would be the first way ratings feed back into answers directly.
 
+## Logs in OpenObserve
+
+OpenObserve (http://localhost:5080, **Logs**) collects these streams:
+
+| Stream | Sent by | What's in it |
+|---|---|---|
+| `openwebui_backend` | `open-webui` (OTel logs) | Open WebUI's warnings and errors (`GLOBAL_LOG_LEVEL=WARNING`) |
+| `openwebui_audit` | `openwebui-audit-shipper` | Who did what in Open WebUI (below) |
+| `openwebui_queries` | `openwebui-audit-shipper` | One line per chat request from the Query Log Function ([devops/open-webui/functions/query_log.py](devops/open-webui/functions/query_log.py), enabled and **Global**): user, model, the generated search queries, source sites and chunk count. The question and the answer themselves aren't logged |
+| `ollama` | `ollama-log-shipper` | Ollama's API requests (status, duration, path) and server events. A 500 often only means the caller hung up (Stop, Regenerate, an `open-webui` restart); check Open WebUI's log before blaming Ollama |
+| `openbao_audit` | `openbao-audit-shipper` | Who read or changed which OpenBao secret path, from where, and errors such as `permission denied`. Secret values and tokens are HMAC-hashed by OpenBao |
+| `authentik_events` | `authentik-events-shipper` | Logins, failed logins, logouts, password and MFA changes (below) |
+
 ## Open WebUI audit log in OpenObserve
 
 Open WebUI's regular logs (stream `openwebui_backend`) are mostly web-server request lines with the client IP but **no user**. To see who did what, Open WebUI's audit log is on (`AUDIT_LOG_LEVEL=METADATA` in compose) and shipped to O2 stream **`openwebui_audit`** by `openwebui-audit-shipper`, an OpenTelemetry Collector ([devops/otel-collector/openwebui-audit.yaml](devops/otel-collector/openwebui-audit.yaml)). Open WebUI only writes audit entries to `data/audit.log`, never over OTel, so the collector tails that file from the `open-webui-data` volume (read-only).
@@ -381,4 +429,14 @@ authentik's audit events go to O2 stream **`authentik_events`**, next to Open We
 ## Known gaps / TODO
 
 - `custom-backend/models.py` and `database/init_db.py` declare the same models independently — keep them in sync by hand when changing either.
-- Only Open WebUI's logs reach OpenObserve (stream `openwebui_backend`; its traces and metrics go to `lgtm`), and they're sent with the O2 root credentials — a dedicated ingestion-only user would be safer.
+- Logs are sent to OpenObserve with the O2 root credentials — a dedicated ingestion-only user would be safer.
+- Open WebUI's traces and metrics are off while `lgtm` isn't running (`ENABLE_OTEL_TRACES`/`ENABLE_OTEL_METRICS=false`); turn them back on after starting it.
+- Next steps are in [ROADMAP.md](ROADMAP.md).
+
+## More documentation
+
+- [openbao/README.md](openbao/README.md) — OpenBao setup, unsealing, logins and backups
+- [PASSBOLT.md](PASSBOLT.md) — Passbolt admin registration and use
+- [evals/README.md](evals/README.md) — answer-quality evals
+- [ROADMAP.md](ROADMAP.md) — what this stack still lacks as an LLM engineering setup, step by step
+- [DELETED_BRANCHES.md](DELETED_BRANCHES.md) — branches deleted on GitHub and how to restore one

@@ -1,0 +1,49 @@
+name: Record deleted branches
+
+# Adds each branch deleted on GitHub to DELETED_BRANCHES.md (last commit, PR, dates), so it can be
+# restored later. GitHub only starts `delete` runs from the workflow file on the default branch.
+on:
+  delete:
+  schedule:
+    - cron: "17 3 * * *" # daily, for deletions that didn't start a run
+  workflow_dispatch:
+
+# Commits the updated list straight to main (the ruleset requires no PR, only fast-forwards).
+permissions:
+  contents: write
+  pull-requests: read
+
+# Several deletions in a row each start a run; one at a time, and each run records all of them.
+concurrency:
+  group: deleted-branches
+  cancel-in-progress: false
+
+jobs:
+  record:
+    if: github.event_name != 'delete' || github.event.ref_type == 'branch'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+      - name: Update DELETED_BRANCHES.md and push it to main
+        env:
+          GH_TOKEN: ${{ github.token }}
+          DELETED_BRANCH: ${{ github.event_name == 'delete' && github.event.ref || '' }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          # If main moves between our commit and push, start again from the new main.
+          for attempt in 1 2 3; do
+            git fetch --quiet origin main
+            git reset --quiet --hard origin/main
+            python3 .github/scripts/record_deleted_branches.py
+            if git diff --quiet -- DELETED_BRANCHES.md; then
+              echo "Nothing new to record."
+              exit 0
+            fi
+            git commit --quiet -m "Record deleted branches in DELETED_BRANCHES.md" -- DELETED_BRANCHES.md
+            git push --quiet origin HEAD:main && exit 0
+            echo "Push rejected (attempt $attempt), retrying."
+          done
+          exit 1
