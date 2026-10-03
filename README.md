@@ -50,7 +50,7 @@ flowchart TB
     webui --> postgres
     webui -. OTEL traces/metrics .-> lgtm
     webui -. OTEL logs .-> openobserve
-    webui -. audit.log .-> auditshipper
+    webui -.->|audit.log| auditshipper
     auditshipper -. OTLP .-> openobserve
 
     backend --> ollama
