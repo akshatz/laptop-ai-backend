@@ -201,6 +201,10 @@ services:
       - RAG_EMBEDDING_ENGINE=ollama
       - RAG_EMBEDDING_MODEL=embeddinggemma
       - RAG_OLLAMA_BASE_URL=http://ollama:11434
+      # Reranker for hybrid search (web search + documents): a small CPU cross-encoder run inside
+      # open-webui (engine "" = SentenceTransformers). Ollama has no rerank API, so don't point the
+      # "external" engine at it. Saved DB setting (rag.reranking_model) overrides this once saved.
+      - RAG_RERANKING_MODEL=${RAG_RERANKING_MODEL:-cross-encoder/ms-marco-MiniLM-L6-v2}
       # embeddinggemma's task prefixes (env-only settings; prepended to the text since no prefix field
       # is set). Keep in sync with custom-backend/chat_service.py.
       - "RAG_EMBEDDING_QUERY_PREFIX=task: search result | query: "

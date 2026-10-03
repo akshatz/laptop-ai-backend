@@ -150,7 +150,7 @@ Secrets are grouped as `apps/<environment>/<app>` (the KV v2 engine is mounted a
 |---|---|---|
 | `apps/default/custom-backend` | Postgres user/password/db, WebUI secret key, SMTP, Milvus root password | `custom-backend` (`db.py`, `resolve_db_url.py`) through its AppRole |
 | `apps/default/postgres` | Postgres user/password/db | people (bao-admin / bao-readonly) |
-| `apps/default/open-webui` | WebUI secret key | people |
+| `apps/default/open-webui` | WebUI secret key, reranker model (`reranking_model` = `RAG_RERANKING_MODEL`) | people |
 | `apps/default/milvus` | Milvus root password | people |
 | `apps/default/authentik` | secret key, bootstrap login, Open WebUI OIDC client, Open WebUI API token, MFA switch (`mfa_required` = `AUTHENTIK_MFA_REQUIRED`) | people |
 | `apps/default/passbolt` | SMTP relay, MariaDB password | people |
