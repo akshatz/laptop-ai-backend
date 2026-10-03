@@ -85,8 +85,11 @@ put "$APPS/custom-backend" \
 # human logins (bao-admin / bao-readonly). Update .env and re-run this script when rotating.
 put "$APPS/postgres" \
   user="$POSTGRES_USER" password="$POSTGRES_PASSWORD" db="$POSTGRES_DB"
+# reranking_model is RAG_RERANKING_MODEL, a setting rather than a secret (same default as compose).
+# Changing the copy here does nothing: open-webui reads .env, and its saved DB setting wins over both.
 put "$APPS/open-webui" \
-  webui_secret_key="$WEBUI_SECRET_KEY"
+  webui_secret_key="$WEBUI_SECRET_KEY" \
+  reranking_model="${RAG_RERANKING_MODEL:-cross-encoder/ms-marco-MiniLM-L6-v2}"
 put "$APPS/milvus" \
   root_password="$MILVUS_ROOT_PASSWORD"
 # mfa_required is AUTHENTIK_MFA_REQUIRED, a setting rather than a secret (true when unset, as in
