@@ -1,5 +1,5 @@
 // Mounted over Open WebUI's empty /app/build/static/loader.js (copied to /static/loader.js at
-// startup, and loaded by every page). Two things:
+// startup, and loaded by every page). Four things:
 //
 // 1. Signed-out visitors go straight to authentik. OAUTH_AUTO_REDIRECT does this too, but only
 //    after the SvelteKit app has started and rendered its sign-in page, so "Continue with
@@ -14,6 +14,11 @@
 //    (authentik/blueprints/self-enrollment.yaml) on the same host, port 9443 (Caddy). After sign-up
 //    authentik follows next= to the Open WebUI application's launch URL; it only accepts relative
 //    next= values, hence the /application/launch/ hop instead of a direct URL.
+//
+// 3. The Settings dialog closes after a successful Save, back to the chat underneath (Open WebUI
+//    leaves it open). See the comment at that section.
+//
+// 4. No Info button under answers for anyone but admins (Open WebUI has no permission for it).
 (() => {
 	// ---- 1. early SSO redirect ----------------------------------------------------------------
 	const params = new URLSearchParams(location.search);
@@ -95,4 +100,67 @@
 		subtree: true
 	});
 	addButton();
+
+	// ---- 3. close Settings after a successful Save ----------------------------------------------
+	// The Settings dialog (src/lib/components/chat/SettingsModal.svelte, user and admin tabs alike)
+	// has a tab list, #settings-tabs-container, whose first button is "Back". Every tab's Save
+	// submits a <form> in the dialog and, once saved, shows a svelte-sonner toast with
+	// data-type="success". So a form submitted there arms a short window, and the next new success
+	// toast clicks "Back", which closes the dialog the normal way. An error toast disarms it, so a
+	// failed save stays open with its message. Forms in dialogs opened from Settings (e.g. editing an
+	// Ollama connection) don't arm it: their dialog has no tab list.
+	const SAVE_WINDOW_MS = 15000;
+	let closeOnSaveUntil = 0;
+	const seenToasts = new WeakSet();
+
+	document.addEventListener(
+		'submit',
+		(event) => {
+			const dialog = event.target.closest?.('[role="dialog"]');
+			if (!dialog?.querySelector('#settings-tabs-container')) return;
+			// Toasts already on screen (e.g. from an earlier save) aren't this save's result.
+			document.querySelectorAll('[data-sonner-toast]').forEach((t) => seenToasts.add(t));
+			closeOnSaveUntil = Date.now() + SAVE_WINDOW_MS;
+		},
+		true
+	);
+
+	new MutationObserver(() => {
+		if (Date.now() > closeOnSaveUntil) return;
+		for (const toast of document.querySelectorAll('[data-sonner-toast][data-type]')) {
+			if (seenToasts.has(toast)) continue;
+			const type = toast.getAttribute('data-type');
+			if (type !== 'success' && type !== 'error') continue;
+			seenToasts.add(toast);
+			closeOnSaveUntil = 0;
+			if (type === 'success') document.querySelector('#settings-tabs-container button')?.click();
+			return;
+		}
+	}).observe(document.documentElement, {
+		childList: true,
+		subtree: true,
+		attributes: true,
+		attributeFilter: ['data-type']
+	});
+
+	// ---- 4. no Info button under answers for regular users --------------------------------------
+	// The (i) button under each answer (id info-<message id>, ResponseMessage.svelte) shows token
+	// counts and timings. Edit, Read Aloud and Fork are hidden through permissions (chat.edit,
+	// chat.tts, chat.import in user.permissions), but Info has none, so it's hidden with CSS once
+	// /api/v1/auths/ says the signed-in user isn't an admin.
+	if (hasToken()) {
+		const headers = {};
+		try {
+			if (localStorage.token) headers.Authorization = `Bearer ${localStorage.token}`;
+		} catch (e) {}
+		fetch('/api/v1/auths/', { credentials: 'include', headers })
+			.then((r) => (r.ok ? r.json() : null))
+			.then((user) => {
+				if (!user || user.role === 'admin') return;
+				const style = document.createElement('style');
+				style.textContent = '[id^="info-"] { display: none !important; }';
+				document.head.appendChild(style);
+			})
+			.catch(() => {});
+	}
 })();
