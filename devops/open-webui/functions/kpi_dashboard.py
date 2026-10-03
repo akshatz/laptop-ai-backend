@@ -7,15 +7,20 @@ description: Admin page with answer speed, failures, regenerations and 👍/👎
 
 Open WebUI event Function (Admin → Functions → import this file and enable it, then restart
 `open-webui` so `system.startup.completed` registers the page). Event Functions can't declare
-routes, so it registers one admin-only page on Open WebUI's app:
+routes, so it registers one page on Open WebUI's app, for admins and one group:
 
   GET /api/v1/kpi                         last 14 days, all models
   GET /api/v1/kpi?days=30                 last 30 days (1-365)
   GET /api/v1/kpi?model=fast-ai:latest    one model only
+  GET /api/v1/kpi?view=revisions          one row per settings revision instead of per day
   ...&format=json                         the same as JSON
 
-Guarded by Open WebUI's get_admin_user, which accepts the browser's login cookie, so it opens
-straight from the address bar while signed in as admin. Read-only: it changes nothing.
+Admins can always open it; other signed-in users only if they're in the Open WebUI group named by
+the `viewer_group` Valve (default "kpi-viewers", matched case-insensitively; Admin → Users → Groups),
+otherwise 403. Empty Valve = admins only. Uses Open WebUI's get_verified_user, which accepts the
+browser's login cookie, so it opens straight from the address bar. The page shows only daily totals
+and medians (no questions, answers, names or comments), but on a quiet day small counts can hint at
+who asked or rated. Feedback Review stays admin-only. Read-only: it changes nothing.
 
 Metrics (days in UTC, from Open WebUI's own `chat_message` and `feedback` tables):
 - Answer time: Ollama's own `total_duration` for the answer (reading the prompt + writing), median
@@ -28,6 +33,13 @@ Metrics (days in UTC, from Open WebUI's own `chat_message` and `feedback` tables
   those with 3 or more (the Regenerate Limit Function's default `max_answers`).
 - 👍/👎: ratings given that day. Feedback Review (/api/v1/feedback-review) shows the 👎 details.
 
+Revisions view: devops/open-webui/settings.py records in `fn_settings_revisions` when each version of
+settings.yaml went live (apply/export/record). An answer belongs to the revision live when it was
+created; answers from before the first recorded revision are shown as "before tracking". Every
+revision is listed (the `days` filter doesn't apply there), newest first, the live one marked, with
+each value's change from the revision before it. Settings changed in the Admin UI only start a new
+revision once exported, and Function code or model changes aren't revisions.
+
 Only chats that still exist count (chat_message rows go with their chat). Temporary chats aren't
 saved, so they're not included. Touches Open WebUI internals (chat_message/feedback layout, the
 usage JSON Ollama fills): re-check the page after bumping the pinned image.
@@ -37,14 +49,15 @@ import html
 import logging
 import time
 
-from fastapi import Depends
+from fastapi import Depends, HTTPException
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.routing import APIRoute
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy import text
 
 from open_webui.internal.db import get_async_db_context
-from open_webui.utils.auth import get_admin_user
+from open_webui.models.groups import Groups
+from open_webui.utils.auth import get_verified_user
 
 log = logging.getLogger("kpi_dashboard")
 
@@ -107,6 +120,54 @@ WHERE type = 'rating' AND created_at >= :since
 GROUP BY 1
 """
 
+# Same metrics per settings revision. r_id 0 = before the first recorded revision.
+REVISIONS_SQL = """
+WITH r AS (
+  SELECT id AS r_id, content_hash, git_commit, uncommitted, label, source, started_at,
+         lead(started_at) OVER (ORDER BY started_at, id) AS ended_at
+  FROM fn_settings_revisions
+  UNION ALL
+  SELECT 0, NULL, NULL, false, 'before tracking', NULL, 0, (SELECT min(started_at) FROM fn_settings_revisions)
+), a AS (
+  SELECT r.r_id, m.created_at, m.parent_id, m.model_id,
+         m.error IS NOT NULL AND m.error::text <> 'null' AS failed,
+         (m.usage->>'total_duration')::float8 / 1e9 AS model_secs,
+         (m.usage->>'response_token/s')::float8 AS tps,
+         (m.usage->>'prompt_tokens')::float8 AS prompt_tokens
+  FROM chat_message m
+  JOIN r ON m.created_at >= r.started_at AND (r.ended_at IS NULL OR m.created_at < r.ended_at)
+  WHERE m.role = 'assistant' AND (CAST(:model AS text) IS NULL OR m.model_id = :model)
+), q AS (
+  SELECT r_id, count(*) AS answers FROM a WHERE parent_id IS NOT NULL GROUP BY r_id, parent_id, model_id
+), ar AS (
+  SELECT r_id, count(*) AS answers, count(*) FILTER (WHERE failed) AS failed,
+         percentile_cont(0.5) WITHIN GROUP (ORDER BY model_secs) AS model_p50,
+         percentile_cont(0.9) WITHIN GROUP (ORDER BY model_secs) AS model_p90,
+         percentile_cont(0.5) WITHIN GROUP (ORDER BY tps) AS tps_p50,
+         percentile_cont(0.5) WITHIN GROUP (ORDER BY prompt_tokens) AS prompt_p50
+  FROM a GROUP BY r_id
+), qr AS (
+  SELECT r_id, count(*) AS questions, count(*) FILTER (WHERE answers > 1) AS regenerated,
+         count(*) FILTER (WHERE answers >= 3) AS at_limit
+  FROM q GROUP BY r_id
+), fr AS (
+  SELECT r.r_id, count(*) FILTER (WHERE (f.data->>'rating')::int > 0) AS up,
+         count(*) FILTER (WHERE (f.data->>'rating')::int < 0) AS down
+  FROM feedback f
+  JOIN r ON f.created_at >= r.started_at AND (r.ended_at IS NULL OR f.created_at < r.ended_at)
+  WHERE f.type = 'rating' AND (CAST(:model AS text) IS NULL OR f.data->>'model_id' = :model)
+  GROUP BY r.r_id
+)
+SELECT r.r_id, r.content_hash, r.git_commit, r.uncommitted, r.label, r.source, r.started_at, r.ended_at,
+       coalesce(ar.answers, 0) AS answers, coalesce(ar.failed, 0) AS failed,
+       ar.model_p50, ar.model_p90, ar.tps_p50, ar.prompt_p50,
+       coalesce(qr.questions, 0) AS questions, coalesce(qr.regenerated, 0) AS regenerated,
+       coalesce(qr.at_limit, 0) AS at_limit, coalesce(fr.up, 0) AS up, coalesce(fr.down, 0) AS down
+FROM r LEFT JOIN ar USING (r_id) LEFT JOIN qr USING (r_id) LEFT JOIN fr USING (r_id)
+WHERE r.r_id <> 0 OR ar.answers IS NOT NULL OR fr.up + fr.down > 0
+ORDER BY r.started_at DESC, r.r_id DESC
+"""
+
 MODELS_SQL = """
 SELECT DISTINCT model_id FROM chat_message
 WHERE role = 'assistant' AND model_id IS NOT NULL AND created_at >= :since ORDER BY 1
@@ -149,6 +210,42 @@ PAGE = """<!doctype html>
 """
 
 
+REVISIONS_PAGE = """<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>KPI by revision</title>
+<style>
+  body{font-family:system-ui,sans-serif;background:#f6f6f7;color:#1c1c1e;margin:0;padding:24px 16px}
+  main{max-width:1300px;margin:0 auto}
+  .wrap{overflow-x:auto;background:#fff;border-radius:12px;box-shadow:0 1px 3px rgba(0,0,0,.08)}
+  table{border-collapse:collapse;width:100%;font-size:14px}
+  th,td{padding:8px 10px;text-align:right;border-bottom:1px solid #eee;white-space:nowrap;font-variant-numeric:tabular-nums;vertical-align:top}
+  th:first-child,td:first-child{text-align:left;white-space:normal;min-width:220px}
+  th{font-weight:600;color:#555}
+  tr.live td{background:#eef6ff}
+  small{display:block;color:#777;font-size:12px}
+  .better{color:#1b6b34}.worse{color:#a4161a}
+  .muted{color:#777;font-size:13px}
+  a{color:inherit}
+  @media (prefers-color-scheme:dark){
+    body{background:#111;color:#eee}.wrap{background:#1c1c1e}th,td{border-color:#2c2c2e}th{color:#aaa}
+    tr.live td{background:#14263d}small,.muted{color:#999}.better{color:#9be3b0}.worse{color:#ffb3ae}}
+</style></head>
+<body><main>
+  <h1>KPI by settings revision</h1>
+  <p class="muted">NAV</p>
+  <div class="wrap"><table>
+    <thead><tr><th>Revision</th><th>Live (UTC)</th><th>Answers</th><th>Failed</th><th>Answer p50</th><th>Answer p90</th>
+      <th>Prompt tokens</th><th>Tokens/s</th><th>Regenerated</th><th>👍 share</th></tr></thead>
+    <tbody>ROWS</tbody>
+  </table></div>
+  <p class="muted">A revision is a version of devops/open-webui/settings.yaml, recorded by settings.py when it's
+    applied or exported (or by <code>settings.py record</code>). An answer counts for the revision that was live when it
+    was asked. Small text = change from the revision below; green = better, red = worse. Few answers in a revision
+    make its numbers unreliable. <a href="/">Back to Open WebUI</a></p>
+</main></body></html>
+"""
+
+
 def _secs(value) -> str:
     return "—" if value is None else f"{value:.0f} s"
 
@@ -157,9 +254,27 @@ def _pct(part: int, whole: int) -> str:
     return "—" if not whole else f"{100 * part / whole:.0f}%"
 
 
+def _delta(new, old, unit: str = "", lower_is_better: bool = True, digits: int = 0) -> str:
+    """"<small>" with the change from the previous revision, coloured when it's better or worse."""
+    if new is None or old is None:
+        return ""
+    diff = new - old
+    if round(diff, digits) == 0:
+        return "<small>±0</small>"
+    better = (diff < 0) == lower_is_better
+    return f"<small class='{'better' if better else 'worse'}'>{diff:+.{digits}f}{unit}</small>"
+
+
+def _ratio(part: int, whole: int):
+    return None if not whole else 100 * part / whole
+
+
 class Event:
     class Valves(BaseModel):
-        pass
+        viewer_group: str = Field(
+            default="kpi-viewers",
+            description="Open WebUI group whose members may open the page besides admins (empty = admins only).",
+        )
 
     def __init__(self):
         self.valves = self.Valves()
@@ -192,10 +307,83 @@ class Event:
         }
         return {"days": days, "model": model, "models": models, "totals": totals, "daily": rows}
 
-    async def _page(self, days: int = 14, model: str | None = None, format: str = "html",
-                    user=Depends(get_admin_user)):
+    async def _revisions(self, model: str | None) -> list[dict]:
+        async with get_async_db_context() as session:
+            exists = (await session.execute(text("SELECT to_regclass('fn_settings_revisions') IS NOT NULL"))).scalar()
+            if not exists:
+                return []
+            return [dict(r) for r in (await session.execute(text(REVISIONS_SQL), {"model": model})).mappings().all()]
+
+    def _revisions_page(self, revs: list[dict], model: str | None, models: list[str]) -> HTMLResponse:
+        day = lambda ts: time.strftime("%Y-%m-%d %H:%M", time.gmtime(ts))
+        body = []
+        for i, r in enumerate(revs):
+            prev = revs[i + 1] if i + 1 < len(revs) else None
+            p = prev or {}
+            if r["r_id"] == 0:
+                name = "<b>before tracking</b>"
+                live = f"until {day(r['ended_at'])}" if r["ended_at"] else "—"
+            else:
+                commit = f" · {html.escape(r['git_commit'])}" if r["git_commit"] else ""
+                dirty = " (uncommitted edits)" if r["uncommitted"] else ""
+                name = (f"<b>{html.escape(r['content_hash'])}</b>{commit}{dirty}"
+                        + (f"<small>{html.escape(r['label'])}</small>" if r["label"] else "")
+                        + f"<small>{html.escape(r['source'])}</small>")
+                live = day(r["started_at"]) + " →<br>" + (day(r["ended_at"]) if r["ended_at"] else "<b>now (live)</b>")
+            fail, pfail = _ratio(r["failed"], r["answers"]), _ratio(p.get("failed", 0), p.get("answers", 0))
+            regen, pregen = _ratio(r["regenerated"], r["questions"]), _ratio(p.get("regenerated", 0), p.get("questions", 0))
+            up, pup = _ratio(r["up"], r["up"] + r["down"]), _ratio(p.get("up", 0), p.get("up", 0) + p.get("down", 0))
+            fmt = lambda v, f: "—" if v is None else f.format(v)
+            cells = [
+                name, live, str(r["answers"]),
+                fmt(fail, "{:.0f}%") + _delta(fail, pfail, " pt"),
+                _secs(r["model_p50"]) + _delta(r["model_p50"], p.get("model_p50"), " s"),
+                _secs(r["model_p90"]) + _delta(r["model_p90"], p.get("model_p90"), " s"),
+                fmt(r["prompt_p50"], "{:.0f}") + _delta(r["prompt_p50"], p.get("prompt_p50")),
+                fmt(r["tps_p50"], "{:.1f}") + _delta(r["tps_p50"], p.get("tps_p50"), lower_is_better=False, digits=1),
+                fmt(regen, "{:.0f}%") + _delta(regen, pregen, " pt"),
+                (fmt(up, "{:.0f}%") + f" ({r['up']}/{r['up'] + r['down']})") + _delta(up, pup, " pt", lower_is_better=False),
+            ]
+            live_row = r["r_id"] != 0 and r["ended_at"] is None
+            body.append(f"<tr{' class=live' if live_row else ''}>" + "".join(f"<td>{c}</td>" for c in cells) + "</tr>")
+
+        link = lambda label, m: (f"<a href='{PAGE_PATH}?view=revisions"
+                                 + (f"&model={html.escape(m, quote=True)}" if m else "") + f"'>{html.escape(label)}</a>")
+        nav = (
+            f"{html.escape(model or 'All models')}. Model: " + " ".join(
+                [link("all", None) if model else "<b>all</b>"]
+                + [link(m, m) if m != model else f"<b>{html.escape(m)}</b>" for m in models]
+            )
+            + f" · <a href='{PAGE_PATH}'>By day</a> · "
+            + f"<a href='{PAGE_PATH}?view=revisions&format=json" + (f"&model={html.escape(model, quote=True)}" if model else "")
+            + "'>JSON</a>"
+        )
+        empty = ('<tr><td colspan="10">No revisions recorded yet: run <code>python3 devops/open-webui/settings.py '
+                 'record --from-git</code> (needs the open-webui-fn-migrate service to have run).</td></tr>')
+        page = REVISIONS_PAGE.replace("NAV", nav).replace("ROWS", "".join(body) or empty)
+        return HTMLResponse(page, headers={"Cache-Control": "no-store"})
+
+    async def _may_view(self, user) -> bool:
+        if user.role == "admin":
+            return True
+        wanted = self.valves.viewer_group.strip().lower()
+        if not wanted:
+            return False
+        return any(g.name.strip().lower() == wanted for g in await Groups.get_groups_by_member_id(user.id))
+
+    async def _page(self, days: int = 14, model: str | None = None, format: str = "html", view: str = "days",
+                    user=Depends(get_verified_user)):
+        if not await self._may_view(user):
+            raise HTTPException(status_code=403, detail="Only admins and the KPI viewer group can open this page.")
         days = max(1, min(days, 365))
         model = model or None
+        if view == "revisions":
+            revs = await self._revisions(model)
+            if format == "json":
+                return JSONResponse({"model": model, "revisions": revs}, headers={"Cache-Control": "no-store"})
+            async with get_async_db_context() as session:
+                models = [r[0] for r in (await session.execute(text(MODELS_SQL), {"since": 0})).all()]
+            return self._revisions_page(revs, model, models)
         data = await self._data(days, model)
         if format == "json":
             return JSONResponse(data, headers={"Cache-Control": "no-store"})
@@ -233,6 +421,8 @@ class Event:
                 + [link(m, m=m) if m != model else f"<b>{html.escape(m)}</b>" for m in data["models"]]
             )
             + " · " + link("JSON", fmt="&format=json")
+            + f" · <a href='{PAGE_PATH}?view=revisions" + (f"&model={html.escape(model, quote=True)}" if model else "")
+            + "'>By settings revision</a>"
         )
         page = (PAGE.replace("NAV", nav).replace("TILES", tiles_html)
                 .replace("ROWS", "".join(body) or '<tr><td colspan="12">No answers in this period.</td></tr>'))

@@ -19,12 +19,19 @@ MODEL_META_KEYS (not its picture); each Function's is_active, is_global and valv
 isn't (import it from devops/open-webui/functions/). Valves whose name looks like a secret are
 exported as REDACTED, and apply keeps the DB's value for them.
 
+Each version that goes live is recorded in the fn_settings_revisions table (start time, content hash,
+git commit), which the KPI Dashboard Function uses to compare answer speed and ratings per revision:
+apply and export record one when the content changed, `record` does it by hand (`--label` to name it),
+and `record --from-git` adds one per past commit of settings.yaml, at its commit time. Settings changed
+in the Admin UI count as a new revision only once exported.
+
 Talks to Postgres through `docker exec laptop-postgres psql`, like evals/run.py, so the host needs
 only PyYAML.
 """
 
 import argparse
 import difflib
+import hashlib
 import json
 import os
 import subprocess
@@ -114,6 +121,35 @@ def psql(env: dict, sql: str) -> str:
 
 def rows(env: dict, query: str) -> list:
     return json.loads(psql(env, f"SELECT coalesce(json_agg(t), '[]'::json) FROM ({query}) t;"))
+
+
+def git(*args: str, strip: bool = True) -> str:
+    out = subprocess.run(["git", "-C", str(REPO), *args], capture_output=True, text=True, timeout=30).stdout
+    return out.strip() if strip else out
+
+
+def record_revision(env: dict, source: str, content: str, *, commit: str | None, uncommitted: bool,
+                    label: str | None = None, at: int | None = None) -> None:
+    """Adds a fn_settings_revisions row unless the latest one (before `at`) has the same content."""
+    if psql(env, "SELECT to_regclass('fn_settings_revisions') IS NOT NULL;").strip() != "t":
+        print("note: fn_settings_revisions doesn't exist yet (run the open-webui-fn-migrate service); revision not recorded")
+        return
+    digest = hashlib.sha256(content.encode()).hexdigest()[:12]
+    at = int(at if at is not None else datetime.now().timestamp())
+    latest = psql(env, "SELECT content_hash FROM fn_settings_revisions "
+                       f"WHERE started_at <= {at} ORDER BY started_at DESC, id DESC LIMIT 1;").strip()
+    if latest == digest:
+        return
+    psql(env, "INSERT INTO fn_settings_revisions (content_hash, git_commit, uncommitted, label, source, started_at) "
+              f"VALUES ({sql_literal(digest)}, {sql_literal(commit) if commit else 'NULL'}, {str(uncommitted).lower()}, "
+              f"{sql_literal(label) if label else 'NULL'}, {sql_literal(source)}, {at});")
+    print(f"recorded settings revision {digest}" + (f" ({commit})" if commit else "") + (f": {label}" if label else ""))
+
+
+def record_current(env: dict, source: str, label: str | None = None) -> None:
+    rel = str(SETTINGS.relative_to(REPO))
+    record_revision(env, source, SETTINGS.read_text(), commit=git("log", "-1", "--format=%h", "--", rel) or None,
+                    uncommitted=bool(git("status", "--porcelain", "--", rel)), label=label)
 
 
 def text_json(value):
@@ -287,6 +323,7 @@ def cmd_export(env: dict, _args) -> None:
     SETTINGS.write_text(HEADER + yaml.dump(snapshot, Dumper=Dumper, sort_keys=False, allow_unicode=True, width=100))
     print(f"wrote {SETTINGS.relative_to(REPO)}: {len(snapshot['config'])} config keys, "
           f"{len(snapshot['models'])} models, {len(snapshot['functions'])} Functions")
+    record_current(env, "export")
 
 
 def cmd_diff(env: dict, args) -> None:
@@ -303,6 +340,7 @@ def cmd_apply(env: dict, args) -> None:
     found = changes(wanted, redacted(db))
     if not found:
         print("in sync, nothing to apply")
+        record_current(env, "apply")
         return
     for path, old, new in found:
         show(path, old, new)
@@ -320,6 +358,19 @@ def cmd_apply(env: dict, args) -> None:
         print(f"skipped {item}")
     if left:
         sys.exit(f"{len(left)} setting(s) still differ after apply: run diff")
+    record_current(env, "apply")
+
+
+def cmd_record(env: dict, args) -> None:
+    if not args.from_git:
+        load_settings()
+        record_current(env, "record", args.label)
+        return
+    rel = str(SETTINGS.relative_to(REPO))
+    for line in reversed(git("log", "--format=%h %ct %s", "--", rel).splitlines()):
+        commit, at, subject = line.split(" ", 2)
+        record_revision(env, "git", git("show", f"{commit}:{rel}", strip=False), commit=commit, uncommitted=False,
+                        label=subject[:120], at=int(at))
 
 
 def main() -> None:
@@ -330,8 +381,11 @@ def main() -> None:
     diff.add_argument("--quiet", action="store_true", help="no output, exit code only")
     apply = sub.add_parser("apply", help="settings.yaml → DB")
     apply.add_argument("--yes", action="store_true", help="don't ask")
+    record = sub.add_parser("record", help="note the current settings.yaml as live (for the KPI dashboard)")
+    record.add_argument("--label", help="short name for this revision")
+    record.add_argument("--from-git", action="store_true", help="add one revision per past commit of settings.yaml")
     args = parser.parse_args()
-    {"export": cmd_export, "diff": cmd_diff, "apply": cmd_apply}[args.command](load_env(), args)
+    {"export": cmd_export, "diff": cmd_diff, "apply": cmd_apply, "record": cmd_record}[args.command](load_env(), args)
 
 
 if __name__ == "__main__":
