@@ -339,6 +339,8 @@ Open WebUI can search the web through **SearXNG** (`searxng` service, [devops/se
 - Searches leave your machine through SearXNG, so each engine sees your IP but not who asked.
 - Enable/engine/URL are saved Open WebUI settings (`web.search.*`), which override the compose values once saved. Change them under **Admin → Settings → Web Search**.
 - `SEARXNG_SECRET` in `.env` signs SearXNG's cookies. Generate it with `openssl rand -hex 32`.
+- SearXNG uses its default engines plus Google and Bing, so search keeps working when some engines block requests (too many requests or a CAPTCHA, which happens after bursts of searches). If every engine is blocked, answers come without web sources until the blocks expire. After editing [devops/searxng/settings.yml](devops/searxng/settings.yml), run `docker compose -f devops/docker-compose.yml up -d --no-deps --force-recreate searxng`.
+- **Settings as code:** the tuned Open WebUI settings (answer and search prompts, retrieval and web search settings, model parameters, Function switches, banners, permissions) are saved in [devops/open-webui/settings.yaml](devops/open-webui/settings.yaml). After changing settings in the Admin UI, run `python3 devops/open-webui/settings.py export` and commit the file. To change them from the file instead, edit it and run `python3 devops/open-webui/settings.py apply`, which shows the changes, asks, and keeps a backup of the previous values. `settings.py diff` shows whether Open WebUI still matches the file.
 - Harmless startup errors: SearXNG logs `ahmia`/`torch` "can't register engine" (Tor-only engines) and a missing `limiter.toml` (the limiter is off, since the service is internal).
 
 ## Answer feedback (👍/👎)

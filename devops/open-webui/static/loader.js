@@ -196,16 +196,30 @@
 		limitRegenerate();
 	};
 
-	if (hasToken()) {
-		const headers = {};
+	// Asked with localStorage's token only, never the `token` cookie: /api/v1/auths/ re-sets that
+	// cookie as HttpOnly, and right after an SSO sign-in the cookie is where Open WebUI's sign-in page
+	// reads the new token from (with JavaScript). Sending the cookie then hid the token from the page,
+	// which went back to authentik, which signed the user straight in again: an endless loop.
+	// credentials: 'omit' also makes the browser ignore the response's Set-Cookie.
+	const checkRole = () => {
+		let token;
 		try {
-			if (localStorage.token) headers.Authorization = `Bearer ${localStorage.token}`;
-		} catch (e) {}
-		fetch('/api/v1/auths/', { credentials: 'include', headers })
+			token = localStorage.token;
+		} catch (e) {
+			return true; // no localStorage: nothing to wait for
+		}
+		if (!token) return false;
+		fetch('/api/v1/auths/', { credentials: 'omit', headers: { Authorization: `Bearer ${token}` } })
 			.then((r) => (r.ok ? r.json() : null))
 			.then((user) => {
 				if (user && user.role !== 'admin') restrictRegularUser();
 			})
 			.catch(() => {});
+		return true;
+	};
+	// After an SSO sign-in the token reaches localStorage only after this script has run, and the app
+	// then moves on to the chat without reloading the page, so keep looking until it's there.
+	if (!checkRole()) {
+		const timer = setInterval(() => checkRole() && clearInterval(timer), 1000);
 	}
 })();
