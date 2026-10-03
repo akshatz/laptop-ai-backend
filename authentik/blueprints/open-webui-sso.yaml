@@ -41,7 +41,12 @@ entries:
       device_classes:
         - totp
         - static
-      not_configured_action: configure
+      # AUTHENTIK_MFA_REQUIRED (.env, true/false or 1/0, default true): true → users without an authenticator
+      # must set one up; false → they skip MFA (users who already have one are still asked for it).
+      # Any other value counts as true. Also governs sign-up/invitation, which reuse this stage.
+      # authentik only re-applies a blueprint when the FILE changes, so after changing the variable:
+      # recreate authentik-worker, then `ak apply_blueprint /blueprints/custom/open-webui-sso.yaml`.
+      not_configured_action: !AtIndex [{"true": configure, "1": configure, "false": skip, "0": skip}, !Env [AUTHENTIK_MFA_REQUIRED, "true"], configure]
       configuration_stages:
         - !Find [authentik_stages_authenticator_totp.authenticatortotpstage, [name, default-authenticator-totp-setup]]
       # After a code is entered, skip the code (not the password) for 3 hours in that browser:
