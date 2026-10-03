@@ -329,6 +329,22 @@ Open WebUI can search the web through **SearXNG** (`searxng` service, [devops/se
 - `SEARXNG_SECRET` in `.env` signs SearXNG's cookies. Generate it with `openssl rand -hex 32`.
 - Harmless startup errors: SearXNG logs `ahmia`/`torch` "can't register engine" (Tor-only engines) and a missing `limiter.toml` (the limiter is off, since the service is internal).
 
+## Answer feedback (👍/👎)
+
+Users can rate any answer with 👍 or 👎, optionally with a reason or a comment. Open WebUI saves each rating in its `feedback` table together with a copy of the chat at that moment, which stays after the chat is edited or deleted. Admins can read those copies, so rating an answer shares that chat with them.
+
+**Ratings don't improve answers on their own.** The models don't learn from them, and nothing in answering a question reads them. Open WebUI uses them only for statistics: ratings per model under **Admin → Analytics**, and the model leaderboard under **Admin → Evaluations**, which only changes when the rated answer had answers from other models next to it (multi-model or arena chats), so ordinary ratings leave it unchanged. Improving answers from ratings is a manual loop:
+
+1. Import and enable the Feedback Review Function, [devops/open-webui/functions/feedback_review.py](devops/open-webui/functions/feedback_review.py), like the other Functions, then restart `open-webui` once so its page is registered.
+2. While signed in as an admin, open **`/api/v1/feedback-review`** (e.g. `https://<OPEN_WEBUI_HOST>:8444/api/v1/feedback-review`). It lists the 👎 answers of the last 90 days, newest first, each with the question, what was searched for, the sources, the answer, and the user's reason or comment. Add `?rating=up` for 👍, `?rating=all` for both, `?days=30` for a shorter period, or `?format=json` for JSON. The page changes nothing.
+3. Look for patterns and change the matching setting:
+   - **Searched for** misses the question or mixes in an earlier topic → the query generation prompt (**Admin → Settings → Interface → Query Generation Prompt**).
+   - **(no web search)** → web search was off in that chat, or the model answered without searching.
+   - Searched well, but the sources don't contain the answer → more results per search (**Admin → Settings → Web Search → Search Result Count**).
+   - The sources contain the answer, but the answer gets it wrong → a limit of the model; a larger model does better.
+
+Not built yet: putting admin-approved 👍 answers into a "Verified answers" knowledge collection that the model searches. That would be the first way ratings feed back into answers directly.
+
 ## Open WebUI audit log in OpenObserve
 
 Open WebUI's regular logs (stream `openwebui_backend`) are mostly web-server request lines with the client IP but **no user**. To see who did what, Open WebUI's audit log is on (`AUDIT_LOG_LEVEL=METADATA` in compose) and shipped to O2 stream **`openwebui_audit`** by `openwebui-audit-shipper`, an OpenTelemetry Collector ([devops/otel-collector/openwebui-audit.yaml](devops/otel-collector/openwebui-audit.yaml)). Open WebUI only writes audit entries to `data/audit.log`, never over OTel, so the collector tails that file from the `open-webui-data` volume (read-only).
