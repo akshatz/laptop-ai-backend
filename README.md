@@ -15,7 +15,7 @@ flowchart TB
     end
 
     subgraph app["Application layer"]
-        webui["open-webui\n:8082\n+ Functions (sign-up, password, cleanup,\nchat archive, regenerate limit, query log)"]
+        webui["open-webui\n:8082\n+ Functions (sign-up, password, cleanup,\nchat archive, regenerate limit, query log,\nfeedback review, KPI dashboard)"]
         backend["custom-backend (FastAPI)\n:8011\nrouters: auth, chats"]
     end
 
@@ -393,6 +393,21 @@ Users can rate any answer with 👍 or 👎, optionally with a reason or a comme
    - The sources contain the answer, but the answer gets it wrong → a limit of the model; a larger model does better.
 
 Not built yet: putting admin-approved 👍 answers into a "Verified answers" knowledge collection that the model searches. That would be the first way ratings feed back into answers directly.
+
+## KPI dashboard
+
+To see whether a settings change made answers faster or better, the KPI Dashboard Function, [devops/open-webui/functions/kpi_dashboard.py](devops/open-webui/functions/kpi_dashboard.py), shows the main numbers per day. Import and enable it like the other Functions, then restart `open-webui` once so its page is registered.
+
+While signed in as an admin, open **`/api/v1/kpi`** (e.g. `https://<OPEN_WEBUI_HOST>:8444/api/v1/kpi`). It shows the last 14 days (days in UTC), with totals at the top:
+
+- **Answers / Failed:** answers written, and how many ended in an error.
+- **Answer p50 / p90:** how long Ollama took per answer (reading the prompt + writing), median and slowest 10%. Web search and reading the pages come on top; Open WebUI doesn't record when an answer finished, so the full wait can't be shown.
+- **Prompt tokens:** median prompt size, mostly the search results. Bigger prompts mean slower answers on this laptop's CPU.
+- **Tokens/s:** how fast the model writes.
+- **Regenerated / At limit:** share of questions that got more than one answer, and how many reached the 3-answer limit. A rising share usually means worse answers.
+- **👍 / 👎:** ratings given that day; the details are on the Feedback Review page above.
+
+Pick 7, 14, 30 or 90 days and a model at the top of the page, or add `?days=30`, `?model=fast-ai:latest` or `?format=json` to the address. The page changes nothing. Only chats that still exist are counted, and temporary chats never are.
 
 ## Logs in OpenObserve
 
