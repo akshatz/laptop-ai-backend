@@ -100,6 +100,25 @@
     exclude: ["December 2023", "knowledge cut-?off"]
     min_domains: 2
 
+- id: sensex-on-date
+  category: current-data
+  note: From a 👎 "not factually correct" on 2026-10-03 — one Yahoo Finance page, said the Sensex closed at 3,046 (not an index level), then that it found nothing.
+  question: BSE Sensex Performance on 1st Oct
+  expect:
+    search: true
+    facts: ["\\d{2},?\\d{3}"]
+    exclude: ["3,046", "December 2023", "knowledge cut-?off"]
+    min_domains: 2
+
+- id: hdfc-bank-ceo
+  category: current-data
+  note: Rated 👍 on 2026-10-03 (Anup Bagchi takes over on 27 Oct 2026); keeps a good current-news answer from regressing.
+  question: Please update on HDFC banks MD and Ceo appintment recently
+  expect:
+    search: true
+    facts: ["Bagchi"]
+    min_domains: 2
+
 - id: usd-inr
   category: current-data
   question: What is the US dollar to Indian rupee exchange rate today?
