@@ -467,6 +467,9 @@ services:
       # Read by authentik/blueprints/openbao-sso.yaml (!Env).
       OPENBAO_OIDC_CLIENT_ID: ${OPENBAO_OIDC_CLIENT_ID}
       OPENBAO_OIDC_CLIENT_SECRET: ${OPENBAO_OIDC_CLIENT_SECRET}
+      # Read by open-webui-sso.yaml / password-recovery.yaml (!Env): MFA required for everyone (true)
+      # or only for users who already set up an authenticator (false).
+      AUTHENTIK_MFA_REQUIRED: ${AUTHENTIK_MFA_REQUIRED:-true}
       # Read by authentik/blueprints/open-webui-user-sync.yaml (!Env).
       OPEN_WEBUI_AUTHENTIK_API_TOKEN: ${OPEN_WEBUI_AUTHENTIK_API_TOKEN}
     volumes:
