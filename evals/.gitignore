@@ -1,0 +1,4 @@
+# Run results (answers can quote family questions) and private cases stay local.
+runs/
+cases.local.yaml
+__pycache__/

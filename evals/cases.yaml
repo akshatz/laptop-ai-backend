@@ -1,0 +1,274 @@
+# Answer-quality cases for fast-ai, run by evals/run.py through Open WebUI's real chat pipeline.
+# Private questions (family names, the Family knowledge collection) go in cases.local.yaml instead,
+# which is gitignored and uses the same format.
+#
+#   id:        unique, used to compare runs
+#   category:  grounded-fact | current-data | follow-up | topic-switch | abstain | general
+#   question:  the latest user message
+#   history:   earlier turns, [{role: user|assistant, content: ...}] (optional)
+#   web_search: false to turn search off for this case (default on, like the family's "Always")
+#   expect:
+#     facts:       each entry is one fact that must appear; a list means "any of these" (regex, case-insensitive)
+#     exclude:     regexes that must not appear
+#     search:      true/false, whether web search results must have been used
+#     min_domains: at least this many different websites among the sources
+#     abstain:     true = must say it doesn't know; false = must not
+#
+# current-data answers change daily, so those cases only check the shape of a good answer (searched,
+# gave a figure, used 2+ sites, didn't fall back to the model's December 2023 knowledge).
+
+- id: tata-trusts-role
+  category: grounded-fact
+  note: From the 👎 rating on 2026-10-03 — only 2 sites, and it credited Jamsetji with endowing the trusts (his sons did).
+  question: What role do the philanthropic trusts play in Tata Sons?
+  expect:
+    search: true
+    facts: [["66 ?%", "two[- ]thirds", "66 per ?cent"]]
+    exclude: ["Jamsetji[^.]{0,80}willed"]
+    min_domains: 2
+
+- id: tata-trusts-founded
+  category: grounded-fact
+  question: When were the Sir Ratan Tata Trust and the Sir Dorabji Tata Trust established?
+  expect:
+    search: true
+    facts: ["1919", "1932"]
+
+- id: gandhi-jayanti-date
+  category: grounded-fact
+  question: When is Gandhi Jayanti celebrated?
+  expect:
+    facts: [["2(nd)? October", "October 2"]]
+
+- id: chandrayaan3-landing
+  category: grounded-fact
+  question: When did Chandrayaan-3 land on the Moon?
+  expect:
+    facts: [["23(rd)? August,? 2023", "August 23(rd)?,? 2023"]]
+
+- id: statue-of-unity-height
+  category: grounded-fact
+  question: How tall is the Statue of Unity?
+  expect:
+    facts: ["182 ?(m\\b|metres|meters)"]
+
+- id: sbi-formed
+  category: grounded-fact
+  question: When was the State Bank of India formed?
+  expect:
+    facts: ["1955"]
+
+- id: upi-operator
+  category: grounded-fact
+  question: Which organisation operates UPI in India?
+  expect:
+    facts: [["NPCI", "National Payments Corporation of India"]]
+
+- id: air-india-tata
+  category: grounded-fact
+  question: When did the Tata group take back ownership of Air India?
+  expect:
+    facts: [["2022", "2021"]]
+
+- id: sardar-sarovar-river
+  category: grounded-fact
+  question: On which river is the Sardar Sarovar Dam built?
+  expect:
+    facts: ["Narmada"]
+
+- id: sensex-companies
+  category: grounded-fact
+  question: How many companies are in the BSE Sensex?
+  expect:
+    facts: [["\\b30\\b", "thirty"]]
+
+- id: sbi-close
+  category: current-data
+  question: What was the closing price of SBI shares on the last trading day?
+  expect:
+    search: true
+    facts: [["(₹|rs\\.?|inr) ?\\d{2,4}(\\.\\d+)?", "\\d{2,4}(\\.\\d+)? ?(rupees|rs\\b|inr)"]]
+    exclude: ["December 2023", "knowledge cut-?off"]
+    min_domains: 2
+
+- id: sensex-today
+  category: current-data
+  question: Where is the Sensex today?
+  expect:
+    search: true
+    facts: ["\\d{2},?\\d{3}"]
+    exclude: ["December 2023", "knowledge cut-?off"]
+    min_domains: 2
+
+- id: sensex-on-date
+  category: current-data
+  note: From a 👎 "not factually correct" on 2026-10-03 — one Yahoo Finance page, said the Sensex closed at 3,046 (not an index level), then that it found nothing.
+  question: BSE Sensex Performance on 1st Oct
+  expect:
+    search: true
+    facts: ["\\d{2},?\\d{3}"]
+    exclude: ["3,046", "December 2023", "knowledge cut-?off"]
+    min_domains: 2
+
+- id: hdfc-bank-ceo
+  category: current-data
+  note: Rated 👍 on 2026-10-03 (Anup Bagchi takes over on 27 Oct 2026); keeps a good current-news answer from regressing.
+  question: Please update on HDFC banks MD and Ceo appintment recently
+  expect:
+    search: true
+    facts: ["Bagchi"]
+    min_domains: 2
+
+- id: usd-inr
+  category: current-data
+  question: What is the US dollar to Indian rupee exchange rate today?
+  expect:
+    search: true
+    facts: ["\\b[89]\\d\\.\\d{1,2}\\b"]
+    exclude: ["December 2023", "knowledge cut-?off"]
+    min_domains: 2
+
+- id: gold-ahmedabad
+  category: current-data
+  question: What is the price of 24 carat gold in Ahmedabad today?
+  expect:
+    search: true
+    facts: [["(₹|rs\\.?|inr) ?\\d{1,3}(,\\d{2,3})+", "\\d{1,3}(,\\d{2,3})+ ?(rupees|rs\\b|inr)"]]
+    exclude: ["December 2023", "knowledge cut-?off"]
+    min_domains: 2
+
+- id: ahmedabad-weather
+  category: current-data
+  question: What is the weather forecast for Ahmedabad tomorrow?
+  expect:
+    search: true
+    facts: [["\\d{2} ?° ?c?", "\\d{2} ?(degrees|celsius)"]]
+    exclude: ["December 2023", "knowledge cut-?off"]
+    min_domains: 2
+
+- id: isro-news
+  category: current-data
+  question: What is the latest news about ISRO?
+  expect:
+    search: true
+    facts: [["ISRO", "Indian Space Research"]]
+    exclude: ["December 2023", "knowledge cut-?off"]
+    min_domains: 2
+
+- id: followup-founder-born
+  category: follow-up
+  history:
+    - {role: user, content: "Who founded the Tata Group?"}
+    - {role: assistant, content: "The Tata Group was founded by Jamsetji Tata in 1868."}
+  question: When was he born?
+  expect:
+    facts: ["1839"]
+
+- id: followup-statue-height
+  category: follow-up
+  history:
+    - {role: user, content: "What is the Statue of Unity?"}
+    - {role: assistant, content: "It is a statue of Sardar Vallabhbhai Patel in Gujarat, near the Sardar Sarovar Dam."}
+  question: How tall is it?
+  expect:
+    facts: ["182"]
+
+- id: followup-sbi-formed
+  category: follow-up
+  history:
+    - {role: user, content: "Tell me about the State Bank of India."}
+    - {role: assistant, content: "State Bank of India (SBI) is India's largest public sector bank, headquartered in Mumbai."}
+  question: When was it formed?
+  expect:
+    facts: ["1955"]
+
+- id: followup-gandhi-birthplace
+  category: follow-up
+  history:
+    - {role: user, content: "When is Gandhi Jayanti?"}
+    - {role: assistant, content: "Gandhi Jayanti is on 2 October, Mahatma Gandhi's birthday."}
+  question: Where was he born?
+  expect:
+    facts: ["Porbandar"]
+
+- id: switch-stock-to-gandhi
+  category: topic-switch
+  history:
+    - {role: user, content: "How did TCS shares do yesterday?"}
+    - {role: assistant, content: "TCS shares closed slightly higher on the NSE yesterday."}
+  question: When is Gandhi Jayanti celebrated?
+  expect:
+    facts: [["2(nd)? October", "October 2"]]
+    exclude: ["TCS", "Tata Consultancy"]
+
+- id: switch-tata-to-water
+  category: topic-switch
+  history:
+    - {role: user, content: "Who owns Tata Sons?"}
+    - {role: assistant, content: "About two-thirds of Tata Sons is held by the Tata Trusts."}
+  question: What is the boiling point of water at sea level in Fahrenheit?
+  expect:
+    facts: ["212"]
+    exclude: ["Tata"]
+
+- id: switch-weather-to-upi
+  category: topic-switch
+  history:
+    - {role: user, content: "What's the weather in Ahmedabad tomorrow?"}
+    - {role: assistant, content: "Tomorrow in Ahmedabad: sunny, around 34°C."}
+  question: Which organisation runs UPI?
+  expect:
+    facts: [["NPCI", "National Payments Corporation"]]
+    exclude: ["Ahmedabad", "°C"]
+
+- id: fictional-ministry
+  category: abstain
+  question: What did India's Ministry of Lunar Affairs announce yesterday?
+  expect:
+    abstain: true
+
+- id: fictional-company-price
+  category: abstain
+  question: What was the closing price of Zentrovax Pharma Ltd on the NSE yesterday?
+  expect:
+    abstain: true
+
+- id: future-world-cup
+  category: abstain
+  question: Who won the 2031 ICC Cricket World Cup final?
+  expect:
+    abstain: true
+
+- id: private-phone-number
+  category: abstain
+  question: What is the mobile number of my neighbour Ramesh in Vadodara?
+  expect:
+    abstain: true
+
+- id: explain-compound-interest
+  category: general
+  question: Explain compound interest in two sentences.
+  expect:
+    facts: ["interest"]
+    abstain: false
+
+- id: gujarati-good-morning
+  category: general
+  question: How do you say "good morning" in Gujarati?
+  expect:
+    facts: [["સુપ્રભાત", "શુભ સવાર", "suprabhat", "shubh savar"]]
+    abstain: false
+
+- id: monsoon-poem
+  category: general
+  question: Write a two-line poem about the monsoon.
+  expect:
+    facts: [["rain", "monsoon", "cloud"]]
+    abstain: false
+
+- id: hindi-capital
+  category: general
+  question: भारत की राजधानी क्या है?
+  expect:
+    facts: [["दिल्ली", "Delhi"]]
+    abstain: false

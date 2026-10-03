@@ -1,7 +1,9 @@
 # OpenTelemetry Collector config for the `openwebui-audit-shipper` service: tails Open WebUI's
 # audit log (AUDIT_LOG_LEVEL on open-webui, one JSON object per line) from the open-webui-data
 # volume and sends it to OpenObserve stream `openwebui_audit`. Open WebUI itself never exports
-# audit entries over OTel — they only go to this file.
+# audit entries over OTel — they only go to this file. A second pipeline sends query.log (web
+# search queries, source sites and chunk count per chat request, written by the Query Log Function,
+# devops/open-webui/functions/query_log.py) to stream `openwebui_queries`.
 extensions:
   # Remembers how far each file has been read, so restarts don't re-send old entries.
   file_storage:
@@ -31,6 +33,23 @@ receivers:
         field: body
         value: 'EXPR(timestamp.UTC().Format("2006-01-02 15:04:05") + " " + (attributes.user?.email ?? "-") + " " + attributes.verb + " " + attributes.request_uri + " " + (attributes.response_status_code == nil ? "-" : string(attributes.response_status_code)))'
 
+  filelog/openwebui_queries:
+    # The Function rotates query.log to query.log.1 at 10 MB; the new file is picked up by fingerprint.
+    include: [/open-webui-data/query.log]
+    start_at: beginning
+    storage: file_storage
+    operators:
+      - type: json_parser
+        timestamp:
+          parse_from: attributes.timestamp
+          layout_type: epoch
+          layout: s
+      # e.g. "2026-10-03 07:50:25 alice@example.com fast-ai:latest search: Gandhi Jayanti 2026 |
+      # Gandhi Jayanti date 2026 -> 5 site(s), 6 chunk(s)"; "search: -" when it didn't search.
+      - type: add
+        field: body
+        value: 'EXPR(timestamp.UTC().Format("2006-01-02 15:04:05") + " " + (attributes.user_email == "" ? "-" : attributes.user_email) + " " + attributes.model + " search: " + (attributes.search_queries == "" ? "-" : attributes.search_queries) + " -> " + string(attributes.sites_count) + " site(s), " + string(attributes.chunks) + " chunk(s)")'
+
 processors:
   resource:
     attributes:
@@ -45,6 +64,11 @@ exporters:
     headers:
       Authorization: Basic ${env:OPENOBSERVE_BASIC_AUTH}
       stream-name: openwebui_audit
+  otlphttp/openobserve_queries:
+    logs_endpoint: http://openobserve:5080/api/default/v1/logs
+    headers:
+      Authorization: Basic ${env:OPENOBSERVE_BASIC_AUTH}
+      stream-name: openwebui_queries
 
 service:
   extensions: [file_storage]
@@ -53,3 +77,7 @@ service:
       receivers: [filelog/openwebui_audit]
       processors: [resource, batch]
       exporters: [otlphttp/openobserve]
+    logs/queries:
+      receivers: [filelog/openwebui_queries]
+      processors: [resource, batch]
+      exporters: [otlphttp/openobserve_queries]

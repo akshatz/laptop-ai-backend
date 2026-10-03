@@ -228,6 +228,12 @@ services:
       - USER_PERMISSIONS_CHAT_VALVES=false
       - USER_PERMISSIONS_CHAT_SYSTEM_PROMPT=false
       - USER_PERMISSIONS_CHAT_PARAMS=false
+      # Under answers, hide Edit, Read Aloud and Fork from regular users. Fork has no permission of
+      # its own: Open WebUI shows it only with chat import (which also goes). Editing their own
+      # questions stays. Same DB override as above.
+      - USER_PERMISSIONS_CHAT_EDIT=false
+      - USER_PERMISSIONS_CHAT_TTS=false
+      - USER_PERMISSIONS_CHAT_IMPORT=false
       # Global default model params for every chat (Admin → Settings → Models → Default model
       # params). A model's own Advanced Params, and params an admin sets in a chat, override it.
       # Only seeds a fresh DB: the saved models.default_params row wins once it exists.
