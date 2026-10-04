@@ -1,7 +1,7 @@
 """
 title: KPI Dashboard
 author: akshatz
-version: 1.0.0
+version: 1.1.0
 required_open_webui_version: 0.11.3
 description: Admin page with answer speed, failures, regenerations and 👍/👎 per day, to see whether a settings change made answers faster or better.
 
@@ -9,8 +9,8 @@ Open WebUI event Function (Admin → Functions → import this file and enable i
 `open-webui` so `system.startup.completed` registers the page). Event Functions can't declare
 routes, so it registers one page on Open WebUI's app, for admins and one group:
 
-  GET /api/v1/kpi                         last 14 days, all models
-  GET /api/v1/kpi?days=30                 last 30 days (1-365)
+  GET /api/v1/kpi                         since COUNT_FROM (2026-10-04, UTC), all models
+  GET /api/v1/kpi?days=7                  last 7 days instead (1-365, never before COUNT_FROM)
   GET /api/v1/kpi?model=fast-ai:latest    one model only
   GET /api/v1/kpi?view=revisions          one row per settings revision instead of per day
   GET /api/v1/kpi?view=users              one row per person (admins + `person_view_group`; takes days/model)
@@ -51,6 +51,7 @@ saved, so they're not included. Touches Open WebUI internals (chat_message/feedb
 usage JSON Ollama fills): re-check the page after bumping the pinned image.
 """
 
+import calendar
 import html
 import logging
 import time
@@ -96,7 +97,7 @@ WITH a AS (
   SELECT to_char(to_timestamp(created_at) AT TIME ZONE 'UTC', 'YYYY-MM-DD') AS day,
          count(*) AS answers,
          count(*) FILTER (WHERE failed) AS failed, count(*) FILTER (WHERE no_web) AS no_web,
-         percentile_cont(0.5) WITHIN GROUP (ORDER BY model_secs) AS model_p50,
+         percentile_cont(0.75) WITHIN GROUP (ORDER BY model_secs) AS model_p75,
          percentile_cont(0.9) WITHIN GROUP (ORDER BY model_secs) AS model_p90,
          percentile_cont(0.5) WITHIN GROUP (ORDER BY tps) AS tps_p50,
          percentile_cont(0.5) WITHIN GROUP (ORDER BY prompt_tokens) AS prompt_p50
@@ -115,7 +116,7 @@ FROM ad LEFT JOIN qd USING (day)
 
 # Period totals: percentiles can't be averaged from the daily rows.
 TOTALS_SQL = """
-SELECT percentile_cont(0.5) WITHIN GROUP (ORDER BY (usage->>'total_duration')::float8 / 1e9),
+SELECT percentile_cont(0.75) WITHIN GROUP (ORDER BY (usage->>'total_duration')::float8 / 1e9),
        percentile_cont(0.9) WITHIN GROUP (ORDER BY (usage->>'total_duration')::float8 / 1e9),
        percentile_cont(0.5) WITHIN GROUP (ORDER BY (usage->>'prompt_tokens')::float8)
 FROM chat_message
@@ -155,7 +156,7 @@ WITH r AS (
   SELECT r_id, count(*) AS answers FROM a WHERE parent_id IS NOT NULL GROUP BY r_id, parent_id, model_id
 ), ar AS (
   SELECT r_id, count(*) AS answers, count(*) FILTER (WHERE failed) AS failed, count(*) FILTER (WHERE no_web) AS no_web,
-         percentile_cont(0.5) WITHIN GROUP (ORDER BY model_secs) AS model_p50,
+         percentile_cont(0.75) WITHIN GROUP (ORDER BY model_secs) AS model_p75,
          percentile_cont(0.9) WITHIN GROUP (ORDER BY model_secs) AS model_p90,
          percentile_cont(0.5) WITHIN GROUP (ORDER BY tps) AS tps_p50,
          percentile_cont(0.5) WITHIN GROUP (ORDER BY prompt_tokens) AS prompt_p50
@@ -174,7 +175,7 @@ WITH r AS (
 )
 SELECT r.r_id, r.content_hash, r.git_commit, r.uncommitted, r.label, r.source, r.started_at, r.ended_at,
        coalesce(ar.answers, 0) AS answers, coalesce(ar.failed, 0) AS failed, coalesce(ar.no_web, 0) AS no_web,
-       ar.model_p50, ar.model_p90, ar.tps_p50, ar.prompt_p50,
+       ar.model_p75, ar.model_p90, ar.tps_p50, ar.prompt_p50,
        coalesce(qr.questions, 0) AS questions, coalesce(qr.regenerated, 0) AS regenerated,
        coalesce(qr.at_limit, 0) AS at_limit, coalesce(fr.up, 0) AS up, coalesce(fr.down, 0) AS down
 FROM r LEFT JOIN ar USING (r_id) LEFT JOIN qr USING (r_id) LEFT JOIN fr USING (r_id)
@@ -200,7 +201,7 @@ WITH a AS (
 ), au AS (
   SELECT user_id, count(*) AS answers, count(*) FILTER (WHERE failed) AS failed, count(*) FILTER (WHERE no_web) AS no_web,
          count(DISTINCT chat_id) AS chats,
-         percentile_cont(0.5) WITHIN GROUP (ORDER BY model_secs) AS model_p50,
+         percentile_cont(0.75) WITHIN GROUP (ORDER BY model_secs) AS model_p75,
          percentile_cont(0.5) WITHIN GROUP (ORDER BY tps) AS tps_p50,
          percentile_cont(0.5) WITHIN GROUP (ORDER BY prompt_tokens) AS prompt_p50
   FROM a GROUP BY user_id
@@ -220,7 +221,7 @@ WITH a AS (
 SELECT ids.user_id, u.name, u.email,
        coalesce(au.answers, 0) AS answers, coalesce(au.failed, 0) AS failed, coalesce(au.no_web, 0) AS no_web,
        coalesce(au.chats, 0) AS chats,
-       au.model_p50, au.tps_p50, au.prompt_p50,
+       au.model_p75, au.tps_p50, au.prompt_p50,
        coalesce(qu.questions, 0) AS questions, coalesce(qu.regenerated, 0) AS regenerated,
        coalesce(qu.at_limit, 0) AS at_limit, coalesce(fu.up, 0) AS up, coalesce(fu.down, 0) AS down
 FROM ids LEFT JOIN "user" u ON u.id = ids.user_id
@@ -259,13 +260,14 @@ PAGE = """<!doctype html>
   <p class="muted">NAV</p>
   <div class="tiles">TILES</div>
   <div class="wrap"><table>
-    <thead><tr><th>Day (UTC)</th><th>Answers</th><th>Failed</th><th>No web</th><th>Answer p50</th><th>Answer p90</th>
+    <thead><tr><th>Day (UTC)</th><th>Answers</th><th>Failed</th><th>No web</th><th title="3 in 4 answers were at least this fast">Answer p75 ⓘ</th><th title="90th percentile: 1 in 10 answers took at least this long">Answer p90 (slowest 10%) ⓘ</th>
       <th>Prompt tokens</th><th>Tokens/s</th><th>Questions</th><th>Regenerated</th><th>At limit</th>
       <th>👍</th><th>👎</th></tr></thead>
     <tbody>ROWS</tbody>
   </table></div>
   <p class="muted">Answer = Ollama's own time for the answer (reading the prompt + writing); web search and
-    embedding come on top and aren't recorded per answer. Prompt tokens and tokens/s are medians. Regenerated = questions with more than
+    embedding come on top and aren't recorded per answer. p75 = 3 in 4 answers were at least this fast; p90 =
+    1 in 10 answers took at least this long (90th percentile). Prompt tokens and tokens/s are medians. Regenerated = questions with more than
     one answer from the same model; at limit = 3 or more. No web = answers (not failed) without web search
     sources: the search found nothing, or a greeting/poem that needed none. 👎 details:
     <a href="/api/v1/feedback-review">Feedback Review</a>. <a href="/">Back to Open WebUI</a></p>
@@ -297,7 +299,7 @@ REVISIONS_PAGE = """<!doctype html>
   <h1>KPI by settings revision</h1>
   <p class="muted">NAV</p>
   <div class="wrap"><table>
-    <thead><tr><th>Revision</th><th>Live (UTC)</th><th>Answers</th><th>Failed</th><th>No web</th><th>Answer p50</th><th>Answer p90</th>
+    <thead><tr><th>Revision</th><th>Live (UTC)</th><th>Answers</th><th>Failed</th><th>No web</th><th title="3 in 4 answers were at least this fast">Answer p75 ⓘ</th><th title="90th percentile: 1 in 10 answers took at least this long">Answer p90 (slowest 10%) ⓘ</th>
       <th>Prompt tokens</th><th>Tokens/s</th><th>Regenerated</th><th>👍 share</th></tr></thead>
     <tbody>ROWS</tbody>
   </table></div>
@@ -330,7 +332,7 @@ USERS_PAGE = """<!doctype html>
   <h1>TITLE</h1>
   <p class="muted">NAV</p>
   <div class="wrap"><table>
-    <thead><tr><th>Person</th><th>Chats</th><th>Questions</th><th>Answers</th><th>Failed</th><th>No web</th><th>Answer p50</th>
+    <thead><tr><th>Person</th><th>Chats</th><th>Questions</th><th>Answers</th><th>Failed</th><th>No web</th><th title="3 in 4 answers were at least this fast">Answer p75 ⓘ</th>
       <th>Prompt tokens</th><th>Tokens/s</th><th>Regenerated</th><th>At limit</th><th>👍</th><th>👎</th></tr></thead>
     <tbody>ROWS</tbody>
   </table></div>
@@ -338,6 +340,55 @@ USERS_PAGE = """<!doctype html>
     period; ratings count for whoever gave them. Deleted people show their id. <a href="/">Back to Open WebUI</a></p>
 </main></body></html>
 """
+
+
+# On phones every table row becomes a card of "label  value" lines, labels copied from the header.
+MOBILE_CSS = """
+  @media (max-width:640px){
+    body{padding:16px 12px}h1{font-size:22px}
+    .wrap{background:none;box-shadow:none;overflow:visible}
+    table,tbody,tr,td{display:block}thead{display:none}
+    tr{background:#fff;border-radius:12px;box-shadow:0 1px 3px rgba(0,0,0,.08);margin-bottom:12px;padding:4px 14px}
+    td,td:first-child{text-align:right;white-space:normal;min-width:0;padding:7px 0}
+    td::before{content:attr(data-label);float:left;color:#777;padding-right:12px;text-align:left}
+    td:first-child{text-align:left;font-weight:600;font-size:16px}
+    td:first-child::before,td[colspan]::before{content:none}
+    td:last-child{border-bottom:0}
+    tr.live{box-shadow:0 0 0 2px #4a90d9}
+  }
+  @media (max-width:640px) and (prefers-color-scheme:dark){tr{background:#1c1c1e}td::before{color:#999}}
+"""
+MOBILE_JS = """<script>
+  for (const t of document.querySelectorAll('table')) {
+    const labels = [...t.querySelectorAll('thead th')].map(th => th.textContent.replace('ⓘ', '').trim());
+    for (const tr of t.querySelectorAll('tbody tr'))
+      [...tr.children].forEach((td, i) => { if (labels[i]) td.dataset.label = labels[i]; });
+  }
+</script>"""
+# Targets for this laptop (CPU-only, 3B model), set 2026-10-04 from the first days' numbers
+# (p50 38 s, p75 60 s, p90 90 s, 12 tokens/s, ~2,000 prompt tokens).
+BENCHMARKS = """<h2>Benchmarks</h2>
+  <div class="wrap"><table>
+    <thead><tr><th>Measure</th><th>Good</th><th>Look into it when</th></tr></thead>
+    <tbody>
+      <tr><td>Failed</td><td>under 2%</td><td>above 5%: check open-webui's log</td></tr>
+      <tr><td>No web</td><td>under 10%</td><td>above 20%: search engines blocked, check SearXNG</td></tr>
+      <tr><td>Answer p75</td><td>60 s or less</td><td>above 90 s</td></tr>
+      <tr><td>Answer p90</td><td>90 s or less</td><td>above 120 s</td></tr>
+      <tr><td>Prompt tokens</td><td>2,500 or less</td><td>above 3,500: too many search chunks</td></tr>
+      <tr><td>Tokens/s</td><td>10 or more</td><td>below 8: laptop busy or hot</td></tr>
+      <tr><td>Regenerated</td><td>under 15%</td><td>above 25%: answers getting worse</td></tr>
+      <tr><td>At limit</td><td>0–1 a week</td><td>several a week</td></tr>
+      <tr><td>👍 share</td><td>80% or more</td><td>below 60%: read Feedback Review</td></tr>
+    </tbody>
+  </table></div>
+  <p class="muted">Answer times are Ollama's only; the wait in the chat is 20–100 s longer (web search and reading the pages).</p>
+"""
+PAGE, REVISIONS_PAGE, USERS_PAGE = (
+    p.replace("</style>", MOBILE_CSS + "h2{font-size:18px;margin:28px 0 10px}</style>")
+    .replace("</main>", BENCHMARKS + "</main>" + MOBILE_JS)
+    for p in (PAGE, REVISIONS_PAGE, USERS_PAGE)
+)
 
 
 def _secs(value) -> str:
@@ -359,6 +410,28 @@ def _delta(new, old, unit: str = "", lower_is_better: bool = True, digits: int =
     return f"<small class='{'better' if better else 'worse'}'>{diff:+.{digits}f}{unit}</small>"
 
 
+# Counters start here: earlier answers came from test accounts and settings that kept changing.
+# Move it forward to start from zero again (UTC date).
+COUNT_FROM = "2026-10-04"
+
+
+def _since(days: int | None) -> int:
+    """Start of the period: the last `days` days, but never before COUNT_FROM; no days = COUNT_FROM."""
+    start = calendar.timegm(time.strptime(COUNT_FROM, "%Y-%m-%d"))
+    return max(start, int(time.time()) - days * DAY) if days else start
+
+
+def _period(days: int | None) -> str:
+    return (f"Last {days} days (not before {COUNT_FROM})" if days else f"Since {COUNT_FROM}")
+
+
+def _period_links(days: int | None, link) -> str:
+    return " ".join(
+        (f"<b>{label}</b>" if d == days else link(label, d=d))
+        for d, label in [(None, "All")] + [(d, f"{d}d") for d in (1, 7, 14, 30)]
+    )
+
+
 def _ratio(part: int, whole: int):
     return None if not whole else 100 * part / whole
 
@@ -378,12 +451,12 @@ class Event:
     def __init__(self):
         self.valves = self.Valves()
 
-    async def _data(self, days: int, model: str | None) -> dict:
-        params = {"since": int(time.time()) - days * DAY, "model": model}
+    async def _data(self, days: int | None, model: str | None) -> dict:
+        params = {"since": _since(days), "model": model}
         async with get_async_db_context() as session:
             answer_rows = (await session.execute(text(ANSWERS_SQL), params)).mappings().all()
             feedback_rows = (await session.execute(text(FEEDBACK_SQL), params)).mappings().all()
-            model_p50, model_p90, prompt_p50 = (await session.execute(text(TOTALS_SQL), params)).one()
+            model_p75, model_p90, prompt_p50 = (await session.execute(text(TOTALS_SQL), params)).one()
             models = [r[0] for r in (await session.execute(text(MODELS_SQL), params)).all()]
 
         by_day: dict[str, dict] = {}
@@ -391,7 +464,7 @@ class Event:
             by_day[r["day"]] = {**dict(r), "up": 0, "down": 0}
         for r in feedback_rows:
             row = by_day.setdefault(r["day"], {
-                "day": r["day"], "answers": 0, "failed": 0, "no_web": 0, "model_p50": None, "model_p90": None,
+                "day": r["day"], "answers": 0, "failed": 0, "no_web": 0, "model_p75": None, "model_p90": None,
                 "tps_p50": None, "prompt_p50": None, "questions": 0, "regenerated": 0, "at_limit": 0,
             })
             row["up"], row["down"] = r["up"], r["down"]
@@ -402,9 +475,9 @@ class Event:
             "answers": total("answers"), "failed": total("failed"), "no_web": total("no_web"), "questions": total("questions"),
             "regenerated": total("regenerated"), "at_limit": total("at_limit"),
             "up": total("up"), "down": total("down"),
-            "model_p50": model_p50, "model_p90": model_p90, "prompt_p50": prompt_p50,
+            "model_p75": model_p75, "model_p90": model_p90, "prompt_p50": prompt_p50,
         }
-        return {"days": days, "model": model, "models": models, "totals": totals, "daily": rows}
+        return {"days": days, "since": params["since"], "model": model, "models": models, "totals": totals, "daily": rows}
 
     async def _revisions(self, model: str | None) -> list[dict]:
         async with get_async_db_context() as session:
@@ -438,7 +511,7 @@ class Event:
                 name, live, str(r["answers"]),
                 fmt(fail, "{:.0f}%") + _delta(fail, pfail, " pt"),
                 fmt(noweb, "{:.0f}%") + _delta(noweb, pnoweb, " pt"),
-                _secs(r["model_p50"]) + _delta(r["model_p50"], p.get("model_p50"), " s"),
+                _secs(r["model_p75"]) + _delta(r["model_p75"], p.get("model_p75"), " s"),
                 _secs(r["model_p90"]) + _delta(r["model_p90"], p.get("model_p90"), " s"),
                 fmt(r["prompt_p50"], "{:.0f}") + _delta(r["prompt_p50"], p.get("prompt_p50")),
                 fmt(r["tps_p50"], "{:.1f}") + _delta(r["tps_p50"], p.get("tps_p50"), lower_is_better=False, digits=1),
@@ -464,18 +537,18 @@ class Event:
         page = REVISIONS_PAGE.replace("NAV", nav).replace("ROWS", "".join(body) or empty)
         return HTMLResponse(page, headers={"Cache-Control": "no-store"})
 
-    async def _users_page(self, days: int, model: str | None, format: str, uid: str | None = None):
+    async def _users_page(self, days: int | None, model: str | None, format: str, uid: str | None = None):
         """Per-person table; with `uid`, only that person's own row (the ?view=me page)."""
         view = "me" if uid else "users"
-        params = {"since": int(time.time()) - days * DAY, "model": model, "uid": uid}
+        params = {"since": _since(days), "model": model, "uid": uid}
         async with get_async_db_context() as session:
             rows = [dict(r) for r in (await session.execute(text(USERS_SQL), params)).mappings().all()]
             models = [r[0] for r in (await session.execute(text(MODELS_SQL), params)).all()]
         if format == "json":
-            return JSONResponse({"days": days, "model": model, "users": rows}, headers={"Cache-Control": "no-store"})
+            return JSONResponse({"days": days, "since": params["since"], "model": model, "users": rows}, headers={"Cache-Control": "no-store"})
         if uid and not rows:
             rows = [{"user_id": uid, "name": None, "email": None, "chats": 0, "questions": 0, "answers": 0, "failed": 0,
-                     "no_web": 0, "model_p50": None, "prompt_p50": None, "tps_p50": None, "regenerated": 0,
+                     "no_web": 0, "model_p75": None, "prompt_p50": None, "tps_p50": None, "regenerated": 0,
                      "at_limit": 0, "up": 0, "down": 0}]
 
         fmt = lambda v, f: "—" if v is None else f.format(v)
@@ -485,24 +558,23 @@ class Event:
                     + (f"<small>{html.escape(r['email'])}</small>" if r["email"] else ""))
             cells = [
                 name, r["chats"], r["questions"], r["answers"], _pct(r["failed"], r["answers"]),
-                _pct(r["no_web"], r["answers"]), _secs(r["model_p50"]), fmt(r["prompt_p50"], "{:.0f}"), fmt(r["tps_p50"], "{:.1f}"),
+                _pct(r["no_web"], r["answers"]), _secs(r["model_p75"]), fmt(r["prompt_p50"], "{:.0f}"), fmt(r["tps_p50"], "{:.1f}"),
                 _pct(r["regenerated"], r["questions"]), r["at_limit"], r["up"], r["down"],
             ]
             body.append("<tr>" + "".join(f"<td>{c}</td>" for c in cells) + "</tr>")
 
-        def link(label: str, d: int = days, m: str | None = model, fmt: str = "") -> str:
-            query = f"view={view}&days={d}" + (f"&model={html.escape(m, quote=True)}" if m else "") + fmt
+        def link(label: str, d: int | None = days, m: str | None = model, fmt: str = "") -> str:
+            query = f"view={view}" + (f"&days={d}" if d else "") + (f"&model={html.escape(m, quote=True)}" if m else "") + fmt
             return f"<a href='{PAGE_PATH}?{query}'>{html.escape(label)}</a>"
 
         nav = (
-            f"Last {days} days · {html.escape(model or 'all models')}. Period: "
-            + " ".join(link(f"{d}d", d=d) if d != days else f"<b>{d}d</b>" for d in (7, 14, 30, 90))
+            f"{_period(days)} · {html.escape(model or 'all models')}. Period: " + _period_links(days, link)
             + " · Model: " + " ".join(
                 [link("all", m=None) if model else "<b>all</b>"]
                 + [link(m, m=m) if m != model else f"<b>{html.escape(m)}</b>" for m in models]
             )
             + " · " + link("JSON", fmt="&format=json")
-            + ("" if uid else f" · <a href='{PAGE_PATH}?days={days}'>By day</a>")
+            + ("" if uid else f" · <a href='{PAGE_PATH}" + (f"?days={days}" if days else "") + "'>By day</a>")
         )
         title, note = (("My usage", "Only your own chats and ratings.") if uid
                        else ("KPI by person", "Admins and the person-view group only."))
@@ -523,7 +595,7 @@ class Event:
     async def _may_view_people(self, user) -> bool:
         return user.role == "admin" or await self._in_group(user, self.valves.person_view_group)
 
-    async def _page(self, request: Request, days: int = 14, model: str | None = None, format: str = "html",
+    async def _page(self, request: Request, days: int | None = None, model: str | None = None, format: str = "html",
                     view: str = "days"):
         user = await get_optional_verified_user_from_request(request)
         if user is None:
@@ -532,7 +604,7 @@ class Event:
             # Signed out (e.g. a phone without a session): sign in, then come back here.
             target = request.url.path + (f"?{request.url.query}" if request.url.query else "")
             return RedirectResponse(f"/auth?redirect={quote(target, safe='')}", status_code=303)
-        days = max(1, min(days, 365))
+        days = max(1, min(days, 365)) if days else None
         model = model or None
         if view == "me":  # every signed-in person, own numbers only
             return await self._users_page(days, model, format, uid=user.id)
@@ -555,8 +627,8 @@ class Event:
 
         t = data["totals"]
         tiles = [
-            ("Answer p50", _secs(t["model_p50"])),
-            ("Answer p90", _secs(t["model_p90"])),
+            ("Answer p75 (3 in 4 faster)", _secs(t["model_p75"])),
+            ("Answer p90 (slowest 10%)", _secs(t["model_p90"])),
             ("Prompt tokens", "—" if t["prompt_p50"] is None else f"{t['prompt_p50']:.0f}"),
             ("Answers", str(t["answers"])),
             ("Failed", _pct(t["failed"], t["answers"])),
@@ -569,19 +641,18 @@ class Event:
         body = []
         for r in data["daily"]:
             cells = [
-                r["day"], r["answers"], r["failed"], _pct(r["no_web"], r["answers"]), _secs(r["model_p50"]), _secs(r["model_p90"]),
+                r["day"], r["answers"], r["failed"], _pct(r["no_web"], r["answers"]), _secs(r["model_p75"]), _secs(r["model_p90"]),
                 "—" if r["prompt_p50"] is None else f"{r['prompt_p50']:.0f}", "—" if r["tps_p50"] is None else f"{r['tps_p50']:.1f}",
                 r["questions"], _pct(r["regenerated"], r["questions"]), r["at_limit"], r["up"], r["down"],
             ]
             body.append("<tr>" + "".join(f"<td>{html.escape(str(c))}</td>" for c in cells) + "</tr>")
 
-        def link(label: str, d: int = days, m: str | None = model, fmt: str = "") -> str:
-            query = f"days={d}" + (f"&model={html.escape(m, quote=True)}" if m else "") + fmt
-            return f"<a href='{PAGE_PATH}?{query}'>{html.escape(label)}</a>"
+        def link(label: str, d: int | None = days, m: str | None = model, fmt: str = "") -> str:
+            query = ((f"&days={d}" if d else "") + (f"&model={html.escape(m, quote=True)}" if m else "") + fmt).lstrip("&")
+            return f"<a href='{PAGE_PATH}" + (f"?{query}" if query else "") + f"'>{html.escape(label)}</a>"
 
         nav = (
-            f"Last {days} days · {html.escape(model or 'all models')}. Period: "
-            + " ".join(link(f"{d}d", d=d) if d != days else f"<b>{d}d</b>" for d in (7, 14, 30, 90))
+            f"{_period(days)} · {html.escape(model or 'all models')}. Period: " + _period_links(days, link)
             + " · Model: " + " ".join(
                 [link("all", m=None) if model else "<b>all</b>"]
                 + [link(m, m=m) if m != model else f"<b>{html.escape(m)}</b>" for m in data["models"]]
@@ -589,7 +660,7 @@ class Event:
             + " · " + link("JSON", fmt="&format=json")
             + f" · <a href='{PAGE_PATH}?view=revisions" + (f"&model={html.escape(model, quote=True)}" if model else "")
             + "'>By settings revision</a>"
-            + (f" · <a href='{PAGE_PATH}?view=users&days={days}" + (f"&model={html.escape(model, quote=True)}" if model else "")
+            + (f" · <a href='{PAGE_PATH}?view=users" + (f"&days={days}" if days else "") + (f"&model={html.escape(model, quote=True)}" if model else "")
                + "'>By person</a>" if await self._may_view_people(user) else "")
         )
         page = (PAGE.replace("NAV", nav).replace("TILES", tiles_html)
