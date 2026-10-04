@@ -13,12 +13,14 @@ routes, so it registers one page on Open WebUI's app, for admins and one group:
   GET /api/v1/kpi?days=30                 last 30 days (1-365)
   GET /api/v1/kpi?model=fast-ai:latest    one model only
   GET /api/v1/kpi?view=revisions          one row per settings revision instead of per day
+  GET /api/v1/kpi?view=users              one row per person (admins + `person_view_group`; takes days/model)
   ...&format=json                         the same as JSON
 
 Admins can always open it; other signed-in users only if they're in the Open WebUI group named by
 the `viewer_group` Valve (default "kpi-viewers", matched case-insensitively; Admin → Users → Groups),
-otherwise 403. Empty Valve = admins only. Uses Open WebUI's get_verified_user, which accepts the
-browser's login cookie, so it opens straight from the address bar. The page shows only daily totals
+otherwise 403. Empty Valve = admins only. Uses Open WebUI's get_optional_verified_user_from_request,
+which accepts the browser's login cookie, so it opens straight from the address bar; signed-out
+browsers are sent to /auth?redirect=<this page> (JSON requests get 401 instead). The page shows only daily totals
 and medians (no questions, answers, names or comments), but on a quiet day small counts can hint at
 who asked or rated. Feedback Review stays admin-only. Read-only: it changes nothing.
 
@@ -48,16 +50,17 @@ usage JSON Ollama fills): re-check the page after bumping the pinned image.
 import html
 import logging
 import time
+from urllib.parse import quote
 
-from fastapi import Depends, HTTPException
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi import HTTPException, Request
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.routing import APIRoute
 from pydantic import BaseModel, Field
 from sqlalchemy import text
 
 from open_webui.internal.db import get_async_db_context
 from open_webui.models.groups import Groups
-from open_webui.utils.auth import get_verified_user
+from open_webui.utils.auth import get_optional_verified_user_from_request
 
 log = logging.getLogger("kpi_dashboard")
 
@@ -168,6 +171,48 @@ WHERE r.r_id <> 0 OR ar.answers IS NOT NULL OR fr.up + fr.down > 0
 ORDER BY r.started_at DESC, r.r_id DESC
 """
 
+# Same metrics per person (the chat's owner), plus how many chats they used. Ratings by who gave them.
+USERS_SQL = """
+WITH a AS (
+  SELECT c.user_id, m.chat_id, m.parent_id, m.model_id,
+         m.error IS NOT NULL AND m.error::text <> 'null' AS failed,
+         (m.usage->>'total_duration')::float8 / 1e9 AS model_secs,
+         (m.usage->>'response_token/s')::float8 AS tps,
+         (m.usage->>'prompt_tokens')::float8 AS prompt_tokens
+  FROM chat_message m JOIN chat c ON c.id = m.chat_id
+  WHERE m.role = 'assistant' AND m.created_at >= :since
+    AND (CAST(:model AS text) IS NULL OR m.model_id = :model)
+), q AS (
+  SELECT user_id, count(*) AS answers FROM a WHERE parent_id IS NOT NULL GROUP BY user_id, parent_id, model_id
+), au AS (
+  SELECT user_id, count(*) AS answers, count(*) FILTER (WHERE failed) AS failed,
+         count(DISTINCT chat_id) AS chats,
+         percentile_cont(0.5) WITHIN GROUP (ORDER BY model_secs) AS model_p50,
+         percentile_cont(0.5) WITHIN GROUP (ORDER BY tps) AS tps_p50,
+         percentile_cont(0.5) WITHIN GROUP (ORDER BY prompt_tokens) AS prompt_p50
+  FROM a GROUP BY user_id
+), qu AS (
+  SELECT user_id, count(*) AS questions, count(*) FILTER (WHERE answers > 1) AS regenerated,
+         count(*) FILTER (WHERE answers >= 3) AS at_limit
+  FROM q GROUP BY user_id
+), fu AS (
+  SELECT user_id, count(*) FILTER (WHERE (data->>'rating')::int > 0) AS up,
+         count(*) FILTER (WHERE (data->>'rating')::int < 0) AS down
+  FROM feedback
+  WHERE type = 'rating' AND created_at >= :since
+    AND (CAST(:model AS text) IS NULL OR data->>'model_id' = :model)
+  GROUP BY user_id
+), ids AS (SELECT user_id FROM au UNION SELECT user_id FROM fu)
+SELECT ids.user_id, u.name, u.email,
+       coalesce(au.answers, 0) AS answers, coalesce(au.failed, 0) AS failed, coalesce(au.chats, 0) AS chats,
+       au.model_p50, au.tps_p50, au.prompt_p50,
+       coalesce(qu.questions, 0) AS questions, coalesce(qu.regenerated, 0) AS regenerated,
+       coalesce(qu.at_limit, 0) AS at_limit, coalesce(fu.up, 0) AS up, coalesce(fu.down, 0) AS down
+FROM ids LEFT JOIN "user" u ON u.id = ids.user_id
+LEFT JOIN au USING (user_id) LEFT JOIN qu USING (user_id) LEFT JOIN fu USING (user_id)
+ORDER BY coalesce(qu.questions, 0) DESC, u.name
+"""
+
 MODELS_SQL = """
 SELECT DISTINCT model_id FROM chat_message
 WHERE role = 'assistant' AND model_id IS NOT NULL AND created_at >= :since ORDER BY 1
@@ -246,6 +291,37 @@ REVISIONS_PAGE = """<!doctype html>
 """
 
 
+USERS_PAGE = """<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>KPI by person</title>
+<style>
+  body{font-family:system-ui,sans-serif;background:#f6f6f7;color:#1c1c1e;margin:0;padding:24px 16px}
+  main{max-width:1200px;margin:0 auto}
+  .wrap{overflow-x:auto;background:#fff;border-radius:12px;box-shadow:0 1px 3px rgba(0,0,0,.08)}
+  table{border-collapse:collapse;width:100%;font-size:14px}
+  th,td{padding:8px 10px;text-align:right;border-bottom:1px solid #eee;white-space:nowrap;font-variant-numeric:tabular-nums}
+  th:first-child,td:first-child{text-align:left}
+  th{font-weight:600;color:#555}
+  small{display:block;color:#777;font-size:12px}
+  .muted{color:#777;font-size:13px}
+  a{color:inherit}
+  @media (prefers-color-scheme:dark){
+    body{background:#111;color:#eee}.wrap{background:#1c1c1e}th,td{border-color:#2c2c2e}th{color:#aaa}small,.muted{color:#999}}
+</style></head>
+<body><main>
+  <h1>KPI by person</h1>
+  <p class="muted">NAV</p>
+  <div class="wrap"><table>
+    <thead><tr><th>Person</th><th>Chats</th><th>Questions</th><th>Answers</th><th>Failed</th><th>Answer p50</th>
+      <th>Prompt tokens</th><th>Tokens/s</th><th>Regenerated</th><th>At limit</th><th>👍</th><th>👎</th></tr></thead>
+    <tbody>ROWS</tbody>
+  </table></div>
+  <p class="muted">Admins and the person-view group only. Answers count for the chat's owner; Chats = chats with at least one answer in the
+    period; ratings count for whoever gave them. Deleted people show their id. <a href="/">Back to Open WebUI</a></p>
+</main></body></html>
+"""
+
+
 def _secs(value) -> str:
     return "—" if value is None else f"{value:.0f} s"
 
@@ -274,6 +350,11 @@ class Event:
         viewer_group: str = Field(
             default="kpi-viewers",
             description="Open WebUI group whose members may open the page besides admins (empty = admins only).",
+        )
+        person_view_group: str = Field(
+            default="kpi-person-viewers",
+            description="Open WebUI group whose members may also open the per-person view, which shows names and "
+                        "emails (empty = admins only).",
         )
 
     def __init__(self):
@@ -363,20 +444,74 @@ class Event:
         page = REVISIONS_PAGE.replace("NAV", nav).replace("ROWS", "".join(body) or empty)
         return HTMLResponse(page, headers={"Cache-Control": "no-store"})
 
-    async def _may_view(self, user) -> bool:
-        if user.role == "admin":
-            return True
-        wanted = self.valves.viewer_group.strip().lower()
+    async def _users_page(self, days: int, model: str | None, format: str):
+        params = {"since": int(time.time()) - days * DAY, "model": model}
+        async with get_async_db_context() as session:
+            rows = [dict(r) for r in (await session.execute(text(USERS_SQL), params)).mappings().all()]
+            models = [r[0] for r in (await session.execute(text(MODELS_SQL), params)).all()]
+        if format == "json":
+            return JSONResponse({"days": days, "model": model, "users": rows}, headers={"Cache-Control": "no-store"})
+
+        fmt = lambda v, f: "—" if v is None else f.format(v)
+        body = []
+        for r in rows:
+            name = (f"{html.escape(r['name'] or r['user_id'])}"
+                    + (f"<small>{html.escape(r['email'])}</small>" if r["email"] else ""))
+            cells = [
+                name, r["chats"], r["questions"], r["answers"], _pct(r["failed"], r["answers"]),
+                _secs(r["model_p50"]), fmt(r["prompt_p50"], "{:.0f}"), fmt(r["tps_p50"], "{:.1f}"),
+                _pct(r["regenerated"], r["questions"]), r["at_limit"], r["up"], r["down"],
+            ]
+            body.append("<tr>" + "".join(f"<td>{c}</td>" for c in cells) + "</tr>")
+
+        def link(label: str, d: int = days, m: str | None = model, fmt: str = "") -> str:
+            query = f"view=users&days={d}" + (f"&model={html.escape(m, quote=True)}" if m else "") + fmt
+            return f"<a href='{PAGE_PATH}?{query}'>{html.escape(label)}</a>"
+
+        nav = (
+            f"Last {days} days · {html.escape(model or 'all models')}. Period: "
+            + " ".join(link(f"{d}d", d=d) if d != days else f"<b>{d}d</b>" for d in (7, 14, 30, 90))
+            + " · Model: " + " ".join(
+                [link("all", m=None) if model else "<b>all</b>"]
+                + [link(m, m=m) if m != model else f"<b>{html.escape(m)}</b>" for m in models]
+            )
+            + " · " + link("JSON", fmt="&format=json")
+            + f" · <a href='{PAGE_PATH}?days={days}'>By day</a>"
+        )
+        page = (USERS_PAGE.replace("NAV", nav)
+                .replace("ROWS", "".join(body) or '<tr><td colspan="12">No answers in this period.</td></tr>'))
+        return HTMLResponse(page, headers={"Cache-Control": "no-store"})
+
+    async def _in_group(self, user, group: str) -> bool:
+        wanted = group.strip().lower()
         if not wanted:
             return False
         return any(g.name.strip().lower() == wanted for g in await Groups.get_groups_by_member_id(user.id))
 
-    async def _page(self, days: int = 14, model: str | None = None, format: str = "html", view: str = "days",
-                    user=Depends(get_verified_user)):
+    async def _may_view(self, user) -> bool:
+        return (user.role == "admin" or await self._in_group(user, self.valves.viewer_group)
+                or await self._in_group(user, self.valves.person_view_group))
+
+    async def _may_view_people(self, user) -> bool:
+        return user.role == "admin" or await self._in_group(user, self.valves.person_view_group)
+
+    async def _page(self, request: Request, days: int = 14, model: str | None = None, format: str = "html",
+                    view: str = "days"):
+        user = await get_optional_verified_user_from_request(request)
+        if user is None:
+            if format == "json":
+                raise HTTPException(status_code=401, detail="Not authenticated")
+            # Signed out (e.g. a phone without a session): sign in, then come back here.
+            target = request.url.path + (f"?{request.url.query}" if request.url.query else "")
+            return RedirectResponse(f"/auth?redirect={quote(target, safe='')}", status_code=303)
         if not await self._may_view(user):
             raise HTTPException(status_code=403, detail="Only admins and the KPI viewer group can open this page.")
         days = max(1, min(days, 365))
         model = model or None
+        if view == "users":
+            if not await self._may_view_people(user):
+                raise HTTPException(status_code=403, detail="The per-person view is for admins and the person-view group only.")
+            return await self._users_page(days, model, format)
         if view == "revisions":
             revs = await self._revisions(model)
             if format == "json":
@@ -423,6 +558,8 @@ class Event:
             + " · " + link("JSON", fmt="&format=json")
             + f" · <a href='{PAGE_PATH}?view=revisions" + (f"&model={html.escape(model, quote=True)}" if model else "")
             + "'>By settings revision</a>"
+            + (f" · <a href='{PAGE_PATH}?view=users&days={days}" + (f"&model={html.escape(model, quote=True)}" if model else "")
+               + "'>By person</a>" if await self._may_view_people(user) else "")
         )
         page = (PAGE.replace("NAV", nav).replace("TILES", tiles_html)
                 .replace("ROWS", "".join(body) or '<tr><td colspan="12">No answers in this period.</td></tr>'))
