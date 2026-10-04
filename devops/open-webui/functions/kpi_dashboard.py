@@ -26,7 +26,7 @@ and medians (no questions, answers, names or comments), but on a quiet day small
 who asked or rated. Feedback Review stays admin-only. Read-only: it changes nothing.
 
 Metrics (days in UTC, from Open WebUI's own `chat_message` and `feedback` tables):
-- Answer time: Ollama's own `total_duration` for the answer (reading the prompt + writing), median
+- Answer time: Ollama's own `total_duration` for the answer (reading the prompt + writing), p75
   and p90, and its writing speed (`response_token/s`). Query generation, web search and embedding the
   pages come on top and aren't recorded per answer: Open WebUI stores no finish time (`updated_at`
   moves whenever the chat is saved again), so there's no reliable end-to-end wait here.
@@ -231,6 +231,12 @@ ORDER BY coalesce(qu.questions, 0) DESC, u.name
 
 ANSWERS_SQL, REVISIONS_SQL, USERS_SQL = (q.replace("NO_WEB", NO_WEB_SQL) for q in (ANSWERS_SQL, REVISIONS_SQL, USERS_SQL))
 
+# USERS_SQL with everyone in one anonymous row (user_id ''), for comparison under "My usage".
+EVERYONE_SQL = (USERS_SQL.replace("SELECT c.user_id, m.chat_id", "SELECT ''::text AS user_id, m.chat_id")
+                .replace("SELECT user_id, count(*) FILTER (WHERE (data", "SELECT ''::text AS user_id, count(*) FILTER (WHERE (data")
+                .replace("  GROUP BY user_id\n), ids", "  GROUP BY 1\n), ids"))
+assert EVERYONE_SQL.count("''::text AS user_id") == 2 and "GROUP BY 1\n), ids" in EVERYONE_SQL
+
 MODELS_SQL = """
 SELECT DISTINCT model_id FROM chat_message
 WHERE role = 'assistant' AND model_id IS NOT NULL AND created_at >= :since ORDER BY 1
@@ -242,7 +248,7 @@ PAGE = """<!doctype html>
 <style>
   body{font-family:system-ui,sans-serif;background:#f6f6f7;color:#1c1c1e;margin:0;padding:24px 16px}
   main{max-width:1100px;margin:0 auto}
-  .tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin:16px 0}
+  .tiles{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin:16px 0}
   .tile{background:#fff;border-radius:12px;box-shadow:0 1px 3px rgba(0,0,0,.08);padding:12px 14px}
   .tile b{display:block;font-size:22px;font-variant-numeric:tabular-nums}
   .wrap{overflow-x:auto;background:#fff;border-radius:12px;box-shadow:0 1px 3px rgba(0,0,0,.08)}
@@ -260,17 +266,12 @@ PAGE = """<!doctype html>
   <p class="muted">NAV</p>
   <div class="tiles">TILES</div>
   <div class="wrap"><table>
-    <thead><tr><th>Day (UTC)</th><th>Answers</th><th>Failed</th><th>No web</th><th title="3 in 4 answers were at least this fast">Answer p75 ⓘ</th><th title="90th percentile: 1 in 10 answers took at least this long">Answer p90 (slowest 10%) ⓘ</th>
+    <thead><tr><th>Day (UTC)</th><th>Answers</th><th>Failed</th><th>No web</th><th title="75th percentile: 3 in 4 answers took at most this long">Answer p75 ⓘ</th><th title="90th percentile: 9 in 10 answers took at most this long. Answers between p75 and p90 were slower than p75 but still finished within this time; the slowest 1 in 10 took even longer">Answer p90 ⓘ</th>
       <th>Prompt tokens</th><th>Tokens/s</th><th>Questions</th><th>Regenerated</th><th>At limit</th>
       <th>👍</th><th>👎</th></tr></thead>
     <tbody>ROWS</tbody>
   </table></div>
-  <p class="muted">Answer = Ollama's own time for the answer (reading the prompt + writing); web search and
-    embedding come on top and aren't recorded per answer. p75 = 3 in 4 answers were at least this fast; p90 =
-    1 in 10 answers took at least this long (90th percentile). Prompt tokens and tokens/s are medians. Regenerated = questions with more than
-    one answer from the same model; at limit = 3 or more. No web = answers (not failed) without web search
-    sources: the search found nothing, or a greeting/poem that needed none. 👎 details:
-    <a href="/api/v1/feedback-review">Feedback Review</a>. <a href="/">Back to Open WebUI</a></p>
+  <p class="muted">👎 details: <a href="/api/v1/feedback-review">Feedback Review</a>. <a href="/">Back to Open WebUI</a></p>
 </main></body></html>
 """
 
@@ -299,7 +300,7 @@ REVISIONS_PAGE = """<!doctype html>
   <h1>KPI by settings revision</h1>
   <p class="muted">NAV</p>
   <div class="wrap"><table>
-    <thead><tr><th>Revision</th><th>Live (UTC)</th><th>Answers</th><th>Failed</th><th>No web</th><th title="3 in 4 answers were at least this fast">Answer p75 ⓘ</th><th title="90th percentile: 1 in 10 answers took at least this long">Answer p90 (slowest 10%) ⓘ</th>
+    <thead><tr><th>Revision</th><th>Live (UTC)</th><th>Answers</th><th>Failed</th><th>No web</th><th title="75th percentile: 3 in 4 answers took at most this long">Answer p75 ⓘ</th><th title="90th percentile: 9 in 10 answers took at most this long. Answers between p75 and p90 were slower than p75 but still finished within this time; the slowest 1 in 10 took even longer">Answer p90 ⓘ</th>
       <th>Prompt tokens</th><th>Tokens/s</th><th>Regenerated</th><th>👍 share</th></tr></thead>
     <tbody>ROWS</tbody>
   </table></div>
@@ -325,14 +326,16 @@ USERS_PAGE = """<!doctype html>
   small{display:block;color:#777;font-size:12px}
   .muted{color:#777;font-size:13px}
   a{color:inherit}
+  tr.everyone td{background:#f2f2f4}
   @media (prefers-color-scheme:dark){
-    body{background:#111;color:#eee}.wrap{background:#1c1c1e}th,td{border-color:#2c2c2e}th{color:#aaa}small,.muted{color:#999}}
+    body{background:#111;color:#eee}.wrap{background:#1c1c1e}th,td{border-color:#2c2c2e}th{color:#aaa}small,.muted{color:#999}
+    tr.everyone td{background:#242426}}
 </style></head>
 <body><main>
   <h1>TITLE</h1>
   <p class="muted">NAV</p>
   <div class="wrap"><table>
-    <thead><tr><th>Person</th><th>Chats</th><th>Questions</th><th>Answers</th><th>Failed</th><th>No web</th><th title="3 in 4 answers were at least this fast">Answer p75 ⓘ</th>
+    <thead><tr><th>Person</th><th>Chats</th><th>Questions</th><th>Answers</th><th>Failed</th><th>No web</th><th title="75th percentile: 3 in 4 answers took at most this long">Answer p75 ⓘ</th>
       <th>Prompt tokens</th><th>Tokens/s</th><th>Regenerated</th><th>At limit</th><th>👍</th><th>👎</th></tr></thead>
     <tbody>ROWS</tbody>
   </table></div>
@@ -346,6 +349,7 @@ USERS_PAGE = """<!doctype html>
 MOBILE_CSS = """
   @media (max-width:640px){
     body{padding:16px 12px}h1{font-size:22px}
+    .tiles{grid-template-columns:repeat(2,1fr)}
     .wrap{background:none;box-shadow:none;overflow:visible}
     table,tbody,tr,td{display:block}thead{display:none}
     tr{background:#fff;border-radius:12px;box-shadow:0 1px 3px rgba(0,0,0,.08);margin-bottom:12px;padding:4px 14px}
@@ -368,24 +372,27 @@ MOBILE_JS = """<script>
 # Targets for this laptop (CPU-only, 3B model), set 2026-10-04 from the first days' numbers
 # (p50 38 s, p75 60 s, p90 90 s, 12 tokens/s, ~2,000 prompt tokens).
 BENCHMARKS = """<h2>Benchmarks</h2>
-  <div class="wrap"><table>
-    <thead><tr><th>Measure</th><th>Good</th><th>Look into it when</th></tr></thead>
+  <p class="muted">There are no automatic alerts: the admin checks this page (about once a week) and acts
+    on anything in the "Review when" column.</p>
+  <div class="wrap"><table class="bench">
+    <thead><tr><th>Measure</th><th>Good</th><th>Review when</th><th>What it means</th></tr></thead>
     <tbody>
-      <tr><td>Failed</td><td>under 2%</td><td>above 5%: check open-webui's log</td></tr>
-      <tr><td>No web</td><td>under 10%</td><td>above 20%: search engines blocked, check SearXNG</td></tr>
-      <tr><td>Answer p75</td><td>60 s or less</td><td>above 90 s</td></tr>
-      <tr><td>Answer p90</td><td>90 s or less</td><td>above 120 s</td></tr>
-      <tr><td>Prompt tokens</td><td>2,500 or less</td><td>above 3,500: too many search chunks</td></tr>
-      <tr><td>Tokens/s</td><td>10 or more</td><td>below 8: laptop busy or hot</td></tr>
-      <tr><td>Regenerated</td><td>under 15%</td><td>above 25%: answers getting worse</td></tr>
-      <tr><td>At limit</td><td>0–1 a week</td><td>several a week</td></tr>
-      <tr><td>👍 share</td><td>80% or more</td><td>below 60%: read Feedback Review</td></tr>
+      <tr><td>Failed</td><td>&lt; 2%</td><td>&gt; 5%</td><td>Answers that ended in an error instead of text.</td></tr>
+      <tr><td>No web</td><td>&lt; 10%</td><td>&gt; 20%</td><td>Answers written without web sources: the search found nothing usable (often blocked search engines), or the message needed no search (a greeting).</td></tr>
+      <tr><td>Answer p75</td><td>≤ 60 s</td><td>&gt; 90 s</td><td>3 in 4 answers took at most this long to write.</td></tr>
+      <tr><td>Answer p90</td><td>≤ 90 s</td><td>&gt; 120 s</td><td>9 in 10 answers took at most this long. Answers between p75 and p90 were slower than p75 but still finished within this time; the slowest 10% took even longer.</td></tr>
+      <tr><td>Prompt tokens</td><td>≤ 2,500</td><td>&gt; 3,500</td><td>Typical size of what the model reads per answer, mostly the web pages. Bigger means slower.</td></tr>
+      <tr><td>Tokens/s</td><td>≥ 10</td><td>&lt; 8</td><td>How fast the model writes. Drops when the laptop is busy or hot.</td></tr>
+      <tr><td>Regenerated</td><td>&lt; 15%</td><td>&gt; 25%</td><td>Questions where the person asked for another answer, usually because the first was poor.</td></tr>
+      <tr><td>At limit (7 days)</td><td>≤ 2</td><td>&gt; 5</td><td>Questions that used all 3 answers, added up over 7 days (the 7d view's total).</td></tr>
+      <tr><td>👍 share</td><td>≥ 80%</td><td>&lt; 60%</td><td>Share of ratings that were 👍. The 👎 comments are on Feedback Review.</td></tr>
     </tbody>
   </table></div>
-  <p class="muted">Answer times are Ollama's only; the wait in the chat is 20–100 s longer (web search and reading the pages).</p>
+  <p class="muted">&lt; less than, &gt; more than, ≤ at most, ≥ at least. Answer times are Ollama's only; the wait in the chat is 20–100 s longer (web search and reading the pages).</p>
 """
 PAGE, REVISIONS_PAGE, USERS_PAGE = (
-    p.replace("</style>", MOBILE_CSS + "h2{font-size:18px;margin:28px 0 10px}</style>")
+    p.replace("</style>", MOBILE_CSS + "h2{font-size:18px;margin:28px 0 10px}"
+               "@media (min-width:641px){.bench td{white-space:normal}.bench td:last-child{text-align:left;min-width:260px}}</style>")
     .replace("</main>", BENCHMARKS + "</main>" + MOBILE_JS)
     for p in (PAGE, REVISIONS_PAGE, USERS_PAGE)
 )
@@ -539,8 +546,15 @@ class Event:
         async with get_async_db_context() as session:
             rows = [dict(r) for r in (await session.execute(text(USERS_SQL), params)).mappings().all()]
             models = [r[0] for r in (await session.execute(text(MODELS_SQL), params)).all()]
+            everyone = None
+            if uid:  # everyone's numbers in one row, no names, to compare one's own against
+                everyone = (await session.execute(text(EVERYONE_SQL), {**params, "uid": None})).mappings().first()
+                everyone = {k: v for k, v in dict(everyone).items() if k not in ("user_id", "name", "email")} if everyone else None
         if format == "json":
-            return JSONResponse({"days": days, "since": params["since"], "model": model, "users": rows}, headers={"Cache-Control": "no-store"})
+            data = {"days": days, "since": params["since"], "model": model, "users": rows}
+            if uid:
+                data["everyone"] = everyone
+            return JSONResponse(data, headers={"Cache-Control": "no-store"})
         if uid and not rows:
             rows = [{"user_id": uid, "name": None, "email": None, "chats": 0, "questions": 0, "answers": 0, "failed": 0,
                      "no_web": 0, "model_p75": None, "prompt_p50": None, "tps_p50": None, "regenerated": 0,
@@ -557,6 +571,15 @@ class Event:
                 _pct(r["regenerated"], r["questions"]), r["at_limit"], r["up"], r["down"],
             ]
             body.append("<tr>" + "".join(f"<td>{c}</td>" for c in cells) + "</tr>")
+        if uid and everyone:
+            e = everyone
+            cells = [
+                "<b>Everyone</b><small>all users together, anonymous</small>", e["chats"], e["questions"], e["answers"],
+                _pct(e["failed"], e["answers"]), _pct(e["no_web"], e["answers"]), _secs(e["model_p75"]),
+                fmt(e["prompt_p50"], "{:.0f}"), fmt(e["tps_p50"], "{:.1f}"), _pct(e["regenerated"], e["questions"]),
+                e["at_limit"], e["up"], e["down"],
+            ]
+            body.append("<tr class=everyone>" + "".join(f"<td>{c}</td>" for c in cells) + "</tr>")
 
         def link(label: str, d: int | None = days, m: str | None = model, fmt: str = "") -> str:
             query = f"view={view}" + (f"&days={d}" if d else "") + (f"&model={html.escape(m, quote=True)}" if m else "") + fmt
@@ -571,10 +594,12 @@ class Event:
             + " · " + link("JSON", fmt="&format=json")
             + ("" if uid else f" · <a href='{PAGE_PATH}" + (f"?days={days}" if days else "") + "'>By day</a>")
         )
-        title, note = (("My usage", "Only your own chats and ratings.") if uid
+        title, note = (("My usage", "Your own chats and ratings, with everyone's combined numbers below for comparison (counts are totals for all users; percentages, times and tokens compare directly).") if uid
                        else ("KPI by person", "Admins only."))
         page = (USERS_PAGE.replace("TITLE", title).replace("NOTE", note).replace("NAV", nav)
                 .replace("ROWS", "".join(body) or '<tr><td colspan="13">No answers in this period.</td></tr>'))
+        if uid:  # Feedback Review is admin-only, so don't point regular users at it
+            page = page.replace(" The 👎 comments are on Feedback Review.", "")
         return HTMLResponse(page, headers={"Cache-Control": "no-store"})
 
     async def _in_group(self, user, group: str) -> bool:
@@ -621,8 +646,8 @@ class Event:
 
         t = data["totals"]
         tiles = [
-            ("Answer p75 (3 in 4 faster)", _secs(t["model_p75"])),
-            ("Answer p90 (slowest 10%)", _secs(t["model_p90"])),
+            ("Answer p75 (3 in 4 answers within)", _secs(t["model_p75"])),
+            ("Answer p90 (9 in 10 answers within)", _secs(t["model_p90"])),
             ("Prompt tokens", "—" if t["prompt_p50"] is None else f"{t['prompt_p50']:.0f}"),
             ("Answers", str(t["answers"])),
             ("Failed", _pct(t["failed"], t["answers"])),

@@ -23,7 +23,8 @@
 //
 // 5. For anyone but admins: signed out after 3 hours without activity, from authentik too.
 //
-// 6. A "My usage" link in the sidebar, under Search, to the KPI Dashboard's ?view=me page.
+// 6. "My usage" and "My feedback" links in the sidebar, under Search, to the KPI Dashboard's
+//    ?view=me page and Feedback Review's ?mine=1 page.
 (() => {
 	// ---- 1. early SSO redirect ----------------------------------------------------------------
 	const params = new URLSearchParams(location.search);
@@ -326,27 +327,45 @@
 	// ?view=me, open to every signed-in user). It copies the Search button's classes so it matches
 	// in light and dark mode. data-sveltekit-reload makes it a normal page load: /api/v1/kpi isn't
 	// an app route. The sidebar is re-rendered when it's toggled, so watch the DOM.
-	const USAGE_ID = 'sidebar-my-usage';
-	const USAGE_ICON =
-		'<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" class="size-4"><path stroke-linecap="round" stroke-linejoin="round" d="M3 3v18h18M7 15l4-4 3 3 5-6"/></svg>';
+	// "My feedback" follows it: the Feedback Review Function's page (functions/feedback_review.py)
+	// with only the ratings the person gave themselves.
+	const svg = (d) =>
+		`<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" class="size-4"><path stroke-linecap="round" stroke-linejoin="round" d="${d}"/></svg>`;
+	const SIDEBAR_LINKS = [
+		{ id: 'sidebar-my-usage', href: '/api/v1/kpi?view=me', label: 'My usage', icon: svg('M3 3v18h18M7 15l4-4 3 3 5-6') },
+		{
+			id: 'sidebar-my-feedback',
+			href: '/api/v1/feedback-review?rating=all&mine=1',
+			label: 'My feedback',
+			icon: svg('M7 10v11H3V10h4zm0 0l4-8a3 3 0 013 3v4h5a2 2 0 012 2.3l-1.4 8A2 2 0 0117.6 21H7')
+		}
+	];
 
 	const addUsageLink = () => {
-		if (document.getElementById(USAGE_ID)) return;
 		const search = document.getElementById('sidebar-search-button');
 		if (!search?.parentElement) return;
-		const row = document.createElement('div');
-		row.className = search.parentElement.className;
-		const link = document.createElement('a');
-		link.id = USAGE_ID;
-		link.href = '/api/v1/kpi?view=me';
-		link.setAttribute('data-sveltekit-reload', '');
-		link.draggable = false;
-		link.className = search.className;
-		link.innerHTML =
-			`<div class="self-center flex size-4 shrink-0 items-center justify-center">${USAGE_ICON}</div>` +
-			'<div class="flex flex-1 self-center translate-y-[0.5px]"><div class="self-center text-[0.8125rem] leading-5">My usage</div></div>';
-		row.appendChild(link);
-		search.parentElement.after(row);
+		let after = search.parentElement;
+		for (const { id, href, label, icon } of SIDEBAR_LINKS) {
+			const existing = document.getElementById(id);
+			if (existing) {
+				after = existing.parentElement;
+				continue;
+			}
+			const row = document.createElement('div');
+			row.className = search.parentElement.className;
+			const link = document.createElement('a');
+			link.id = id;
+			link.href = href;
+			link.setAttribute('data-sveltekit-reload', '');
+			link.draggable = false;
+			link.className = search.className;
+			link.innerHTML =
+				`<div class="self-center flex size-4 shrink-0 items-center justify-center">${icon}</div>` +
+				`<div class="flex flex-1 self-center translate-y-[0.5px]"><div class="self-center text-[0.8125rem] leading-5">${label}</div></div>`;
+			row.appendChild(link);
+			after.after(row);
+			after = row;
+		}
 	};
 
 	let usageQueued = false;
