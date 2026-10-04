@@ -598,6 +598,8 @@ class Event:
                        else ("KPI by person", "Admins only."))
         page = (USERS_PAGE.replace("TITLE", title).replace("NOTE", note).replace("NAV", nav)
                 .replace("ROWS", "".join(body) or '<tr><td colspan="13">No answers in this period.</td></tr>'))
+        if uid:  # Feedback Review is admin-only, so don't point regular users at it
+            page = page.replace(" The 👎 comments are on Feedback Review.", "")
         return HTMLResponse(page, headers={"Cache-Control": "no-store"})
 
     async def _in_group(self, user, group: str) -> bool:
