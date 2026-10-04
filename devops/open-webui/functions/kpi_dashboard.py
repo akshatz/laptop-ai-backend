@@ -1,7 +1,7 @@
 """
 title: KPI Dashboard
 author: akshatz
-version: 1.0.0
+version: 1.1.0
 required_open_webui_version: 0.11.3
 description: Admin page with answer speed, failures, regenerations and 👍/👎 per day, to see whether a settings change made answers faster or better.
 
@@ -9,8 +9,8 @@ Open WebUI event Function (Admin → Functions → import this file and enable i
 `open-webui` so `system.startup.completed` registers the page). Event Functions can't declare
 routes, so it registers one page on Open WebUI's app, for admins and one group:
 
-  GET /api/v1/kpi                         last 14 days, all models
-  GET /api/v1/kpi?days=30                 last 30 days (1-365)
+  GET /api/v1/kpi                         this month so far (from the 1st, UTC), all models
+  GET /api/v1/kpi?days=30                 last 30 days instead (1-365)
   GET /api/v1/kpi?model=fast-ai:latest    one model only
   GET /api/v1/kpi?view=revisions          one row per settings revision instead of per day
   GET /api/v1/kpi?view=users              one row per person (admins + `person_view_group`; takes days/model)
@@ -51,6 +51,7 @@ saved, so they're not included. Touches Open WebUI internals (chat_message/feedb
 usage JSON Ollama fills): re-check the page after bumping the pinned image.
 """
 
+import calendar
 import html
 import logging
 import time
@@ -359,6 +360,26 @@ def _delta(new, old, unit: str = "", lower_is_better: bool = True, digits: int =
     return f"<small class='{'better' if better else 'worse'}'>{diff:+.{digits}f}{unit}</small>"
 
 
+def _since(days: int | None) -> int:
+    """Start of the period: the last `days` days, or (no days) the 1st of this month, UTC, so the
+    default counters start from zero every month."""
+    if days:
+        return int(time.time()) - days * DAY
+    t = time.gmtime()
+    return calendar.timegm((t.tm_year, t.tm_mon, 1, 0, 0, 0))
+
+
+def _period(days: int | None) -> str:
+    return f"Last {days} days" if days else "This month (since " + time.strftime("%Y-%m-%d", time.gmtime(_since(None))) + ")"
+
+
+def _period_links(days: int | None, link) -> str:
+    return " ".join(
+        (f"<b>{label}</b>" if d == days else link(label, d=d))
+        for d, label in [(None, "This month")] + [(d, f"{d}d") for d in (7, 14, 30, 90)]
+    )
+
+
 def _ratio(part: int, whole: int):
     return None if not whole else 100 * part / whole
 
@@ -378,8 +399,8 @@ class Event:
     def __init__(self):
         self.valves = self.Valves()
 
-    async def _data(self, days: int, model: str | None) -> dict:
-        params = {"since": int(time.time()) - days * DAY, "model": model}
+    async def _data(self, days: int | None, model: str | None) -> dict:
+        params = {"since": _since(days), "model": model}
         async with get_async_db_context() as session:
             answer_rows = (await session.execute(text(ANSWERS_SQL), params)).mappings().all()
             feedback_rows = (await session.execute(text(FEEDBACK_SQL), params)).mappings().all()
@@ -404,7 +425,7 @@ class Event:
             "up": total("up"), "down": total("down"),
             "model_p50": model_p50, "model_p90": model_p90, "prompt_p50": prompt_p50,
         }
-        return {"days": days, "model": model, "models": models, "totals": totals, "daily": rows}
+        return {"days": days, "since": params["since"], "model": model, "models": models, "totals": totals, "daily": rows}
 
     async def _revisions(self, model: str | None) -> list[dict]:
         async with get_async_db_context() as session:
@@ -464,15 +485,15 @@ class Event:
         page = REVISIONS_PAGE.replace("NAV", nav).replace("ROWS", "".join(body) or empty)
         return HTMLResponse(page, headers={"Cache-Control": "no-store"})
 
-    async def _users_page(self, days: int, model: str | None, format: str, uid: str | None = None):
+    async def _users_page(self, days: int | None, model: str | None, format: str, uid: str | None = None):
         """Per-person table; with `uid`, only that person's own row (the ?view=me page)."""
         view = "me" if uid else "users"
-        params = {"since": int(time.time()) - days * DAY, "model": model, "uid": uid}
+        params = {"since": _since(days), "model": model, "uid": uid}
         async with get_async_db_context() as session:
             rows = [dict(r) for r in (await session.execute(text(USERS_SQL), params)).mappings().all()]
             models = [r[0] for r in (await session.execute(text(MODELS_SQL), params)).all()]
         if format == "json":
-            return JSONResponse({"days": days, "model": model, "users": rows}, headers={"Cache-Control": "no-store"})
+            return JSONResponse({"days": days, "since": params["since"], "model": model, "users": rows}, headers={"Cache-Control": "no-store"})
         if uid and not rows:
             rows = [{"user_id": uid, "name": None, "email": None, "chats": 0, "questions": 0, "answers": 0, "failed": 0,
                      "no_web": 0, "model_p50": None, "prompt_p50": None, "tps_p50": None, "regenerated": 0,
@@ -490,19 +511,18 @@ class Event:
             ]
             body.append("<tr>" + "".join(f"<td>{c}</td>" for c in cells) + "</tr>")
 
-        def link(label: str, d: int = days, m: str | None = model, fmt: str = "") -> str:
-            query = f"view={view}&days={d}" + (f"&model={html.escape(m, quote=True)}" if m else "") + fmt
+        def link(label: str, d: int | None = days, m: str | None = model, fmt: str = "") -> str:
+            query = f"view={view}" + (f"&days={d}" if d else "") + (f"&model={html.escape(m, quote=True)}" if m else "") + fmt
             return f"<a href='{PAGE_PATH}?{query}'>{html.escape(label)}</a>"
 
         nav = (
-            f"Last {days} days · {html.escape(model or 'all models')}. Period: "
-            + " ".join(link(f"{d}d", d=d) if d != days else f"<b>{d}d</b>" for d in (7, 14, 30, 90))
+            f"{_period(days)} · {html.escape(model or 'all models')}. Period: " + _period_links(days, link)
             + " · Model: " + " ".join(
                 [link("all", m=None) if model else "<b>all</b>"]
                 + [link(m, m=m) if m != model else f"<b>{html.escape(m)}</b>" for m in models]
             )
             + " · " + link("JSON", fmt="&format=json")
-            + ("" if uid else f" · <a href='{PAGE_PATH}?days={days}'>By day</a>")
+            + ("" if uid else f" · <a href='{PAGE_PATH}" + (f"?days={days}" if days else "") + "'>By day</a>")
         )
         title, note = (("My usage", "Only your own chats and ratings.") if uid
                        else ("KPI by person", "Admins and the person-view group only."))
@@ -523,7 +543,7 @@ class Event:
     async def _may_view_people(self, user) -> bool:
         return user.role == "admin" or await self._in_group(user, self.valves.person_view_group)
 
-    async def _page(self, request: Request, days: int = 14, model: str | None = None, format: str = "html",
+    async def _page(self, request: Request, days: int | None = None, model: str | None = None, format: str = "html",
                     view: str = "days"):
         user = await get_optional_verified_user_from_request(request)
         if user is None:
@@ -532,7 +552,7 @@ class Event:
             # Signed out (e.g. a phone without a session): sign in, then come back here.
             target = request.url.path + (f"?{request.url.query}" if request.url.query else "")
             return RedirectResponse(f"/auth?redirect={quote(target, safe='')}", status_code=303)
-        days = max(1, min(days, 365))
+        days = max(1, min(days, 365)) if days else None
         model = model or None
         if view == "me":  # every signed-in person, own numbers only
             return await self._users_page(days, model, format, uid=user.id)
@@ -575,13 +595,12 @@ class Event:
             ]
             body.append("<tr>" + "".join(f"<td>{html.escape(str(c))}</td>" for c in cells) + "</tr>")
 
-        def link(label: str, d: int = days, m: str | None = model, fmt: str = "") -> str:
-            query = f"days={d}" + (f"&model={html.escape(m, quote=True)}" if m else "") + fmt
-            return f"<a href='{PAGE_PATH}?{query}'>{html.escape(label)}</a>"
+        def link(label: str, d: int | None = days, m: str | None = model, fmt: str = "") -> str:
+            query = ((f"&days={d}" if d else "") + (f"&model={html.escape(m, quote=True)}" if m else "") + fmt).lstrip("&")
+            return f"<a href='{PAGE_PATH}" + (f"?{query}" if query else "") + f"'>{html.escape(label)}</a>"
 
         nav = (
-            f"Last {days} days · {html.escape(model or 'all models')}. Period: "
-            + " ".join(link(f"{d}d", d=d) if d != days else f"<b>{d}d</b>" for d in (7, 14, 30, 90))
+            f"{_period(days)} · {html.escape(model or 'all models')}. Period: " + _period_links(days, link)
             + " · Model: " + " ".join(
                 [link("all", m=None) if model else "<b>all</b>"]
                 + [link(m, m=m) if m != model else f"<b>{html.escape(m)}</b>" for m in data["models"]]
@@ -589,7 +608,7 @@ class Event:
             + " · " + link("JSON", fmt="&format=json")
             + f" · <a href='{PAGE_PATH}?view=revisions" + (f"&model={html.escape(model, quote=True)}" if model else "")
             + "'>By settings revision</a>"
-            + (f" · <a href='{PAGE_PATH}?view=users&days={days}" + (f"&model={html.escape(model, quote=True)}" if model else "")
+            + (f" · <a href='{PAGE_PATH}?view=users" + (f"&days={days}" if days else "") + (f"&model={html.escape(model, quote=True)}" if model else "")
                + "'>By person</a>" if await self._may_view_people(user) else "")
         )
         page = (PAGE.replace("NAV", nav).replace("TILES", tiles_html)

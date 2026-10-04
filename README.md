@@ -398,7 +398,7 @@ Not built yet: putting admin-approved 👍 answers into a "Verified answers" kno
 
 To see whether a settings change made answers faster or better, the KPI Dashboard Function, [devops/open-webui/functions/kpi_dashboard.py](devops/open-webui/functions/kpi_dashboard.py), shows the main numbers per day. Import and enable it like the other Functions, then restart `open-webui` once so its page is registered.
 
-While signed in as an admin, or as a member of the Open WebUI group **kpi-viewers**, open **`/api/v1/kpi`** (e.g. `https://<OPEN_WEBUI_HOST>:8444/api/v1/kpi`). It shows the last 14 days (days in UTC), with totals at the top:
+While signed in as an admin, or as a member of the Open WebUI group **kpi-viewers**, open **`/api/v1/kpi`** (e.g. `https://<OPEN_WEBUI_HOST>:8444/api/v1/kpi`). It shows this month so far, from the 1st (days in UTC), with totals at the top, so the counters start from zero every month:
 
 - **Answers / Failed:** answers written, and how many ended in an error.
 - **Answer p50 / p90:** how long Ollama took per answer (reading the prompt + writing), median and slowest 10%. Web search and reading the pages come on top; Open WebUI doesn't record when an answer finished, so the full wait can't be shown.
@@ -407,7 +407,7 @@ While signed in as an admin, or as a member of the Open WebUI group **kpi-viewer
 - **Regenerated / At limit:** share of questions that got more than one answer, and how many reached the 3-answer limit. A rising share usually means worse answers.
 - **👍 / 👎:** ratings given that day; the details are on the Feedback Review page above.
 
-Pick 7, 14, 30 or 90 days and a model at the top of the page, or add `?days=30`, `?model=fast-ai:latest` or `?format=json` to the address.
+Pick this month, or the last 7, 14, 30 or 90 days, and a model at the top of the page, or add `?days=30`, `?model=fast-ai:latest` or `?format=json` to the address.
 
 **By settings revision** (link at the top, or `?view=revisions`): one row per version of [devops/open-webui/settings.yaml](devops/open-webui/settings.yaml) with the dates it was live and the same numbers, the live one highlighted, each with its change from the version before (green = better, red = worse). That's how to tell whether a settings change helped. `settings.py apply` and `export` record a new version whenever the file's content changed; `python3 devops/open-webui/settings.py record --label "what changed"` does it by hand, and `record --from-git` adds the past commits of the file. Settings changed in the Admin UI count only once exported, Function code and model changes aren't versions, and a version with only a few answers says little. Answers from before the first recorded version show as "before tracking". The page changes nothing. Only chats that still exist are counted, and temporary chats never are.
 
