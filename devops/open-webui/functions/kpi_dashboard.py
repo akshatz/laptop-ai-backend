@@ -14,6 +14,7 @@ routes, so it registers one page on Open WebUI's app, for admins and one group:
   GET /api/v1/kpi?model=fast-ai:latest    one model only
   GET /api/v1/kpi?view=revisions          one row per settings revision instead of per day
   GET /api/v1/kpi?view=users              one row per person (admins + `person_view_group`; takes days/model)
+  GET /api/v1/kpi?view=me                 the signed-in person's own row only (any signed-in user)
   ...&format=json                         the same as JSON
 
 Admins can always open it; other signed-in users only if they're in the Open WebUI group named by
@@ -193,6 +194,7 @@ WITH a AS (
   FROM chat_message m JOIN chat c ON c.id = m.chat_id
   WHERE m.role = 'assistant' AND m.created_at >= :since
     AND (CAST(:model AS text) IS NULL OR m.model_id = :model)
+    AND (CAST(:uid AS text) IS NULL OR c.user_id = :uid)
 ), q AS (
   SELECT user_id, count(*) AS answers FROM a WHERE parent_id IS NOT NULL GROUP BY user_id, parent_id, model_id
 ), au AS (
@@ -212,6 +214,7 @@ WITH a AS (
   FROM feedback
   WHERE type = 'rating' AND created_at >= :since
     AND (CAST(:model AS text) IS NULL OR data->>'model_id' = :model)
+    AND (CAST(:uid AS text) IS NULL OR user_id = :uid)
   GROUP BY user_id
 ), ids AS (SELECT user_id FROM au UNION SELECT user_id FROM fu)
 SELECT ids.user_id, u.name, u.email,
@@ -308,7 +311,7 @@ REVISIONS_PAGE = """<!doctype html>
 
 USERS_PAGE = """<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>KPI by person</title>
+<title>TITLE</title>
 <style>
   body{font-family:system-ui,sans-serif;background:#f6f6f7;color:#1c1c1e;margin:0;padding:24px 16px}
   main{max-width:1200px;margin:0 auto}
@@ -324,14 +327,14 @@ USERS_PAGE = """<!doctype html>
     body{background:#111;color:#eee}.wrap{background:#1c1c1e}th,td{border-color:#2c2c2e}th{color:#aaa}small,.muted{color:#999}}
 </style></head>
 <body><main>
-  <h1>KPI by person</h1>
+  <h1>TITLE</h1>
   <p class="muted">NAV</p>
   <div class="wrap"><table>
     <thead><tr><th>Person</th><th>Chats</th><th>Questions</th><th>Answers</th><th>Failed</th><th>No web</th><th>Answer p50</th>
       <th>Prompt tokens</th><th>Tokens/s</th><th>Regenerated</th><th>At limit</th><th>👍</th><th>👎</th></tr></thead>
     <tbody>ROWS</tbody>
   </table></div>
-  <p class="muted">Admins and the person-view group only. Answers count for the chat's owner; Chats = chats with at least one answer in the
+  <p class="muted">NOTE Answers count for the chat's owner; Chats = chats with at least one answer in the
     period; ratings count for whoever gave them. Deleted people show their id. <a href="/">Back to Open WebUI</a></p>
 </main></body></html>
 """
@@ -461,13 +464,19 @@ class Event:
         page = REVISIONS_PAGE.replace("NAV", nav).replace("ROWS", "".join(body) or empty)
         return HTMLResponse(page, headers={"Cache-Control": "no-store"})
 
-    async def _users_page(self, days: int, model: str | None, format: str):
-        params = {"since": int(time.time()) - days * DAY, "model": model}
+    async def _users_page(self, days: int, model: str | None, format: str, uid: str | None = None):
+        """Per-person table; with `uid`, only that person's own row (the ?view=me page)."""
+        view = "me" if uid else "users"
+        params = {"since": int(time.time()) - days * DAY, "model": model, "uid": uid}
         async with get_async_db_context() as session:
             rows = [dict(r) for r in (await session.execute(text(USERS_SQL), params)).mappings().all()]
             models = [r[0] for r in (await session.execute(text(MODELS_SQL), params)).all()]
         if format == "json":
             return JSONResponse({"days": days, "model": model, "users": rows}, headers={"Cache-Control": "no-store"})
+        if uid and not rows:
+            rows = [{"user_id": uid, "name": None, "email": None, "chats": 0, "questions": 0, "answers": 0, "failed": 0,
+                     "no_web": 0, "model_p50": None, "prompt_p50": None, "tps_p50": None, "regenerated": 0,
+                     "at_limit": 0, "up": 0, "down": 0}]
 
         fmt = lambda v, f: "—" if v is None else f.format(v)
         body = []
@@ -482,7 +491,7 @@ class Event:
             body.append("<tr>" + "".join(f"<td>{c}</td>" for c in cells) + "</tr>")
 
         def link(label: str, d: int = days, m: str | None = model, fmt: str = "") -> str:
-            query = f"view=users&days={d}" + (f"&model={html.escape(m, quote=True)}" if m else "") + fmt
+            query = f"view={view}&days={d}" + (f"&model={html.escape(m, quote=True)}" if m else "") + fmt
             return f"<a href='{PAGE_PATH}?{query}'>{html.escape(label)}</a>"
 
         nav = (
@@ -493,9 +502,11 @@ class Event:
                 + [link(m, m=m) if m != model else f"<b>{html.escape(m)}</b>" for m in models]
             )
             + " · " + link("JSON", fmt="&format=json")
-            + f" · <a href='{PAGE_PATH}?days={days}'>By day</a>"
+            + ("" if uid else f" · <a href='{PAGE_PATH}?days={days}'>By day</a>")
         )
-        page = (USERS_PAGE.replace("NAV", nav)
+        title, note = (("My usage", "Only your own chats and ratings.") if uid
+                       else ("KPI by person", "Admins and the person-view group only."))
+        page = (USERS_PAGE.replace("TITLE", title).replace("NOTE", note).replace("NAV", nav)
                 .replace("ROWS", "".join(body) or '<tr><td colspan="13">No answers in this period.</td></tr>'))
         return HTMLResponse(page, headers={"Cache-Control": "no-store"})
 
@@ -521,10 +532,12 @@ class Event:
             # Signed out (e.g. a phone without a session): sign in, then come back here.
             target = request.url.path + (f"?{request.url.query}" if request.url.query else "")
             return RedirectResponse(f"/auth?redirect={quote(target, safe='')}", status_code=303)
-        if not await self._may_view(user):
-            raise HTTPException(status_code=403, detail="Only admins and the KPI viewer group can open this page.")
         days = max(1, min(days, 365))
         model = model or None
+        if view == "me":  # every signed-in person, own numbers only
+            return await self._users_page(days, model, format, uid=user.id)
+        if not await self._may_view(user):
+            raise HTTPException(status_code=403, detail="Only admins and the KPI viewer group can open this page.")
         if view == "users":
             if not await self._may_view_people(user):
                 raise HTTPException(status_code=403, detail="The per-person view is for admins and the person-view group only.")

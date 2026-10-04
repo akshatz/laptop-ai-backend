@@ -1,5 +1,5 @@
 // Mounted over Open WebUI's empty /app/build/static/loader.js (copied to /static/loader.js at
-// startup, and loaded by every page). Five things:
+// startup, and loaded by every page). Six things:
 //
 // 1. Signed-out visitors go straight to authentik. OAUTH_AUTO_REDIRECT does this too, but only
 //    after the SvelteKit app has started and rendered its sign-in page, so "Continue with
@@ -22,6 +22,8 @@
 //    no Regenerate button once an answer has 3 versions.
 //
 // 5. For anyone but admins: signed out after 3 hours without activity, from authentik too.
+//
+// 6. A "My usage" link in the sidebar, under Search, to the KPI Dashboard's ?view=me page.
 (() => {
 	// ---- 1. early SSO redirect ----------------------------------------------------------------
 	const params = new URLSearchParams(location.search);
@@ -318,4 +320,42 @@
 	if (!checkRole()) {
 		const timer = setInterval(() => checkRole() && clearInterval(timer), 1000);
 	}
+
+	// ---- 6. "My usage" in the sidebar -----------------------------------------------------------
+	// A link under Search to the KPI Dashboard Function's own-numbers page (functions/kpi_dashboard.py,
+	// ?view=me, open to every signed-in user). It copies the Search button's classes so it matches
+	// in light and dark mode. data-sveltekit-reload makes it a normal page load: /api/v1/kpi isn't
+	// an app route. The sidebar is re-rendered when it's toggled, so watch the DOM.
+	const USAGE_ID = 'sidebar-my-usage';
+	const USAGE_ICON =
+		'<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" class="size-4"><path stroke-linecap="round" stroke-linejoin="round" d="M3 3v18h18M7 15l4-4 3 3 5-6"/></svg>';
+
+	const addUsageLink = () => {
+		if (document.getElementById(USAGE_ID)) return;
+		const search = document.getElementById('sidebar-search-button');
+		if (!search?.parentElement) return;
+		const row = document.createElement('div');
+		row.className = search.parentElement.className;
+		const link = document.createElement('a');
+		link.id = USAGE_ID;
+		link.href = '/api/v1/kpi?view=me';
+		link.setAttribute('data-sveltekit-reload', '');
+		link.draggable = false;
+		link.className = search.className;
+		link.innerHTML =
+			`<div class="self-center flex size-4 shrink-0 items-center justify-center">${USAGE_ICON}</div>` +
+			'<div class="flex flex-1 self-center translate-y-[0.5px]"><div class="self-center text-[0.8125rem] leading-5">My usage</div></div>';
+		row.appendChild(link);
+		search.parentElement.after(row);
+	};
+
+	let usageQueued = false;
+	new MutationObserver(() => {
+		if (usageQueued) return;
+		usageQueued = true;
+		requestAnimationFrame(() => {
+			usageQueued = false;
+			addUsageLink();
+		});
+	}).observe(document.documentElement, { childList: true, subtree: true });
 })();
