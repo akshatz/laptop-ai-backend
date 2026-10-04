@@ -242,7 +242,7 @@ PAGE = """<!doctype html>
 <style>
   body{font-family:system-ui,sans-serif;background:#f6f6f7;color:#1c1c1e;margin:0;padding:24px 16px}
   main{max-width:1100px;margin:0 auto}
-  .tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin:16px 0}
+  .tiles{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin:16px 0}
   .tile{background:#fff;border-radius:12px;box-shadow:0 1px 3px rgba(0,0,0,.08);padding:12px 14px}
   .tile b{display:block;font-size:22px;font-variant-numeric:tabular-nums}
   .wrap{overflow-x:auto;background:#fff;border-radius:12px;box-shadow:0 1px 3px rgba(0,0,0,.08)}
@@ -265,12 +265,7 @@ PAGE = """<!doctype html>
       <th>👍</th><th>👎</th></tr></thead>
     <tbody>ROWS</tbody>
   </table></div>
-  <p class="muted">Answer = Ollama's own time for the answer (reading the prompt + writing); web search and
-    embedding come on top and aren't recorded per answer. p75 = 3 in 4 answers were at least this fast; p90 =
-    1 in 10 answers took at least this long (90th percentile). Prompt tokens and tokens/s are medians. Regenerated = questions with more than
-    one answer from the same model; at limit = 3 or more. No web = answers (not failed) without web search
-    sources: the search found nothing, or a greeting/poem that needed none. 👎 details:
-    <a href="/api/v1/feedback-review">Feedback Review</a>. <a href="/">Back to Open WebUI</a></p>
+  <p class="muted">👎 details: <a href="/api/v1/feedback-review">Feedback Review</a>. <a href="/">Back to Open WebUI</a></p>
 </main></body></html>
 """
 
@@ -346,6 +341,7 @@ USERS_PAGE = """<!doctype html>
 MOBILE_CSS = """
   @media (max-width:640px){
     body{padding:16px 12px}h1{font-size:22px}
+    .tiles{grid-template-columns:repeat(2,1fr)}
     .wrap{background:none;box-shadow:none;overflow:visible}
     table,tbody,tr,td{display:block}thead{display:none}
     tr{background:#fff;border-radius:12px;box-shadow:0 1px 3px rgba(0,0,0,.08);margin-bottom:12px;padding:4px 14px}
@@ -368,24 +364,27 @@ MOBILE_JS = """<script>
 # Targets for this laptop (CPU-only, 3B model), set 2026-10-04 from the first days' numbers
 # (p50 38 s, p75 60 s, p90 90 s, 12 tokens/s, ~2,000 prompt tokens).
 BENCHMARKS = """<h2>Benchmarks</h2>
-  <div class="wrap"><table>
-    <thead><tr><th>Measure</th><th>Good</th><th>Look into it when</th></tr></thead>
+  <p class="muted">There are no automatic alerts: the admin checks this page (about once a week) and acts
+    on anything in the "Review when" column.</p>
+  <div class="wrap"><table class="bench">
+    <thead><tr><th>Measure</th><th>Good</th><th>Review when</th><th>What it means</th></tr></thead>
     <tbody>
-      <tr><td>Failed</td><td>under 2%</td><td>above 5%: check open-webui's log</td></tr>
-      <tr><td>No web</td><td>under 10%</td><td>above 20%: search engines blocked, check SearXNG</td></tr>
-      <tr><td>Answer p75</td><td>60 s or less</td><td>above 90 s</td></tr>
-      <tr><td>Answer p90</td><td>90 s or less</td><td>above 120 s</td></tr>
-      <tr><td>Prompt tokens</td><td>2,500 or less</td><td>above 3,500: too many search chunks</td></tr>
-      <tr><td>Tokens/s</td><td>10 or more</td><td>below 8: laptop busy or hot</td></tr>
-      <tr><td>Regenerated</td><td>under 15%</td><td>above 25%: answers getting worse</td></tr>
-      <tr><td>At limit</td><td>0–1 a week</td><td>several a week</td></tr>
-      <tr><td>👍 share</td><td>80% or more</td><td>below 60%: read Feedback Review</td></tr>
+      <tr><td>Failed</td><td>&lt; 2%</td><td>&gt; 5%</td><td>Answers that ended in an error instead of text.</td></tr>
+      <tr><td>No web</td><td>&lt; 10%</td><td>&gt; 20%</td><td>Answers written without web sources: the search found nothing usable (often blocked search engines), or the message needed no search (a greeting).</td></tr>
+      <tr><td>Answer p75</td><td>≤ 60 s</td><td>&gt; 90 s</td><td>3 in 4 answers took at most this long to write.</td></tr>
+      <tr><td>Answer p90</td><td>≤ 90 s</td><td>&gt; 120 s</td><td>9 in 10 answers took at most this long; the slowest 10% took longer.</td></tr>
+      <tr><td>Prompt tokens</td><td>≤ 2,500</td><td>&gt; 3,500</td><td>Typical size of what the model reads per answer, mostly the web pages. Bigger means slower.</td></tr>
+      <tr><td>Tokens/s</td><td>≥ 10</td><td>&lt; 8</td><td>How fast the model writes. Drops when the laptop is busy or hot.</td></tr>
+      <tr><td>Regenerated</td><td>&lt; 15%</td><td>&gt; 25%</td><td>Questions where the person asked for another answer, usually because the first was poor.</td></tr>
+      <tr><td>At limit</td><td>≤ 2 a week</td><td>&gt; 5 a week</td><td>Questions that used all 3 answers.</td></tr>
+      <tr><td>👍 share</td><td>≥ 80%</td><td>&lt; 60%</td><td>Share of ratings that were 👍. The 👎 comments are on Feedback Review.</td></tr>
     </tbody>
   </table></div>
-  <p class="muted">Answer times are Ollama's only; the wait in the chat is 20–100 s longer (web search and reading the pages).</p>
+  <p class="muted">&lt; less than, &gt; more than, ≤ at most, ≥ at least. Answer times are Ollama's only; the wait in the chat is 20–100 s longer (web search and reading the pages).</p>
 """
 PAGE, REVISIONS_PAGE, USERS_PAGE = (
-    p.replace("</style>", MOBILE_CSS + "h2{font-size:18px;margin:28px 0 10px}</style>")
+    p.replace("</style>", MOBILE_CSS + "h2{font-size:18px;margin:28px 0 10px}"
+               "@media (min-width:641px){.bench td{white-space:normal}.bench td:last-child{text-align:left;min-width:260px}}</style>")
     .replace("</main>", BENCHMARKS + "</main>" + MOBILE_JS)
     for p in (PAGE, REVISIONS_PAGE, USERS_PAGE)
 )
