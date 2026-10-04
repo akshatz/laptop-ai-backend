@@ -13,7 +13,7 @@ routes, so it registers one page on Open WebUI's app, for admins and one group:
   GET /api/v1/kpi?days=7                  last 7 days instead (1-365, never before COUNT_FROM)
   GET /api/v1/kpi?model=fast-ai:latest    one model only
   GET /api/v1/kpi?view=revisions          one row per settings revision instead of per day
-  GET /api/v1/kpi?view=users              one row per person (admins + `person_view_group`; takes days/model)
+  GET /api/v1/kpi?view=users              one row per person (admins only, since it names people; takes days/model)
   GET /api/v1/kpi?view=me                 the signed-in person's own row only (any signed-in user)
   ...&format=json                         the same as JSON
 
@@ -442,11 +442,6 @@ class Event:
             default="kpi-viewers",
             description="Open WebUI group whose members may open the page besides admins (empty = admins only).",
         )
-        person_view_group: str = Field(
-            default="kpi-person-viewers",
-            description="Open WebUI group whose members may also open the per-person view, which shows names and "
-                        "emails (empty = admins only).",
-        )
 
     def __init__(self):
         self.valves = self.Valves()
@@ -577,7 +572,7 @@ class Event:
             + ("" if uid else f" · <a href='{PAGE_PATH}" + (f"?days={days}" if days else "") + "'>By day</a>")
         )
         title, note = (("My usage", "Only your own chats and ratings.") if uid
-                       else ("KPI by person", "Admins and the person-view group only."))
+                       else ("KPI by person", "Admins only."))
         page = (USERS_PAGE.replace("TITLE", title).replace("NOTE", note).replace("NAV", nav)
                 .replace("ROWS", "".join(body) or '<tr><td colspan="13">No answers in this period.</td></tr>'))
         return HTMLResponse(page, headers={"Cache-Control": "no-store"})
@@ -589,11 +584,10 @@ class Event:
         return any(g.name.strip().lower() == wanted for g in await Groups.get_groups_by_member_id(user.id))
 
     async def _may_view(self, user) -> bool:
-        return (user.role == "admin" or await self._in_group(user, self.valves.viewer_group)
-                or await self._in_group(user, self.valves.person_view_group))
+        return user.role == "admin" or await self._in_group(user, self.valves.viewer_group)
 
     async def _may_view_people(self, user) -> bool:
-        return user.role == "admin" or await self._in_group(user, self.valves.person_view_group)
+        return user.role == "admin"
 
     async def _page(self, request: Request, days: int | None = None, model: str | None = None, format: str = "html",
                     view: str = "days"):
@@ -612,7 +606,7 @@ class Event:
             raise HTTPException(status_code=403, detail="Only admins and the KPI viewer group can open this page.")
         if view == "users":
             if not await self._may_view_people(user):
-                raise HTTPException(status_code=403, detail="The per-person view is for admins and the person-view group only.")
+                raise HTTPException(status_code=403, detail="The per-person view is for admins only.")
             return await self._users_page(days, model, format)
         if view == "revisions":
             revs = await self._revisions(model)
