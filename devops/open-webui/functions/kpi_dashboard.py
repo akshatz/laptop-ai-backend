@@ -31,6 +31,9 @@ Metrics (days in UTC, from Open WebUI's own `chat_message` and `feedback` tables
   moves whenever the chat is saved again), so there's no reliable end-to-end wait here.
 - Prompt tokens: median prompt size, mostly the web/RAG chunks; the main driver of answer time on CPU.
 - Failed: answers saved with an error.
+- No web sources: answers that didn't fail but carry no `web_search` source, i.e. the search returned
+  nothing (SearXNG engines blocked, every result filtered) or the request needed no search (greetings,
+  poems). A jump here usually means search broke; check SearXNG's log and O2 `openwebui_queries`.
 - Regenerated: share of questions with more than one answer from the same model; "at limit" counts
   those with 3 or more (the Regenerate Limit Function's default `max_answers`).
 - 👍/👎: ratings given that day. Feedback Review (/api/v1/feedback-review) shows the 👎 details.
@@ -68,6 +71,11 @@ PAGE_PATH = "/api/v1/kpi"
 ROUTE_NAME = "kpi_dashboard_page"
 DAY = 24 * 3600
 
+# An answer that didn't fail and has no web search source: the search found nothing (e.g. SearXNG's
+# engines blocked), or it was a non-search request such as a greeting.
+NO_WEB_SQL = """(NOT (m.error IS NOT NULL AND m.error::text <> 'null') AND NOT CASE WHEN json_typeof(m.sources) = 'array'
+  THEN EXISTS (SELECT 1 FROM json_array_elements(m.sources) s WHERE s->'source'->>'type' = 'web_search') ELSE false END)"""
+
 # One row per UTC day. `a` = answers, `q` = questions (an answer's parent) per model.
 ANSWERS_SQL = """
 WITH a AS (
@@ -75,7 +83,8 @@ WITH a AS (
          m.error IS NOT NULL AND m.error::text <> 'null' AS failed,
          (m.usage->>'total_duration')::float8 / 1e9 AS model_secs,
          (m.usage->>'response_token/s')::float8 AS tps,
-         (m.usage->>'prompt_tokens')::float8 AS prompt_tokens
+         (m.usage->>'prompt_tokens')::float8 AS prompt_tokens,
+         NO_WEB AS no_web
   FROM chat_message m
   WHERE m.role = 'assistant' AND m.created_at >= :since
     AND (CAST(:model AS text) IS NULL OR m.model_id = :model)
@@ -85,7 +94,7 @@ WITH a AS (
 ), ad AS (
   SELECT to_char(to_timestamp(created_at) AT TIME ZONE 'UTC', 'YYYY-MM-DD') AS day,
          count(*) AS answers,
-         count(*) FILTER (WHERE failed) AS failed,
+         count(*) FILTER (WHERE failed) AS failed, count(*) FILTER (WHERE no_web) AS no_web,
          percentile_cont(0.5) WITHIN GROUP (ORDER BY model_secs) AS model_p50,
          percentile_cont(0.9) WITHIN GROUP (ORDER BY model_secs) AS model_p90,
          percentile_cont(0.5) WITHIN GROUP (ORDER BY tps) AS tps_p50,
@@ -136,14 +145,15 @@ WITH r AS (
          m.error IS NOT NULL AND m.error::text <> 'null' AS failed,
          (m.usage->>'total_duration')::float8 / 1e9 AS model_secs,
          (m.usage->>'response_token/s')::float8 AS tps,
-         (m.usage->>'prompt_tokens')::float8 AS prompt_tokens
+         (m.usage->>'prompt_tokens')::float8 AS prompt_tokens,
+         NO_WEB AS no_web
   FROM chat_message m
   JOIN r ON m.created_at >= r.started_at AND (r.ended_at IS NULL OR m.created_at < r.ended_at)
   WHERE m.role = 'assistant' AND (CAST(:model AS text) IS NULL OR m.model_id = :model)
 ), q AS (
   SELECT r_id, count(*) AS answers FROM a WHERE parent_id IS NOT NULL GROUP BY r_id, parent_id, model_id
 ), ar AS (
-  SELECT r_id, count(*) AS answers, count(*) FILTER (WHERE failed) AS failed,
+  SELECT r_id, count(*) AS answers, count(*) FILTER (WHERE failed) AS failed, count(*) FILTER (WHERE no_web) AS no_web,
          percentile_cont(0.5) WITHIN GROUP (ORDER BY model_secs) AS model_p50,
          percentile_cont(0.9) WITHIN GROUP (ORDER BY model_secs) AS model_p90,
          percentile_cont(0.5) WITHIN GROUP (ORDER BY tps) AS tps_p50,
@@ -162,7 +172,7 @@ WITH r AS (
   GROUP BY r.r_id
 )
 SELECT r.r_id, r.content_hash, r.git_commit, r.uncommitted, r.label, r.source, r.started_at, r.ended_at,
-       coalesce(ar.answers, 0) AS answers, coalesce(ar.failed, 0) AS failed,
+       coalesce(ar.answers, 0) AS answers, coalesce(ar.failed, 0) AS failed, coalesce(ar.no_web, 0) AS no_web,
        ar.model_p50, ar.model_p90, ar.tps_p50, ar.prompt_p50,
        coalesce(qr.questions, 0) AS questions, coalesce(qr.regenerated, 0) AS regenerated,
        coalesce(qr.at_limit, 0) AS at_limit, coalesce(fr.up, 0) AS up, coalesce(fr.down, 0) AS down
@@ -178,14 +188,15 @@ WITH a AS (
          m.error IS NOT NULL AND m.error::text <> 'null' AS failed,
          (m.usage->>'total_duration')::float8 / 1e9 AS model_secs,
          (m.usage->>'response_token/s')::float8 AS tps,
-         (m.usage->>'prompt_tokens')::float8 AS prompt_tokens
+         (m.usage->>'prompt_tokens')::float8 AS prompt_tokens,
+         NO_WEB AS no_web
   FROM chat_message m JOIN chat c ON c.id = m.chat_id
   WHERE m.role = 'assistant' AND m.created_at >= :since
     AND (CAST(:model AS text) IS NULL OR m.model_id = :model)
 ), q AS (
   SELECT user_id, count(*) AS answers FROM a WHERE parent_id IS NOT NULL GROUP BY user_id, parent_id, model_id
 ), au AS (
-  SELECT user_id, count(*) AS answers, count(*) FILTER (WHERE failed) AS failed,
+  SELECT user_id, count(*) AS answers, count(*) FILTER (WHERE failed) AS failed, count(*) FILTER (WHERE no_web) AS no_web,
          count(DISTINCT chat_id) AS chats,
          percentile_cont(0.5) WITHIN GROUP (ORDER BY model_secs) AS model_p50,
          percentile_cont(0.5) WITHIN GROUP (ORDER BY tps) AS tps_p50,
@@ -204,7 +215,8 @@ WITH a AS (
   GROUP BY user_id
 ), ids AS (SELECT user_id FROM au UNION SELECT user_id FROM fu)
 SELECT ids.user_id, u.name, u.email,
-       coalesce(au.answers, 0) AS answers, coalesce(au.failed, 0) AS failed, coalesce(au.chats, 0) AS chats,
+       coalesce(au.answers, 0) AS answers, coalesce(au.failed, 0) AS failed, coalesce(au.no_web, 0) AS no_web,
+       coalesce(au.chats, 0) AS chats,
        au.model_p50, au.tps_p50, au.prompt_p50,
        coalesce(qu.questions, 0) AS questions, coalesce(qu.regenerated, 0) AS regenerated,
        coalesce(qu.at_limit, 0) AS at_limit, coalesce(fu.up, 0) AS up, coalesce(fu.down, 0) AS down
@@ -212,6 +224,8 @@ FROM ids LEFT JOIN "user" u ON u.id = ids.user_id
 LEFT JOIN au USING (user_id) LEFT JOIN qu USING (user_id) LEFT JOIN fu USING (user_id)
 ORDER BY coalesce(qu.questions, 0) DESC, u.name
 """
+
+ANSWERS_SQL, REVISIONS_SQL, USERS_SQL = (q.replace("NO_WEB", NO_WEB_SQL) for q in (ANSWERS_SQL, REVISIONS_SQL, USERS_SQL))
 
 MODELS_SQL = """
 SELECT DISTINCT model_id FROM chat_message
@@ -242,14 +256,15 @@ PAGE = """<!doctype html>
   <p class="muted">NAV</p>
   <div class="tiles">TILES</div>
   <div class="wrap"><table>
-    <thead><tr><th>Day (UTC)</th><th>Answers</th><th>Failed</th><th>Answer p50</th><th>Answer p90</th>
+    <thead><tr><th>Day (UTC)</th><th>Answers</th><th>Failed</th><th>No web</th><th>Answer p50</th><th>Answer p90</th>
       <th>Prompt tokens</th><th>Tokens/s</th><th>Questions</th><th>Regenerated</th><th>At limit</th>
       <th>👍</th><th>👎</th></tr></thead>
     <tbody>ROWS</tbody>
   </table></div>
   <p class="muted">Answer = Ollama's own time for the answer (reading the prompt + writing); web search and
     embedding come on top and aren't recorded per answer. Prompt tokens and tokens/s are medians. Regenerated = questions with more than
-    one answer from the same model; at limit = 3 or more. 👎 details:
+    one answer from the same model; at limit = 3 or more. No web = answers (not failed) without web search
+    sources: the search found nothing, or a greeting/poem that needed none. 👎 details:
     <a href="/api/v1/feedback-review">Feedback Review</a>. <a href="/">Back to Open WebUI</a></p>
 </main></body></html>
 """
@@ -279,7 +294,7 @@ REVISIONS_PAGE = """<!doctype html>
   <h1>KPI by settings revision</h1>
   <p class="muted">NAV</p>
   <div class="wrap"><table>
-    <thead><tr><th>Revision</th><th>Live (UTC)</th><th>Answers</th><th>Failed</th><th>Answer p50</th><th>Answer p90</th>
+    <thead><tr><th>Revision</th><th>Live (UTC)</th><th>Answers</th><th>Failed</th><th>No web</th><th>Answer p50</th><th>Answer p90</th>
       <th>Prompt tokens</th><th>Tokens/s</th><th>Regenerated</th><th>👍 share</th></tr></thead>
     <tbody>ROWS</tbody>
   </table></div>
@@ -312,7 +327,7 @@ USERS_PAGE = """<!doctype html>
   <h1>KPI by person</h1>
   <p class="muted">NAV</p>
   <div class="wrap"><table>
-    <thead><tr><th>Person</th><th>Chats</th><th>Questions</th><th>Answers</th><th>Failed</th><th>Answer p50</th>
+    <thead><tr><th>Person</th><th>Chats</th><th>Questions</th><th>Answers</th><th>Failed</th><th>No web</th><th>Answer p50</th>
       <th>Prompt tokens</th><th>Tokens/s</th><th>Regenerated</th><th>At limit</th><th>👍</th><th>👎</th></tr></thead>
     <tbody>ROWS</tbody>
   </table></div>
@@ -373,7 +388,7 @@ class Event:
             by_day[r["day"]] = {**dict(r), "up": 0, "down": 0}
         for r in feedback_rows:
             row = by_day.setdefault(r["day"], {
-                "day": r["day"], "answers": 0, "failed": 0, "model_p50": None, "model_p90": None,
+                "day": r["day"], "answers": 0, "failed": 0, "no_web": 0, "model_p50": None, "model_p90": None,
                 "tps_p50": None, "prompt_p50": None, "questions": 0, "regenerated": 0, "at_limit": 0,
             })
             row["up"], row["down"] = r["up"], r["down"]
@@ -381,7 +396,7 @@ class Event:
 
         total = lambda key: sum(r[key] for r in rows)
         totals = {
-            "answers": total("answers"), "failed": total("failed"), "questions": total("questions"),
+            "answers": total("answers"), "failed": total("failed"), "no_web": total("no_web"), "questions": total("questions"),
             "regenerated": total("regenerated"), "at_limit": total("at_limit"),
             "up": total("up"), "down": total("down"),
             "model_p50": model_p50, "model_p90": model_p90, "prompt_p50": prompt_p50,
@@ -412,12 +427,14 @@ class Event:
                         + f"<small>{html.escape(r['source'])}</small>")
                 live = day(r["started_at"]) + " →<br>" + (day(r["ended_at"]) if r["ended_at"] else "<b>now (live)</b>")
             fail, pfail = _ratio(r["failed"], r["answers"]), _ratio(p.get("failed", 0), p.get("answers", 0))
+            noweb, pnoweb = _ratio(r["no_web"], r["answers"]), _ratio(p.get("no_web", 0), p.get("answers", 0))
             regen, pregen = _ratio(r["regenerated"], r["questions"]), _ratio(p.get("regenerated", 0), p.get("questions", 0))
             up, pup = _ratio(r["up"], r["up"] + r["down"]), _ratio(p.get("up", 0), p.get("up", 0) + p.get("down", 0))
             fmt = lambda v, f: "—" if v is None else f.format(v)
             cells = [
                 name, live, str(r["answers"]),
                 fmt(fail, "{:.0f}%") + _delta(fail, pfail, " pt"),
+                fmt(noweb, "{:.0f}%") + _delta(noweb, pnoweb, " pt"),
                 _secs(r["model_p50"]) + _delta(r["model_p50"], p.get("model_p50"), " s"),
                 _secs(r["model_p90"]) + _delta(r["model_p90"], p.get("model_p90"), " s"),
                 fmt(r["prompt_p50"], "{:.0f}") + _delta(r["prompt_p50"], p.get("prompt_p50")),
@@ -439,7 +456,7 @@ class Event:
             + f"<a href='{PAGE_PATH}?view=revisions&format=json" + (f"&model={html.escape(model, quote=True)}" if model else "")
             + "'>JSON</a>"
         )
-        empty = ('<tr><td colspan="10">No revisions recorded yet: run <code>python3 devops/open-webui/settings.py '
+        empty = ('<tr><td colspan="11">No revisions recorded yet: run <code>python3 devops/open-webui/settings.py '
                  'record --from-git</code> (needs the open-webui-fn-migrate service to have run).</td></tr>')
         page = REVISIONS_PAGE.replace("NAV", nav).replace("ROWS", "".join(body) or empty)
         return HTMLResponse(page, headers={"Cache-Control": "no-store"})
@@ -459,7 +476,7 @@ class Event:
                     + (f"<small>{html.escape(r['email'])}</small>" if r["email"] else ""))
             cells = [
                 name, r["chats"], r["questions"], r["answers"], _pct(r["failed"], r["answers"]),
-                _secs(r["model_p50"]), fmt(r["prompt_p50"], "{:.0f}"), fmt(r["tps_p50"], "{:.1f}"),
+                _pct(r["no_web"], r["answers"]), _secs(r["model_p50"]), fmt(r["prompt_p50"], "{:.0f}"), fmt(r["tps_p50"], "{:.1f}"),
                 _pct(r["regenerated"], r["questions"]), r["at_limit"], r["up"], r["down"],
             ]
             body.append("<tr>" + "".join(f"<td>{c}</td>" for c in cells) + "</tr>")
@@ -479,7 +496,7 @@ class Event:
             + f" · <a href='{PAGE_PATH}?days={days}'>By day</a>"
         )
         page = (USERS_PAGE.replace("NAV", nav)
-                .replace("ROWS", "".join(body) or '<tr><td colspan="12">No answers in this period.</td></tr>'))
+                .replace("ROWS", "".join(body) or '<tr><td colspan="13">No answers in this period.</td></tr>'))
         return HTMLResponse(page, headers={"Cache-Control": "no-store"})
 
     async def _in_group(self, user, group: str) -> bool:
@@ -530,6 +547,7 @@ class Event:
             ("Prompt tokens", "—" if t["prompt_p50"] is None else f"{t['prompt_p50']:.0f}"),
             ("Answers", str(t["answers"])),
             ("Failed", _pct(t["failed"], t["answers"])),
+            ("No web sources", _pct(t["no_web"], t["answers"])),
             ("Regenerated", _pct(t["regenerated"], t["questions"])),
             ("👍 share", _pct(t["up"], t["up"] + t["down"]) + f" ({t['up']}/{t['up'] + t['down']})"),
         ]
@@ -538,7 +556,7 @@ class Event:
         body = []
         for r in data["daily"]:
             cells = [
-                r["day"], r["answers"], r["failed"], _secs(r["model_p50"]), _secs(r["model_p90"]),
+                r["day"], r["answers"], r["failed"], _pct(r["no_web"], r["answers"]), _secs(r["model_p50"]), _secs(r["model_p90"]),
                 "—" if r["prompt_p50"] is None else f"{r['prompt_p50']:.0f}", "—" if r["tps_p50"] is None else f"{r['tps_p50']:.1f}",
                 r["questions"], _pct(r["regenerated"], r["questions"]), r["at_limit"], r["up"], r["down"],
             ]
@@ -562,7 +580,7 @@ class Event:
                + "'>By person</a>" if await self._may_view_people(user) else "")
         )
         page = (PAGE.replace("NAV", nav).replace("TILES", tiles_html)
-                .replace("ROWS", "".join(body) or '<tr><td colspan="12">No answers in this period.</td></tr>'))
+                .replace("ROWS", "".join(body) or '<tr><td colspan="13">No answers in this period.</td></tr>'))
         return HTMLResponse(page, headers={"Cache-Control": "no-store"})
 
     def _register_routes(self, app) -> None:
