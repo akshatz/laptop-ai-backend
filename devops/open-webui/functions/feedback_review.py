@@ -7,16 +7,19 @@ description: Admin page listing rated answers (👎 by default) with the questio
 
 Open WebUI event Function (Admin → Functions → import this file and enable it). Event Functions
 can't declare routes, so on `system.startup.completed` (and, defensively, on any event) it
-registers one admin-only page on Open WebUI's app:
+registers one page on Open WebUI's app:
 
   GET /api/v1/feedback-review                 👎 answers, newest first
   GET /api/v1/feedback-review?rating=all      👍 and 👎
   GET /api/v1/feedback-review?rating=up       👍 only (candidates for a "verified answers" collection)
   ...&days=30                                 only the last 30 days (default 90)
+  ...&mine=1                                  only the signed-in person's own ratings ("My feedback")
   ...&format=json                             the same as JSON
 
-Guarded by Open WebUI's get_admin_user, which accepts the browser's login cookie, so it opens
-straight from the address bar while signed in as admin.
+Admins see everyone's ratings; every other signed-in user sees only the ratings they gave
+themselves, as if ?mine=1 (loader.js links it in the sidebar as "My feedback"). Uses Open WebUI's
+get_optional_verified_user_from_request, which accepts the browser's login cookie, so it opens
+straight from the address bar; signed-out browsers go to /auth?redirect=<this page>.
 
 Reads Open WebUI's own `feedback` table (filled when someone clicks 👍/👎 under an answer and
 optionally picks a reason / writes a comment). Each rating stores a snapshot of the whole chat at
@@ -35,14 +38,16 @@ import logging
 import time
 from datetime import datetime, timezone
 
-from fastapi import Depends
-from fastapi.responses import HTMLResponse, JSONResponse
+from urllib.parse import quote
+
+from fastapi import HTTPException, Request
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.routing import APIRoute
 from pydantic import BaseModel
 from sqlalchemy import text
 
 from open_webui.internal.db import get_async_db_context
-from open_webui.utils.auth import get_admin_user
+from open_webui.utils.auth import get_optional_verified_user_from_request
 
 log = logging.getLogger("feedback_review")
 
@@ -119,8 +124,10 @@ class Event:
     def __init__(self):
         self.valves = self.Valves()
 
-    async def _rows(self, rating: str, days: int) -> list[dict]:
+    async def _rows(self, rating: str, days: int, uid: str | None = None) -> list[dict]:
         where = ["f.type = 'rating'", "f.created_at >= :since"]
+        if uid:
+            where.append("f.user_id = :uid")
         if rating == "down":
             where.append("(f.data->>'rating') = '-1'")
         elif rating == "up":
@@ -135,7 +142,7 @@ class Event:
                         "LEFT JOIN chat c ON c.id = f.meta->>'chat_id' "
                         f"WHERE {' AND '.join(where)} ORDER BY f.created_at DESC LIMIT 200"
                     ),
-                    {"since": int(time.time()) - max(1, days) * 86400},
+                    {"since": int(time.time()) - max(1, days) * 86400, "uid": uid},
                 )
             ).mappings().all()
         out = []
@@ -161,9 +168,17 @@ class Event:
             )
         return out
 
-    async def _page(self, rating: str = "down", days: int = 90, format: str = "html", user=Depends(get_admin_user)):
+    async def _page(self, request: Request, rating: str = "down", days: int = 90, format: str = "html", mine: bool = False):
+        user = await get_optional_verified_user_from_request(request)
+        if user is None:
+            if format == "json":
+                raise HTTPException(status_code=401, detail="Not authenticated")
+            target = request.url.path + (f"?{request.url.query}" if request.url.query else "")
+            return RedirectResponse(f"/auth?redirect={quote(target, safe='')}", status_code=303)
+        # Everyone but admins sees only the ratings they gave themselves; admins too with ?mine=1.
+        mine = mine or user.role != "admin"
         rating = rating if rating in ("down", "up", "all") else "down"
-        rows = await self._rows(rating, days)
+        rows = await self._rows(rating, days, uid=user.id if mine else None)
         if format == "json":
             return JSONResponse(rows)
 
@@ -188,14 +203,15 @@ class Event:
             for r in rows
         ) or "<div class='card muted'>No rated answers in this period yet.</div>"
         downs = sum(r["rating"] == "down" for r in rows)
+        extra = "&mine=1" if mine else ""
         nav = " ".join(
-            f"<a href='{PAGE_PATH}?rating={k}&days={days}'>{'<b>' + t + '</b>' if k == rating else t}</a>"
+            f"<a href='{PAGE_PATH}?rating={k}&days={days}{extra}'>{'<b>' + t + '</b>' if k == rating else t}</a>"
             for k, t in (("down", "👎 only"), ("up", "👍 only"), ("all", "All"))
         )
         body = (
-            "<h1>Feedback review</h1>"
+            f"<h1>{'My feedback' if mine else 'Feedback review'}</h1>"
             f"<p class=muted>Last {days} days · {len(rows)} rating(s), {downs} 👎 · "
-            f"<a href='{PAGE_PATH}?rating={rating}&days={days}&format=json'>JSON</a> · <a href='/'>Back to Open WebUI</a></p>"
+            f"<a href='{PAGE_PATH}?rating={rating}&days={days}{extra}&format=json'>JSON</a> · <a href='/'>Back to Open WebUI</a></p>"
             f"<nav>{nav}</nav>{cards}"
         )
         return HTMLResponse(PAGE.replace("BODY", body), headers={"Cache-Control": "no-store"})
