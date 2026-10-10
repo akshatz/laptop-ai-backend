@@ -222,7 +222,7 @@ models:
       description: null
       capabilities:
         memory: true
-        vision: false
+        vision: true
         terminal: true
         citations: true
         web_search: true
