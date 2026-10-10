@@ -104,14 +104,6 @@ config:
       Questions? Ask Akshat. Close this note with × once you've read it.
     dismissible: true
     timestamp: 1791029217
-  - id: feedback-request-1
-    type: warning
-    title: ''
-    content: |-
-      **Please rate every answer — your feedback makes this AI better**
-      We are still tuning this AI. Under each answer, press 👍 or 👎, then **write in your own words what you liked or didn't like** (wrong number, outdated, too long, didn't answer the question…). Akshat reads every comment and adjusts the settings to fix them.
-    dismissible: true
-    timestamp: 1791122400
   user.permissions:
     chat:
       stt: true
@@ -230,7 +222,7 @@ models:
       description: null
       capabilities:
         memory: true
-        vision: true
+        vision: false
         terminal: true
         citations: true
         web_search: true
@@ -311,6 +303,10 @@ functions:
     is_active: true
     is_global: false
     valves: {}
+  kpi_dashboard:
+    is_active: true
+    is_global: false
+    valves: null
   password_expiry:
     is_active: true
     is_global: false
@@ -333,3 +329,7 @@ functions:
     valves:
       base_url: http://192.168.29.119:8082
       token_max_age_seconds: 7200
+  web_search_notice:
+    is_active: true
+    is_global: true
+    valves: null
