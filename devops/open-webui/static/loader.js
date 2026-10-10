@@ -322,6 +322,15 @@
 		const timer = setInterval(() => checkRole() && clearInterval(timer), 1000);
 	}
 
+	// ---- 5b. no Edit under answers, for everyone ------------------------------------------------
+	// Regular users already lose it through chat.edit = false, but Open WebUI ignores permissions for
+	// admins. Only answers (ResponseMessage.svelte) have the .buttons row, so editing one's own
+	// question stays. The button has no id, only aria-label={$i18n.t('Edit')}, so this matches the
+	// English UI; another interface language would need its translation here.
+	const noAnswerEdit = document.createElement('style');
+	noAnswerEdit.textContent = '.buttons button[aria-label="Edit"] { display: none !important; }';
+	document.head.appendChild(noAnswerEdit);
+
 	// ---- 6. "My usage" in the sidebar -----------------------------------------------------------
 	// A link under Search to the KPI Dashboard Function's own-numbers page (functions/kpi_dashboard.py,
 	// ?view=me, open to every signed-in user). It copies the Search button's classes so it matches
