@@ -30,7 +30,8 @@ alerts:
   - name: openbao_permission_denied
     stream: openbao_audit
     description: An OpenBao request was refused (wrong policy, or someone probing secrets).
-    sql: "select user, path, remote_address, count(*) as denied from openbao_audit where error = 'permission denied' group by user, path, remote_address"
+    # "user" must be quoted: unquoted it's SQL's user keyword, not the column, and the query fails.
+    sql: "select \"user\", path, remote_address, count(*) as denied from openbao_audit where error = 'permission denied' group by \"user\", path, remote_address"
     threshold: 1
     period: 10
     every: 5
