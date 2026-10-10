@@ -71,6 +71,14 @@ services:
     environment:
       - ZO_ROOT_USER_EMAIL=${OPENOBSERVE_ROOT_USER_EMAIL}
       - ZO_ROOT_USER_PASSWORD=${OPENOBSERVE_ROOT_USER_PASSWORD}
+      # Alert emails (devops/openobserve/alerts.py) through the same Gmail relay as Passbolt
+      - ZO_SMTP_ENABLED=true
+      - ZO_SMTP_HOST=smtp.gmail.com
+      - ZO_SMTP_PORT=587
+      - ZO_SMTP_ENCRYPTION=starttls
+      - ZO_SMTP_USER_NAME=${PASSBOLT_SMTP_USER}
+      - ZO_SMTP_PASSWORD=${PASSBOLT_SMTP_PASSWORD}
+      - ZO_SMTP_FROM_EMAIL=${PASSBOLT_SMTP_USER}
     volumes:
       - openobserve-data:/data
     networks:
