@@ -37,7 +37,12 @@ nobody is chatting.
 2. Change one thing (a prompt, `rag.top_k`, the blocklist, the model), run again with a label
    saying what changed, and `--compare` the two runs. `--compare` also lists which settings differ.
 3. Keep the change only if nothing that passed before now fails.
-4. When someone rates an answer 👎 (see `/api/v1/feedback-review`), add it as a case first.
+4. When someone rates an answer 👎 (see `/api/v1/feedback-review`), add it as a case first:
+   `python3 evals/feedback_to_cases.py` appends every new 👎 to `cases.local.yaml` as a
+   `status: draft` case with the question, comment, rated answer and its sources. `run.py` skips
+   drafts unless `--include-drafts`. Review each one: fix the category, write `expect`, add
+   `history` for follow-up questions, drop `rated_answer`/`rated_sources`, and remove `status`.
+   Set `status: rejected` (not delete) to dismiss one; ratings are matched by `feedback_id`.
 
 Private questions (family names, the Family knowledge collection) go in `cases.local.yaml`, same
 format, gitignored. `current-data` cases (prices, weather) can't have fixed answers, so they check

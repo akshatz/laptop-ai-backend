@@ -214,7 +214,7 @@ def score(case: dict, answer: str, info: dict) -> dict:
     return checks
 
 
-def load_cases(only: str | None, category: str | None) -> list:
+def load_cases(only: str | None, category: str | None, include_drafts: bool = False) -> list:
     cases = yaml.safe_load((HERE / "cases.yaml").read_text()) or []
     local = HERE / "cases.local.yaml"
     if local.exists():
@@ -223,6 +223,10 @@ def load_cases(only: str | None, category: str | None) -> list:
     duplicates = {i for i in ids if ids.count(i) > 1}
     if duplicates:
         sys.exit(f"duplicate case ids: {', '.join(sorted(duplicates))}")
+    # feedback_to_cases.py adds 👎 ratings as status: draft until reviewed; rejected ones never run
+    skip = {"rejected"} if include_drafts else {"draft", "rejected"}
+    cases = [c for c in cases if c.get("status") not in skip]
+    ids = [c["id"] for c in cases]
     if only:
         wanted = {i.strip() for i in only.split(",")}
         unknown = wanted - set(ids)
@@ -309,7 +313,7 @@ def run_case(args, env: dict, messages: list, web_search: bool) -> dict:
 def run(args, env: dict) -> None:
     if not env.get("OPEN_WEBUI_API_KEY"):
         sys.exit("OPEN_WEBUI_API_KEY is not set (environment or .env) — see evals/README.md")
-    cases = load_cases(args.only, args.category)
+    cases = load_cases(args.only, args.category, args.include_drafts)
     if not cases:
         sys.exit("no cases selected")
     RUNS.mkdir(exist_ok=True)
@@ -422,6 +426,7 @@ def main() -> None:
     parser.add_argument("--label", help="name for this run, e.g. 'grounded-template'")
     parser.add_argument("--only", help="comma-separated case ids")
     parser.add_argument("--category", help="run one category")
+    parser.add_argument("--include-drafts", action="store_true", help="also run status: draft cases")
     parser.add_argument("--model", default=None, help="model id (default EVAL_MODEL or fast-ai:latest)")
     parser.add_argument("--timeout", type=int, default=300, help="seconds per case (default 300)")
     parser.add_argument("--compare", nargs=2, metavar=("RUN_A", "RUN_B"), help="compare two saved runs")

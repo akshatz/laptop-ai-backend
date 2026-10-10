@@ -110,7 +110,8 @@ put "$APPS/passbolt" \
 put "$APPS/openobserve" \
   root_user_email="$OPENOBSERVE_ROOT_USER_EMAIL" \
   root_user_password="$OPENOBSERVE_ROOT_USER_PASSWORD" \
-  basic_auth="$OPENOBSERVE_BASIC_AUTH"
+  basic_auth="$OPENOBSERVE_BASIC_AUTH" \
+  alert_email="$OPENOBSERVE_ALERT_EMAIL"
 put "$APPS/searxng" \
   secret="$SEARXNG_SECRET"
 

@@ -1,0 +1,77 @@
+# OpenObserve alerts as code, applied by alerts.py (creates or updates by name; alerts not listed
+# here are left alone). Each `sql` returns rows only when something is wrong; the alert fires when
+# it returns >= `threshold` rows over the last `period` minutes. Checked every `every` minutes, and
+# silenced for `silence` minutes after firing. Thresholds were set from the week to 2026-10-10.
+destination: admin-email   # email destination to OPENOBSERVE_ALERT_EMAIL (.env)
+
+alerts:
+  - name: ollama_5xx
+    stream: ollama
+    description: >-
+      Ollama returned 5xx. Single 500s happen whenever a caller hangs up (Stop/Regenerate), so only
+      bursts fire; on 2026-10-04 /api/embed returned 350 503s in one hour.
+    sql: "select path, count(*) as errors from ollama where status like '5%' group by path having count(*) >= 5"
+    threshold: 1
+    period: 15
+    every: 5
+    silence: 60
+
+  - name: web_search_empty
+    stream: openwebui_queries
+    description: >-
+      Several chat requests in a row got no web chunks: SearXNG engines blocked (as on 2026-10-03)
+      or SearXNG down. Answers then come without sources.
+    sql: "select count(*) as empty from openwebui_queries where via = 'chat' and chunks = 0 having count(*) >= 3"
+    threshold: 1
+    period: 30
+    every: 10
+    silence: 120
+
+  - name: openbao_permission_denied
+    stream: openbao_audit
+    description: An OpenBao request was refused (wrong policy, or someone probing secrets).
+    sql: "select user, path, remote_address, count(*) as denied from openbao_audit where error = 'permission denied' group by user, path, remote_address"
+    threshold: 1
+    period: 10
+    every: 5
+    silence: 60
+
+  - name: authentik_login_failures
+    stream: authentik_events
+    description: Five or more failed authentik sign-ins in 15 minutes (guessing, or someone locked out).
+    sql: "select count(*) as failures from authentik_events where action = 'login_failed' having count(*) >= 5"
+    threshold: 1
+    period: 15
+    every: 5
+    silence: 60
+
+  - name: authentik_signin_loop
+    stream: authentik_events
+    description: >-
+      Many authorize_application events in a short time: the SSO redirect loop seen on 2026-10-03
+      (~50 per minute, 1,400 that day). Normal use is a handful per hour.
+    sql: "select user_username, count(*) as authorizations from authentik_events where action = 'authorize_application' group by user_username having count(*) >= 30"
+    threshold: 1
+    period: 10
+    every: 5
+    silence: 60
+
+  # Shipper silence: no rows in a day means a shipper stopped (e.g. stale OLLAMA_CONTAINER_ID).
+  # An aggregate without GROUP BY always returns one row, so HAVING count(*) = 0 keeps it only when empty.
+  - name: ollama_logs_silent
+    stream: ollama
+    description: No Ollama log lines for 24 h; check ollama-log-shipper and OLLAMA_CONTAINER_ID.
+    sql: "select count(*) as n from ollama having count(*) = 0"
+    threshold: 1
+    period: 1440
+    every: 60
+    silence: 720
+
+  - name: openwebui_queries_silent
+    stream: openwebui_queries
+    description: No chat requests logged for 3 days; check the Query Log Function and openwebui-audit-shipper.
+    sql: "select count(*) as n from openwebui_queries having count(*) = 0"
+    threshold: 1
+    period: 4320
+    every: 60
+    silence: 1440
