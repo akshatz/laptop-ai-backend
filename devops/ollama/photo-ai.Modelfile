@@ -1,0 +1,16 @@
+# photo-ai: Gemma 3 4B, the model for questions about pictures (fast-ai, Llama 3.2 3B, can't read
+# images). ~3.3 GB; smart-ai (Gemma 3 12B) also reads images but needs ~8 GB, more than this laptop
+# has free. Ollama loads it only when someone asks it something, swapping it with fast-ai.
+#
+# Create or update it inside the ollama container (doesn't restart Ollama):
+#   docker exec laptop-ollama ollama pull gemma3:4b
+#   docker cp devops/ollama/photo-ai.Modelfile laptop-ollama:/tmp/photo-ai.Modelfile
+#   docker exec laptop-ollama ollama create photo-ai -f /tmp/photo-ai.Modelfile
+FROM gemma3:4b
+
+# Same CPU share as fast-ai, so the rest of the stack stays responsive while it answers.
+PARAMETER num_thread 6
+# An image takes 256 tokens; 4096 leaves room for the question and a full answer.
+PARAMETER num_ctx 4096
+# Descriptions and readings of text in a picture, not creative writing.
+PARAMETER temperature 0.2

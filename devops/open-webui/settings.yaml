@@ -104,14 +104,6 @@ config:
       Questions? Ask Akshat. Close this note with × once you've read it.
     dismissible: true
     timestamp: 1791029217
-  - id: feedback-request-1
-    type: warning
-    title: ''
-    content: |-
-      **Please rate every answer — your feedback makes this AI better**
-      We are still tuning this AI. Under each answer, press 👍 or 👎, then **write in your own words what you liked or didn't like** (wrong number, outdated, too long, didn't answer the question…). Akshat reads every comment and adjusts the settings to fix them.
-    dismissible: true
-    timestamp: 1791122400
   user.permissions:
     chat:
       stt: true
@@ -229,6 +221,7 @@ models:
     meta:
       description: null
       capabilities:
+        usage: true
         memory: true
         vision: true
         terminal: true
@@ -240,15 +233,24 @@ models:
         status_updates: true
         code_interpreter: true
         image_generation: true
-      knowledge: []
+      knowledge: null
       filterIds:
       - chat_history_trim
+      - photo_router
       defaultFeatureIds:
       - web_search
+      - image_generation
       suggestion_prompts: null
       tags: []
   gemma3:12b:
     is_active: false
+    params: {}
+    meta:
+      description: null
+      capabilities: null
+      knowledge: null
+  gemma3:4b:
+    is_active: true
     params: {}
     meta:
       description: null
@@ -283,6 +285,28 @@ models:
       description: null
       capabilities: null
       knowledge: null
+  photo-ai:latest:
+    is_active: true
+    params: {}
+    meta:
+      description: null
+      capabilities:
+        file_context: true
+        vision: true
+        file_upload: true
+        web_search: true
+        image_generation: true
+        code_interpreter: true
+        terminal: true
+        citations: true
+        status_updates: true
+        memory: true
+        builtin_tools: true
+      knowledge: null
+      defaultFeatureIds:
+      - image_generation
+      suggestion_prompts: null
+      tags: []
   smart-ai:latest:
     is_active: false
     params: {}
@@ -311,6 +335,10 @@ functions:
     is_active: true
     is_global: false
     valves: {}
+  kpi_dashboard:
+    is_active: true
+    is_global: false
+    valves: null
   password_expiry:
     is_active: true
     is_global: false
@@ -319,6 +347,13 @@ functions:
     is_active: true
     is_global: false
     valves: null
+  photo_router:
+    is_active: true
+    is_global: false
+    valves:
+      target_model: photo-ai:latest
+      skip_web_search: true
+      status: Reading the picture with photo-ai…
   query_log:
     is_active: true
     is_global: true
@@ -333,3 +368,7 @@ functions:
     valves:
       base_url: http://192.168.29.119:8082
       token_max_age_seconds: 7200
+  web_search_notice:
+    is_active: true
+    is_global: true
+    valves: null
