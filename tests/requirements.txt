@@ -1,0 +1,5 @@
+# Test dependencies: custom-backend's own pins plus pytest. The Functions' tests need only what's
+# already in there (pydantic, fastapi, sqlalchemy).
+-r ../custom-backend/requirements.txt
+pytest==8.4.2
+pytest-asyncio==1.2.0

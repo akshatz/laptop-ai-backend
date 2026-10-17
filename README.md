@@ -478,6 +478,24 @@ authentik's audit events go to O2 stream **`authentik_events`**, next to Open We
 
   Start it again with `docker start laptop-opencode` (it has `restart: "no"`, so a reboot doesn't start it).
 
+## Tests
+
+`pytest` covers custom-backend's endpoints (auth, chats, RAG ingestion) and the logic of the Open WebUI Functions (Regenerate Limit, Chat History Trim, Query Log, Feedback Review, Photo Router, Web Search Notice). GitHub Actions runs them on every push ([.github/workflows/tests.yml](.github/workflows/tests.yml)).
+
+- **custom-backend** tests import the real app with stand-ins for OpenBao and Milvus (no running stack needed) and use a real Postgres, given by `TEST_DATABASE_URL`. Its tables are dropped and recreated, so the database name must end in `_test`. Without `TEST_DATABASE_URL` these tests are skipped.
+- **Functions** tests load each file from `devops/open-webui/functions/` with stand-ins for the Open WebUI internals it imports.
+
+Run them on the laptop (Python 3.11, against a throwaway database on `postgres-db`):
+
+```bash
+python3.11 -m venv .venv && .venv/bin/pip install -r tests/requirements.txt
+docker exec laptop-postgres psql -U "$POSTGRES_USER" -d postgres -c "create database custom_backend_test"   # once
+export $(grep -v '^#' .env | xargs)
+TEST_DATABASE_URL="postgresql+asyncpg://$POSTGRES_USER:$POSTGRES_PASSWORD@localhost:5433/custom_backend_test" .venv/bin/pytest -v
+```
+
+Saved runs (with start times) are in [tests/runs/](tests/runs/).
+
 ## Known gaps / TODO
 
 - `custom-backend/models.py` and `database/init_db.py` declare the same models independently — keep them in sync by hand when changing either.

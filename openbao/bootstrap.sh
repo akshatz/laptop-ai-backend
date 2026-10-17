@@ -2,7 +2,7 @@
 # One-time setup for the openbao service: init, unseal, enable KV, create an
 # AppRole for custom-backend, and write each app's secrets from .env to
 # apps/default/<app> (custom-backend, postgres, open-webui, milvus,
-# authentik, passbolt, openobserve, searxng).
+# authentik, passbolt, openobserve, searxng, opencode).
 #
 # Run this once after `docker compose up -d openbao`, with the stack's .env
 # fully populated (every secret in .env.example; the script stops on a missing one).
@@ -114,6 +114,11 @@ put "$APPS/openobserve" \
   alert_email="$OPENOBSERVE_ALERT_EMAIL"
 put "$APPS/searxng" \
   secret="$SEARXNG_SECRET"
+# openwebui_api_key is optional (opencode works with Ollama directly without it), so only when set.
+put "$APPS/opencode" \
+  server_password="$OPENCODE_SERVER_PASSWORD" \
+  basic_auth="$OPENCODE_BASIC_AUTH" \
+  ${OPENWEBUI_API_KEY:+"openwebui_api_key=$OPENWEBUI_API_KEY"}
 
 # Remove earlier layouts carried over by the mount move: flat paths directly under the mount
 # (custom-backend, and copies for authentik, openobserve, passbolt, searxng), and

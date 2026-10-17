@@ -156,6 +156,7 @@ Secrets are grouped as `apps/<environment>/<app>` (the KV v2 engine is mounted a
 | `apps/default/passbolt` | SMTP relay, MariaDB password | people |
 | `apps/default/openobserve` | root login, basic-auth header value | people |
 | `apps/default/searxng` | secret | people |
+| `apps/default/opencode` | server password, basic-auth header value, Open WebUI API key (only when `OPENWEBUI_API_KEY` is set) | people |
 
 Only `custom-backend` reads from OpenBao; the other services still take their
 secrets from `.env`, so these are reference copies. After changing a value in

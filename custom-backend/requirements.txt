@@ -9,6 +9,9 @@ orjson==3.12.0
 httpx==0.28.1
 hvac==2.3.0
 passlib[bcrypt]==1.7.4
+# passlib 1.7.4 (its last release) breaks with bcrypt >= 4.1: every hash raises "password cannot be
+# longer than 72 bytes" from its bug-detection probe. Caught by tests/backend.
+bcrypt==4.0.1
 alembic==1.16.1
 langchain==0.3.27
 langchain-ollama==0.3.10

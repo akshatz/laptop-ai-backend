@@ -5,7 +5,7 @@ What this stack still lacks as an AI/LLM engineering setup, in the order it make
 | # | Step | Done when | Extra RAM | Status |
 |---|---|---|---|---|
 | 1 | **Prompts and settings as code** | Open WebUI's tuned settings (answer and search prompts, retrieval settings, model params, Function switches) live in `devops/open-webui/settings.yaml`; `settings.py export/diff/apply` syncs them with the DB; eval runs record which settings version they tested | none | done 2026-10-03 |
-| 2 | **Tests in CI** | `pytest` covers custom-backend endpoints and the Functions' logic (regenerate limit, history trim, query log, feedback review); GitHub Actions runs them on every push | none | |
+| 2 | **Tests in CI** | `pytest` covers custom-backend endpoints and the Functions' logic (regenerate limit, history trim, query log, feedback review); GitHub Actions runs them on every push | none | built 2026-10-17 (55 tests; found 2 login bugs); done once CI is green |
 | 3 | **Model-graded evals** | Besides the regex checks, each eval answer gets a faithfulness score (every claim supported by its sources) and a retrieval score (the expected fact was in the chunks the model saw) | none locally (judge model to be chosen: local is slow, cloud sees only the public eval questions) | |
 | 4 | **LLM tracing** | Each question's steps (query generation, search, fetch, embedding, rerank, answer) show up as one trace with timings and token counts in OpenObserve, which already accepts traces | small (O2 storage) | |
 | 5 | **Tools and function calling** | A stock and index price tool answers price questions from market data instead of web pages; evals measure how reliably the 3B model calls it | small | |
