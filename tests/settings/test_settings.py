@@ -49,7 +49,7 @@ INSERT INTO model (id, params, meta, is_active) VALUES
   ('llama3.2:latest', NULL, NULL, false);
 INSERT INTO function (id, valves, is_active, is_global) VALUES
   ('regenerate_limit', '{"max_answers": 3}', true, true),
-  ('authentik_user_cleanup', '{"api_token": "real-token", "archive_chats": true}', true, false);
+  ('authentik_user_cleanup', '{"api_token": "fake-token-for-tests", "archive_chats": true}', true, false);
 """
 
 
@@ -131,7 +131,7 @@ def test_secret_valves_never_reach_the_file(settings):
     run(settings, "export")
     data = yaml.safe_load(settings.SETTINGS.read_text())
     assert data["functions"]["authentik_user_cleanup"]["valves"]["api_token"] == settings.REDACTED
-    assert "real-token" not in settings.SETTINGS.read_text()
+    assert "fake-token-for-tests" not in settings.SETTINGS.read_text()
 
 
 def test_apply_writes_the_changes_and_keeps_redacted_secrets(settings):
@@ -157,7 +157,7 @@ def test_apply_writes_the_changes_and_keeps_redacted_secrets(settings):
     assert meta["filterIds"] == ["chat_history_trim", "photo_router"]
     assert meta["profile_image_url"] == "data:big"  # unmanaged meta keys are kept
     valves = json.loads(psql("SELECT valves FROM function WHERE id = 'authentik_user_cleanup';"))
-    assert valves["api_token"] == "real-token"  # REDACTED in the file → DB value kept
+    assert valves["api_token"] == "fake-token-for-tests"  # REDACTED in the file → DB value kept
 
 
 def test_apply_backs_up_the_previous_values_unredacted(settings):
@@ -170,7 +170,7 @@ def test_apply_backs_up_the_previous_values_unredacted(settings):
     assert oct(backup.stat().st_mode & 0o777) == "0o600"
     saved = json.loads(backup.read_text())
     assert saved["config"]["rag.top_k"] == 6
-    assert saved["functions"]["authentik_user_cleanup"]["valves"]["api_token"] == "real-token"
+    assert saved["functions"]["authentik_user_cleanup"]["valves"]["api_token"] == "fake-token-for-tests"
 
 
 def test_unset_config_keys_are_created(settings):

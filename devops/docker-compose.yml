@@ -65,6 +65,7 @@ services:
       - opencode-workspace:/root/workspace
     networks:
       - ai-network
+      - opencode-net
 
   # 📊 GRAFANA LGTM: Unified OpenTelemetry Monitoring Platform (Grafana, Loki, Tempo, Mimir)
   # Opt-in (profile "lgtm"), off by default to save ~0.8 GB RAM on the 16 GB laptop: logs go to
@@ -420,7 +421,7 @@ services:
     image: caddy:2
     container_name: laptop-open-webui-proxy
     restart: unless-stopped
-    # Also fronts authentik on 9443 and opencode on 4443. No depends_on open-webui: open-webui waits for this proxy's CA
+    # Also fronts authentik on 9443 and opencode on 4443 (one container per person). No depends_on open-webui: open-webui waits for this proxy's CA
     # (via caddy-ca-export), and Caddy resolves upstreams per request anyway.
     ports:
       - "8444:443"
@@ -428,13 +429,14 @@ services:
       - "4443:4443"
     environment:
       - OPEN_WEBUI_HOST=${OPEN_WEBUI_HOST}
-      # base64 of opencode:<OPENCODE_SERVER_PASSWORD>, added by Caddy after authentik sign-in.
-      - OPENCODE_BASIC_AUTH=${OPENCODE_BASIC_AUTH}
     volumes:
       - ./caddy/Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy-data:/data
     networks:
       - ai-network
+      # Personal opencode containers (devops/opencode/provision.py) live only on opencode-net; they
+      # reach Ollama's chat API (:11434) and SearXNG (:8081) through this proxy, nothing else.
+      - opencode-net
 
   # 📜 CADDY CA EXPORT: one-shot copy of Caddy's public root cert (only root.crt — never the CA key)
   # into caddy-ca-public, so open-webui can trust authentik's HTTPS endpoint without mounting
@@ -766,4 +768,8 @@ volumes:
 
 networks:
   ai-network:
+    driver: bridge
+  # Personal opencode containers + open-webui-proxy + laptop-opencode. Kept apart from ai-network,
+  # so a root shell in someone's opencode can't reach Postgres, OpenBao, Milvus, authentik, ….
+  opencode-net:
     driver: bridge

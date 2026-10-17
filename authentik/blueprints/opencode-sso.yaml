@@ -3,11 +3,11 @@
 #
 # Puts opencode (https://${OPEN_WEBUI_HOST}:4443) behind authentik: Caddy's forward_auth asks the
 # embedded outpost on every request, so people sign in with their authentik account (password +
-# TOTP, same login flow as Open WebUI). Only members of group opencode-users get in; add people
-# under Directory → Groups. After authentik lets a request through, Caddy adds opencode's own
-# basic-auth header (OPENCODE_BASIC_AUTH), so users never see opencode's password prompt.
-# Everyone who gets in shares the one opencode container: same sessions, same /workspace, root
-# shell — give access only to people you'd trust with that.
+# TOTP, same login flow as Open WebUI). Only users devops/opencode/provision.py has given an opencode
+# pass: it puts X-Opencode-Upstream/X-Opencode-Auth in their attributes (additionalHeaders), which the
+# outpost hands to Caddy, so each person reaches only their own container. New sign-ups get theirs
+# within a minute; until then (or when all OPENCODE_MAX_USERS places are taken) authentik says
+# "Permission denied".
 version: 1
 metadata:
   name: laptop-ai-backend - opencode SSO
@@ -19,8 +19,10 @@ entries:
         name: laptop-ai-backend - Open WebUI SSO with required TOTP
       required: true
 
+  # Earlier versions allowed only this group (one shared opencode). Removed: everyone gets their own.
   - model: authentik_core.group
     id: opencode-users
+    state: absent
     identifiers:
       name: opencode-users
 
@@ -48,9 +50,26 @@ entries:
       policy_engine_mode: any
 
   - model: authentik_policies.policybinding
+    state: absent
     identifiers:
       target: !KeyOf opencode-app
       group: !KeyOf opencode-users
+
+  # Passes only users with an assigned opencode (provision.py). Safe whichever is applied first:
+  # nobody has the headers until provision.py runs, and it refuses to run before Caddy routes by them.
+  - model: authentik_policies_expression.expressionpolicy
+    id: opencode-assigned
+    identifiers:
+      name: opencode-assigned
+    attrs:
+      expression: |
+        headers = (request.user.attributes or {}).get("additionalHeaders") or {}
+        return bool(headers.get("X-Opencode-Upstream"))
+
+  - model: authentik_policies.policybinding
+    identifiers:
+      target: !KeyOf opencode-app
+      policy: !KeyOf opencode-assigned
     attrs:
       order: 0
 

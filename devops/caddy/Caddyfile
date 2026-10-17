@@ -26,22 +26,51 @@ https://{$OPEN_WEBUI_HOST}:9443, https://localhost:9443 {
 	reverse_proxy authentik-server:9000
 }
 
-# opencode (coding agent web UI), behind authentik sign-in (authentik/blueprints/opencode-sso.yaml,
-# group opencode-users). It runs shell commands as root in its container, so allow this port in
-# the host firewall only for devices that need it.
+# opencode (coding agent web UI), behind authentik sign-in (authentik/blueprints/opencode-sso.yaml).
+# Every person has their own opencode container; devops/opencode/provision.py creates it and puts
+# two headers in their authentik account (additionalHeaders), which authentik's outpost hands to
+# Caddy after sign-in: X-Opencode-Upstream (their container) and X-Opencode-Auth (its basic auth).
+# Each container runs shell commands as root, so allow this port in the host firewall only for
+# devices that need it.
 https://{$OPEN_WEBUI_HOST}:4443 {
 	tls internal
 	route {
+		# Only authentik may set these: drop anything the browser sent.
+		request_header -X-Opencode-Upstream
+		request_header -X-Opencode-Auth
 		# authentik's outpost endpoints (sign-in callback, sign-out) on this same host.
 		reverse_proxy /outpost.goauthentik.io/* authentik-server:9000
 		forward_auth authentik-server:9000 {
 			uri /outpost.goauthentik.io/auth/caddy
-			copy_headers X-Authentik-Username X-Authentik-Email
+			copy_headers X-Authentik-Username X-Opencode-Upstream X-Opencode-Auth
 			trusted_proxies private_ranges
 		}
-		# Signed in: add opencode's own basic auth, so it doesn't ask a second time.
-		reverse_proxy opencode:4096 {
-			header_up Authorization "Basic {$OPENCODE_BASIC_AUTH}"
+		# Signed in but no opencode yet (just signed up, or all places taken).
+		@unassigned not header_regexp X-Opencode-Upstream ^(laptop-opencode|opencode-u[0-9]+)$
+		respond @unassigned "Your opencode is being set up. Try again in a minute. If it still isn't there after a few minutes, ask the admin." 503
+		# Their own container, with its own basic auth, so opencode doesn't ask for a password.
+		reverse_proxy {http.request.header.X-Opencode-Upstream}:4096 {
+			header_up Authorization "Basic {http.request.header.X-Opencode-Auth}"
+			header_up -X-Opencode-Auth
+			header_up -X-Opencode-Upstream
 		}
 	}
+	# A stopped container (idle for 30 minutes): provision.py starts it again within a minute when
+	# it sees this request in Caddy's log.
+	handle_errors 502 503 504 {
+		respond "Your opencode is starting. Refresh this page in a minute." 503
+	}
+}
+
+# Internal only (not published): what the personal opencode containers on opencode-net may reach.
+# Only the OpenAI-style chat API of Ollama (no pulling or deleting models) and SearXNG's search.
+http://:11434 {
+	@other not path /v1/*
+	respond @other 403
+	reverse_proxy ollama:11434
+}
+http://:8081 {
+	@other not path /search /search/*
+	respond @other 403
+	reverse_proxy searxng:8080
 }

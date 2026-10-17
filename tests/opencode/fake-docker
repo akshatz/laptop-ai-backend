@@ -1,0 +1,58 @@
+#!/usr/bin/env bash
+# Stand-in for `docker` when testing devops/opencode/*.sh. Every call is appended to $FAKE_LOG.
+#   docker inspect -f '{{.State.Running}}' laptop-opencode  → $FAKE_RUNNING (true/false)
+#   docker inspect -f '{{index .Config.Labels …}}' NAME     → $FAKE_OWNER (empty: no label)
+#   docker ps -a --filter label=laptop.opencode.user …      → $FAKE_PERSONAL (container names)
+#   docker exec laptop-opencode awk … /proc/net/tcp*       → $FAKE_CONNECTIONS
+#   docker exec laptop-opencode opencode db --format json Q → $FAKE_DATA/<session|message|part>.json
+#                                                             (nothing and exit 1 when $FAKE_DB_FAIL=1,
+#                                                             or $FAKE_JSON_FAIL=1 for json reads only)
+#   docker exec laptop-opencode opencode db --format tsv Q  → header line + $FAKE_MARKER
+#   docker exec [-i] [-e K=V] laptop-postgres psql …       → the real psql (PGHOST/PGPORT/PGPASSWORD)
+#   docker stop laptop-opencode                             → only logged
+set -euo pipefail
+
+printf '%s\n' "$*" >> "$FAKE_LOG"
+command="$1"; shift
+
+case "$command" in
+  inspect)
+    if [[ "$*" == *Labels* ]]; then echo "${FAKE_OWNER:-}"; else echo "${FAKE_RUNNING:-true}"; fi
+    ;;
+  ps)
+    for name in ${FAKE_PERSONAL:-}; do echo "$name"; done
+    ;;
+  stop)
+    echo "$1"
+    ;;
+  exec)
+    while [[ "$1" == -* ]]; do
+      case "$1" in
+        -e) export "$2"; shift 2 ;;
+        *) shift ;;
+      esac
+    done
+    shift  # container
+    case "$1" in
+      awk) echo "${FAKE_CONNECTIONS:-0}" ;;
+      psql) exec "$@" ;;
+      opencode)
+        [ "${FAKE_DB_FAIL:-0}" = 1 ] && exit 1
+        format="$4"; query="$5"
+        [ "${FAKE_JSON_FAIL:-0}" = 1 ] && [ "$format" = json ] && exit 1
+        if [ "$format" = tsv ]; then
+          printf 'marker\n%s\n' "${FAKE_MARKER:-}"
+        else
+          for table in session message part; do
+            if [[ "$query" == *"from $table"* ]]; then cat "$FAKE_DATA/$table.json"; exit 0; fi
+          done
+          echo "fake-docker: unknown query: $query" >&2; exit 1
+        fi
+        ;;
+      *) echo "fake-docker: unexpected exec: $*" >&2; exit 1 ;;
+    esac
+    ;;
+  *)
+    echo "fake-docker: unexpected command: $command $*" >&2; exit 1
+    ;;
+esac

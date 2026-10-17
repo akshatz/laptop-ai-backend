@@ -50,7 +50,7 @@ async def test_expired_password_email_link_works_on_the_password_reset_page(expi
     reset = load_function("password_reset").Event()
     reset._resettable = AsyncMock(return_value=(USER, "hash-1"))
     owui.Auths.update_user_password_by_id.return_value = True
-    result = await reset._reset(SimpleNamespace(), token=token, password="New-Password-7")
+    result = await reset._reset(SimpleNamespace(), token=token, password="test-only-password-2")
     assert result == {"status": "password_updated"}
 
 
