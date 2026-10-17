@@ -85,8 +85,9 @@ All services share the `ai-network` Docker bridge network, orchestrated via [dev
 | `postgres-db` | PostgreSQL 16 (custom-backend's database plus the `open_webui` and `authentik` databases) | 5433 → 5432 |
 | `ollama` | Local LLM inference engine (chat models and the `embeddinggemma` embedding model) | (internal) |
 | `open-webui` | Chat UI: Ollama models, web search, RAG on Milvus, sign-in through authentik, extended by the Functions in [devops/open-webui/functions/](devops/open-webui/functions/) | 8082 → 8080 |
-| `open-webui-proxy` | Caddy HTTPS front for devices on the LAN (cert from Caddy's local CA): Open WebUI on 8444, authentik on 9443 | 8444 → 443, 9443 |
+| `open-webui-proxy` | Caddy HTTPS front for devices on the LAN (cert from Caddy's local CA): Open WebUI on 8444, authentik on 9443, opencode on 4443 (behind authentik sign-in) | 8444 → 443, 9443, 4443 |
 | `authentik-server` + `authentik-worker` | SSO with TOTP (Google Authenticator) for Open WebUI and OpenBao; sign-up, invitations, password reset (see [Open WebUI SSO + MFA](#open-webui-sso--mfa-authentik)) | (through `open-webui-proxy`, 9443) |
+| `opencode` | Coding agent with a web UI, models through Open WebUI's API or Ollama; stopped when idle (see [opencode](#opencode)) | 127.0.0.1:4096; LAN through `open-webui-proxy`, 4443 |
 | `searxng` | Self-hosted metasearch engine for Open WebUI's web search | (internal, 8080) |
 | `milvus` + `milvus-etcd` + `milvus-minio` | Vector store for RAG document embeddings | (internal, 19530) |
 | `openbao` | Secrets storage (Postgres creds, AppRole broker) | 8200 |
@@ -143,6 +144,9 @@ cp .env.example .env
 | `OPENBAO_ADMIN_PASSWORD` / `OPENBAO_READONLY_PASSWORD` | `openbao/setup-users.sh` | Passwords for the human OpenBao logins `bao-admin` and `bao-readonly` (the root token is for emergencies only) |
 | `OPENBAO_OIDC_CLIENT_ID` / `OPENBAO_OIDC_CLIENT_SECRET` | authentik, `openbao/setup-users.sh` | Optional — lets people sign in to OpenBao through authentik; see [openbao/README.md](openbao/README.md) |
 | `SEARXNG_SECRET` | `searxng` | Signs SearXNG's cookies (`openssl rand -hex 32`) |
+| `OPENCODE_SERVER_PASSWORD` | `opencode` | opencode's own login (username `opencode`) |
+| `OPENCODE_BASIC_AUTH` | `open-webui-proxy` | base64 of `opencode:<OPENCODE_SERVER_PASSWORD>`, sent to opencode by Caddy after authentik sign-in. Regenerate when the password changes: `printf 'opencode:%s' "$OPENCODE_SERVER_PASSWORD" \| base64 -w0` |
+| `OPENWEBUI_API_KEY` | `opencode` | Open WebUI API key (Settings → Account → API Keys) for opencode's `openwebui` provider |
 | `RAG_RERANKING_MODEL` | `open-webui` | Reranker for web and document search (default `cross-encoder/ms-marco-MiniLM-L6-v2`); a saved setting in Open WebUI overrides it |
 
 `custom-backend` does not read `POSTGRES_PASSWORD` or a `DATABASE_URL` directly — it fetches its Postgres credentials from OpenBao (see below) at startup.
@@ -453,6 +457,26 @@ authentik's audit events go to O2 stream **`authentik_events`**, next to Open We
 - Each entry's message reads `<username> <action> <IP>`, e.g. `akadmin login_failed 192.168.29.119`. Fields: `action`, `user_username`, `user_email`, `client_ip`, and `context` (a JSON string with the stage, request details, etc.). Example: `SELECT * FROM "authentik_events" WHERE action = 'login_failed'`.
 - The driver is async, so authentik starts even when the shipper is down (events from that time are lost), and `docker logs` still works through Docker's local cache. The shipper's port 24224 is published on 127.0.0.1 only, because the Docker daemon on the host is what connects to it.
 - authentik also keeps its own event log (**Events → Logs** in the admin UI, 1 year by default).
+
+## opencode
+
+[opencode](https://opencode.ai) is a coding agent with a web UI. It works only in its own `opencode-workspace` volume (never this repo) and runs shell commands as root inside its container.
+
+- **Address:** `https://<OPEN_WEBUI_HOST>:4443` on the LAN, through Caddy, or `http://127.0.0.1:4096` on the laptop itself (opencode's own login: username `opencode`, password `OPENCODE_SERVER_PASSWORD`).
+- **Sign-in on the LAN:** authentik (password + TOTP), only for members of the `opencode-users` group (Directory → Groups). Set up by [authentik/blueprints/opencode-sso.yaml](authentik/blueprints/opencode-sso.yaml) (proxy provider on authentik's embedded outpost, Caddy `forward_auth`). Everyone who gets in shares the same sessions and workspace. Allow port 4443 in the host firewall only for devices that need it.
+- **Models:** set in [devops/opencode/opencode.json](devops/opencode/opencode.json). Provider `openwebui` sends requests through Open WebUI's API (`OPENWEBUI_API_KEY`), so Global Functions run on them; provider `ollama` talks to Ollama directly. Only models listed there show up. After editing it, recreate: `docker compose -f devops/docker-compose.yml up -d --no-deps --force-recreate opencode`.
+- **Web search:** the MCP server `mcp-searxng` (pinned in `opencode.json`) gives opencode `searxng_web_search` and `web_url_read` tools on the stack's own SearXNG. The container has no Node, so it runs through the opencode binary acting as Bun (`BUN_BE_BUN=1 opencode x …`). Space out heavy use: SearXNG's upstream engines block bursts.
+- **Stopped when idle:** [devops/opencode/idle-stop.sh](devops/opencode/idle-stop.sh) stops the container after 30 minutes with no open connection (an open browser tab counts as use), freeing ~0.7 GB RAM. It runs every 5 minutes from a systemd user timer:
+
+  ```bash
+  mkdir -p ~/.config/systemd/user
+  ln -s ~/laptop-ai-backend/devops/opencode/systemd/opencode-idle-stop.{service,timer} ~/.config/systemd/user/
+  systemctl --user daemon-reload && systemctl --user enable --now opencode-idle-stop.timer
+  ```
+
+  On every timer run where something changed (so within ~5 minutes of a finished answer) and once more before stopping, [devops/opencode/sync-to-postgres.sh](devops/opencode/sync-to-postgres.sh) copies opencode's sessions, messages and message parts from its SQLite database into the `opencode` database on `postgres-db` (tables `sessions`, `messages`, `parts`; text of a message is in `parts.data`). opencode itself can't use Postgres (`OPENCODE_DB` is a SQLite path only). The copy is one-way and keeps sessions deleted in opencode (`deleted_at` set). Run it by hand any time opencode is running.
+
+  Start it again with `docker start laptop-opencode` (it has `restart: "no"`, so a reboot doesn't start it).
 
 ## Known gaps / TODO
 

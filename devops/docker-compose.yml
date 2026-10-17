@@ -39,6 +39,33 @@ services:
     networks:
       - ai-network
 
+  # 🧑‍💻 OPENCODE: coding agent with a web UI. Models come through Open WebUI's API (provider
+  # "openwebui", key OPENWEBUI_API_KEY, so Global Functions run) or Ollama directly ("ollama").
+  # Port 4096 is published on 127.0.0.1 only; the LAN reaches it over HTTPS at
+  # https://<OPEN_WEBUI_HOST>:4443 through open-webui-proxy. It runs shell commands as root inside
+  # the container, so it works only in the opencode-workspace volume, never the repo.
+  # Provider/model in devops/opencode/opencode.json (single-file bind mount: recreate after edits).
+  opencode:
+    image: ghcr.io/anomalyco/opencode:1.18.35
+    container_name: laptop-opencode
+    restart: "no"  # stopped when idle by devops/opencode/idle-stop.sh; start by hand
+    command: ["web", "--hostname", "0.0.0.0", "--port", "4096"]
+    working_dir: /root/workspace  # inside ~, so opencode's Open project dialog lists it
+    ports:
+      - "127.0.0.1:4096:4096"
+    environment:
+      - OPENCODE_SERVER_USERNAME=opencode
+      - OPENCODE_SERVER_PASSWORD=${OPENCODE_SERVER_PASSWORD:?set OPENCODE_SERVER_PASSWORD in .env}
+      # Open WebUI API key (Settings → Account → API Keys) for the "openwebui" provider in
+      # opencode.json; empty leaves only the direct "ollama" provider usable.
+      - OPENWEBUI_API_KEY=${OPENWEBUI_API_KEY:-}
+    volumes:
+      - ./opencode/opencode.json:/root/.config/opencode/opencode.json:ro
+      - opencode-data:/root/.local/share/opencode
+      - opencode-workspace:/root/workspace
+    networks:
+      - ai-network
+
   # 📊 GRAFANA LGTM: Unified OpenTelemetry Monitoring Platform (Grafana, Loki, Tempo, Mimir)
   # Opt-in (profile "lgtm"), off by default to save ~0.8 GB RAM on the 16 GB laptop: logs go to
   # OpenObserve, and open-webui no longer exports traces/metrics. Start it with
@@ -393,13 +420,16 @@ services:
     image: caddy:2
     container_name: laptop-open-webui-proxy
     restart: unless-stopped
-    # Also fronts authentik on 9443. No depends_on open-webui: open-webui waits for this proxy's CA
+    # Also fronts authentik on 9443 and opencode on 4443. No depends_on open-webui: open-webui waits for this proxy's CA
     # (via caddy-ca-export), and Caddy resolves upstreams per request anyway.
     ports:
       - "8444:443"
       - "9443:9443"
+      - "4443:4443"
     environment:
       - OPEN_WEBUI_HOST=${OPEN_WEBUI_HOST}
+      # base64 of opencode:<OPENCODE_SERVER_PASSWORD>, added by Caddy after authentik sign-in.
+      - OPENCODE_BASIC_AUTH=${OPENCODE_BASIC_AUTH:?set OPENCODE_BASIC_AUTH in .env}
     volumes:
       - ./caddy/Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy-data:/data
@@ -713,6 +743,8 @@ services:
 
 volumes:
   pg-data:
+  opencode-data:
+  opencode-workspace:
   ollama-models:
   open-webui-data:
   lgtm-data: # Preserves your Grafana dashboards, metrics, and trace histories safely
