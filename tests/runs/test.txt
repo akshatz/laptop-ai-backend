@@ -1,6 +1,6 @@
-Test run: all tests (custom-backend, Open WebUI Functions, opencode, migrations, configs, settings.py, evals)
-Started: 2026-10-17T10:09:22Z
-Commit: df9ec3b on feat/tests-ci, with uncommitted test changes
+Test run: all tests (custom-backend, Open WebUI Functions, opencode incl. provisioner, migrations, configs, settings.py, evals)
+Started: 2026-10-17T11:55:58Z
+Commit: 655570b on feat/opencode-per-user
 Python: Python 3.11.7, Postgres: postgres (PostgreSQL) 16.15, psql: psql (PostgreSQL) 18.6 (Ubuntu 18.6-1.pgdg24.04+2)
 
 tests/backend/test_auth.py::test_register_stores_hash_and_emails_a_token PASSED
@@ -159,6 +159,20 @@ tests/opencode/test_config.py::test_default_and_title_models_are_listed PASSED
 tests/opencode/test_config.py::test_model_ids_look_like_ollama_names PASSED
 tests/opencode/test_config.py::test_searxng_add_on_is_pinned_and_internal PASSED
 tests/opencode/test_config.py::test_sharing_and_autoupdate_are_off PASSED
+tests/opencode/test_provision.py::test_everyone_gets_their_own_container_and_headers PASSED
+tests/opencode/test_provision.py::test_containers_are_isolated_and_limited PASSED
+tests/opencode/test_provision.py::test_a_second_run_changes_nothing PASSED
+tests/opencode/test_provision.py::test_at_most_max_users PASSED
+tests/opencode/test_provision.py::test_deactivated_accounts_lose_the_container_but_not_the_volumes PASSED
+tests/opencode/test_provision.py::test_deleted_accounts_lose_the_container PASSED
+tests/opencode/test_provision.py::test_a_removed_container_comes_back_with_the_same_password PASSED
+tests/opencode/test_provision.py::test_other_additional_headers_are_kept PASSED
+tests/opencode/test_provision.py::test_refuses_until_caddy_routes_per_user PASSED
+tests/opencode/test_provision.py::test_stopped_containers_are_woken_by_requests PASSED
+tests/opencode/test_provision.py::test_dry_run_changes_nothing PASSED
+tests/opencode/test_provision.py::test_service_and_placeholder_accounts_are_excluded_in_the_authentik_query PASSED
+tests/opencode/test_provision.py::test_user_config_has_no_open_webui_key_and_only_reaches_the_proxy PASSED
+tests/opencode/test_provision.py::test_an_empty_user_list_removes_nothing PASSED
 tests/opencode/test_scripts.py::test_sync_creates_the_database_and_copies_everything PASSED
 tests/opencode/test_scripts.py::test_sync_twice_adds_no_duplicates PASSED
 tests/opencode/test_scripts.py::test_changes_are_updated PASSED
@@ -173,6 +187,9 @@ tests/opencode/test_scripts.py::test_idle_limit_is_configurable PASSED
 tests/opencode/test_scripts.py::test_copies_only_when_something_changed PASSED
 tests/opencode/test_scripts.py::test_a_failed_copy_is_retried_next_run PASSED
 tests/opencode/test_scripts.py::test_unreadable_opencode_db_skips_the_copy PASSED
+tests/opencode/test_scripts.py::test_rows_carry_their_owner_and_deletion_is_per_owner PASSED
+tests/opencode/test_scripts.py::test_rows_from_before_owners_existed_become_the_admins PASSED
+tests/opencode/test_scripts.py::test_idle_stop_checks_every_personal_container PASSED
 tests/settings/test_settings.py::test_export_then_diff_is_in_sync PASSED
 tests/settings/test_settings.py::test_secret_valves_never_reach_the_file PASSED
 tests/settings/test_settings.py::test_apply_writes_the_changes_and_keeps_redacted_secrets PASSED
@@ -184,8 +201,12 @@ tests/settings/test_settings.py::test_revisions_are_recorded_once_per_content PA
 tests/settings/test_settings.py::test_without_the_revisions_table_it_only_notes_it PASSED
 tests/settings/test_settings.py::test_values_containing_the_quote_tag_are_refused PASSED
 tests/settings/test_settings.py::test_which_valve_names_count_as_secret PASSED
-====================== 181 passed, 21 warnings in 41.49s =======================
+====================== 198 passed, 21 warnings in 49.07s =======================
 
 devops/validate-configs.sh:
 ok      caddy/Caddyfile (caddy:2)
 ok      otel-collector/authentik-events.yaml (otel/opentelemetry-collector-contrib:0.161.0)
+ok      otel-collector/ollama-logs.yaml (otel/opentelemetry-collector-contrib:0.161.0)
+ok      otel-collector/openbao-audit.yaml (otel/opentelemetry-collector-contrib:0.161.0)
+ok      otel-collector/openwebui-audit.yaml (otel/opentelemetry-collector-contrib:0.161.0)
+Finished: 2026-10-17T11:56:53Z
