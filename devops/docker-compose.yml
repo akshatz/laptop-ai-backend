@@ -429,7 +429,7 @@ services:
     environment:
       - OPEN_WEBUI_HOST=${OPEN_WEBUI_HOST}
       # base64 of opencode:<OPENCODE_SERVER_PASSWORD>, added by Caddy after authentik sign-in.
-      - OPENCODE_BASIC_AUTH=${OPENCODE_BASIC_AUTH:?set OPENCODE_BASIC_AUTH in .env}
+      - OPENCODE_BASIC_AUTH=${OPENCODE_BASIC_AUTH}
     volumes:
       - ./caddy/Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy-data:/data

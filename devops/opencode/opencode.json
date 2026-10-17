@@ -33,7 +33,9 @@
       "enabled": true
     }
   },
+  "enabled_providers": ["openwebui", "ollama"],
   "model": "openwebui/llama3.2:latest",
+  "small_model": "openwebui/llama3.2:latest",
   "autoupdate": false,
   "share": "disabled"
 }
