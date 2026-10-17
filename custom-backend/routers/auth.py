@@ -1,7 +1,7 @@
 import random
 import secrets as secrets_module
 import smtplib
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from email.message import EmailMessage
 from typing import List
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -21,6 +21,12 @@ pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 OTP_VALIDITY = timedelta(minutes=10)
 PASSWORD_MAX_AGE = timedelta(days=180)
+
+
+# The columns are timestamptz, which asyncpg returns timezone-aware, so comparisons need an aware
+# "now" (_now() is naive and raised TypeError on every login).
+def _now() -> datetime:
+    return datetime.now(timezone.utc)
 
 # ✉️ email sending (Gmail SMTP relay, same creds Passbolt uses)
 def _send_email(to_address: str, subject: str, body: str) -> None:
@@ -173,10 +179,10 @@ async def login(payload: LoginRequest, db: AsyncSession = Depends(get_db)):
     if not user.is_verified:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Email address is not verified yet.")
 
-    if datetime.utcnow() - user.password_changed_at > PASSWORD_MAX_AGE:
+    if _now() - user.password_changed_at > PASSWORD_MAX_AGE:
         otp_code = f"{random.randint(0, 999999):06d}"
         user.password_reset_otp = otp_code
-        user.password_reset_otp_expires_at = datetime.utcnow() + OTP_VALIDITY
+        user.password_reset_otp_expires_at = _now() + OTP_VALIDITY
         await db.commit()
 
         _send_email(
@@ -195,7 +201,7 @@ async def login(payload: LoginRequest, db: AsyncSession = Depends(get_db)):
 
     otp_code = f"{random.randint(0, 999999):06d}"
     user.mfa_otp_code = otp_code
-    user.mfa_otp_expires_at = datetime.utcnow() + OTP_VALIDITY
+    user.mfa_otp_expires_at = _now() + OTP_VALIDITY
     await db.commit()
 
     _send_email(
@@ -215,7 +221,7 @@ async def verify_mfa_otp(payload: MfaOtpVerifyRequest, db: AsyncSession = Depend
         not user
         or not user.mfa_otp_code
         or not user.mfa_otp_expires_at
-        or user.mfa_otp_expires_at < datetime.utcnow()
+        or user.mfa_otp_expires_at < _now()
         or not secrets_module.compare_digest(user.mfa_otp_code, payload.otp_code)
     ):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid or expired one-time code.")
@@ -236,7 +242,7 @@ async def change_password(payload: PasswordChangeRequest, db: AsyncSession = Dep
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid email or password.")
 
     user.password_hash = pwd_context.hash(payload.new_password)
-    user.password_changed_at = datetime.utcnow()
+    user.password_changed_at = _now()
     await db.commit()
     await db.refresh(user)
 
@@ -263,7 +269,7 @@ async def forgot_password(payload: PasswordForgotRequest, db: AsyncSession = Dep
     if user:
         otp_code = f"{random.randint(0, 999999):06d}"
         user.password_reset_otp = otp_code
-        user.password_reset_otp_expires_at = datetime.utcnow() + OTP_VALIDITY
+        user.password_reset_otp_expires_at = _now() + OTP_VALIDITY
         await db.commit()
 
         _send_email(
@@ -283,7 +289,7 @@ async def reset_password(payload: PasswordResetRequest, db: AsyncSession = Depen
         not user
         or not user.password_reset_otp
         or not user.password_reset_otp_expires_at
-        or user.password_reset_otp_expires_at < datetime.utcnow()
+        or user.password_reset_otp_expires_at < _now()
         or not secrets_module.compare_digest(user.password_reset_otp, payload.otp_code)
     ):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid or expired one-time code.")
@@ -291,7 +297,7 @@ async def reset_password(payload: PasswordResetRequest, db: AsyncSession = Depen
     user.password_hash = pwd_context.hash(payload.new_password)
     user.password_reset_otp = None
     user.password_reset_otp_expires_at = None
-    user.password_changed_at = datetime.utcnow()
+    user.password_changed_at = _now()
     await db.commit()
     await db.refresh(user)
 

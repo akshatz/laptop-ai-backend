@@ -242,7 +242,7 @@ class Event:
         response = {"status": "If an account exists for that email, a password reset link was sent."}
 
         now = time.monotonic()
-        if now - _last_request.get(email, 0) < REQUEST_COOLDOWN:
+        if now - _last_request.get(email, float("-inf")) < REQUEST_COOLDOWN:
             return response
         _last_request[email] = now
 

@@ -12,7 +12,7 @@ on:
         required: true
         default: main
 
-# Both jobs only check out and build; nothing needs write access to the repo.
+# The jobs only check out, validate and build; nothing needs write access to the repo.
 permissions:
   contents: read
 
@@ -37,3 +37,13 @@ jobs:
           ref: ${{ inputs.branch || github.ref }}
       - name: Build custom-backend image
         run: docker build -f custom-backend/Dockerfile .
+
+  # Caddyfile and OpenTelemetry Collector configs, validated in the images compose runs them in.
+  config-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.branch || github.ref }}
+      - name: Validate configs
+        run: devops/validate-configs.sh

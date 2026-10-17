@@ -260,7 +260,7 @@ class Event:
         response = {"status": "If a pending account exists for that email, a verification link was sent."}
 
         now = time.monotonic()
-        if now - _last_resend.get(email, 0) < RESEND_COOLDOWN:
+        if now - _last_resend.get(email, float("-inf")) < RESEND_COOLDOWN:
             return response
         _last_resend[email] = now
 

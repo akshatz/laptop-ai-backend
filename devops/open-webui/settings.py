@@ -158,7 +158,10 @@ def text_json(value):
 
 
 def is_secret(name: str) -> bool:
-    return any(word in name.lower() for word in SECRET_WORDS)
+    # Also names ending in "token" (api_token, User Cleanup's authentik token), but not settings that
+    # merely mention tokens (token_max_age_seconds, max_tokens).
+    name = name.lower()
+    return any(word in name for word in SECRET_WORDS) or name.endswith("token")
 
 
 def read_db(env: dict) -> dict:
