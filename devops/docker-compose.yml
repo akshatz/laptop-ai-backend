@@ -3,7 +3,7 @@ name: laptop-ai-backend
 services:
   # 🐘 POSTGRESQL: High-efficiency relational database
   postgres-db:
-    image: postgres:16-alpine
+    image: postgres:16.15-alpine@sha256:721873c34ceb9f8d8fc265984940dc982404c105f19ad51be9fdc5970a6080ea
     container_name: laptop-postgres
     restart: unless-stopped
     ports:
@@ -25,7 +25,7 @@ services:
 
   # 🧠 OLLAMA: Local AI Engine
   ollama:
-    image: ollama/ollama:latest
+    image: ollama/ollama:latest  # not pinned on purpose: changing this line recreates Ollama on the next `up`; pin it (0.34.4 now) when you choose to recreate it
     container_name: laptop-ollama
     restart: unless-stopped
     volumes:
@@ -75,7 +75,7 @@ services:
   # again to feed it.
   lgtm:
     profiles: ["lgtm"]
-    image: grafana/otel-lgtm:latest
+    image: grafana/otel-lgtm:0.33.1@sha256:d6c52678ab5b7144f27ae569fd778608121c0f4a10eb411983750a0d67c1fbe3
     container_name: laptop-lgtm
     environment:
       - PYROSCOPE_MEMBERLIST_INTERFACE_NAMES=lo
@@ -91,7 +91,7 @@ services:
 
   # 🔭 OPENOBSERVE (O2): Unified logs/metrics/traces observability platform
   openobserve:
-    image: openobserve/openobserve:latest
+    image: openobserve/openobserve@sha256:d4a878fac1f6c56003764f7f2a1625668917388f167e222c8c810de3f54c56ba  # build 1e257e6 (2026-09-24); O2 shows no version number
     container_name: laptop-openobserve
     restart: unless-stopped
     ports:
@@ -393,7 +393,7 @@ services:
   # migrations. Mounts the open-webui data volume read-only to import the Functions' old SQLite files.
   # Runs on every `up`; a no-op once at head.
   open-webui-fn-migrate:
-    image: python:3.12-slim
+    image: python:3.12.14-slim@sha256:f77ac9e44ae96ef2c90b8053ea08c31f8be030f824196b0ae4db6d462c84e51f
     container_name: laptop-open-webui-fn-migrate
     restart: "no"
     environment:
@@ -418,7 +418,7 @@ services:
   #   docker cp laptop-open-webui-proxy:/data/caddy/pki/authorities/local/root.crt caddy-root.crt
   # and import it into the OS/browser trust store.
   open-webui-proxy:
-    image: caddy:2
+    image: caddy:2.11.4@sha256:0c994536bddb66445885237f1a5dcc1916bccea922661c76b4e9fc24061f9b52
     container_name: laptop-open-webui-proxy
     restart: unless-stopped
     # Also fronts authentik on 9443 and opencode on 4443 (one container per person). No depends_on open-webui: open-webui waits for this proxy's CA
@@ -442,7 +442,7 @@ services:
   # into caddy-ca-public, so open-webui can trust authentik's HTTPS endpoint without mounting
   # caddy-data. Waits for Caddy to create its CA on first start. Runs on every `up`.
   caddy-ca-export:
-    image: caddy:2
+    image: caddy:2.11.4@sha256:0c994536bddb66445885237f1a5dcc1916bccea922661c76b4e9fc24061f9b52
     container_name: laptop-caddy-ca-export
     restart: "no"
     volumes:
@@ -459,7 +459,7 @@ services:
   # 🗃️ AUTHENTIK DB: one-shot creation of the `authentik` database in postgres-db. The initdb
   # scripts only run on a fresh volume, so this covers existing installs too. No-op once it exists.
   authentik-db-init:
-    image: postgres:16-alpine
+    image: postgres:16.15-alpine@sha256:721873c34ceb9f8d8fc265984940dc982404c105f19ad51be9fdc5970a6080ea
     container_name: laptop-authentik-db-init
     restart: "no"
     environment:
@@ -627,7 +627,7 @@ services:
   # root/Milvus default and rotating it, so repeat `docker compose up` runs
   # don't fail once the password has already been changed.
   milvus-init-auth:
-    image: python:3.12-slim
+    image: python:3.12.14-slim@sha256:f77ac9e44ae96ef2c90b8053ea08c31f8be030f824196b0ae4db6d462c84e51f
     container_name: laptop-milvus-init-auth
     restart: "no"
     environment:
@@ -644,7 +644,7 @@ services:
 
   # 🔐 OPENBAO: Secrets storage and dynamic credential broker
   openbao:
-    image: openbao/openbao:latest
+    image: openbao/openbao:2.7.0@sha256:71156a1c6623a5fa3f5e61b0c6a8ead0faf0df29a778339188443551995d1315
     container_name: laptop-openbao
     restart: unless-stopped
     cap_add:
@@ -663,7 +663,7 @@ services:
   # 🔑 PASSBOLT-DB: Dedicated MariaDB instance for Passbolt (its officially
   # tested/supported database — kept separate from the app's postgres-db)
   passbolt-db:
-    image: mariadb:11
+    image: mariadb:11.8.9@sha256:79d59758afc91b89b120b0a8904d637f5a3b3e1c4900f29b740d6d46c72fef68
     container_name: laptop-passbolt-db
     restart: unless-stopped
     environment:
@@ -684,7 +684,7 @@ services:
   # 🔑 PASSBOLT: Self-hosted password manager, for storing OpenBao root token,
   # unseal key, and AppRole credentials somewhere more usable than raw files
   passbolt:
-    image: passbolt/passbolt:latest-ce
+    image: passbolt/passbolt:5.16.0-1-ce@sha256:1768916a04b10a3ade0d2162b00febe602fd7d32cda3808391529600787c67bd
     container_name: laptop-passbolt
     restart: unless-stopped
     ports:

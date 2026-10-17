@@ -70,6 +70,7 @@ A personal laptop AI dev stack, orchestrated via `devops/docker-compose.yml`: Po
 
 ## Conventions observed in this repo
 
+- Every image in `devops/docker-compose.yml` is pinned to an exact version, most as `name:version@sha256:digest` (pinned 2026-10-17 to what was running; openobserve by digest only, since O2 reports no version number) — except `ollama/ollama:latest`, deliberately: changing that line makes the next `up` recreate Ollama, which only the user decides (pin it, 0.34.4 then, when they choose to recreate it). Changing any pinned line recreates that service on the next `up` (OpenBao then needs `auto-unseal.sh`). Bump versions deliberately, one service at a time.
 - Async SQLAlchemy (`asyncpg` driver) throughout.
 - FastAPI with `ORJSONResponse` as the default response class.
 - `custom-backend` is split into `db.py`/`models.py`/`schemas.py`/`chat_service.py` plus `routers/` (`auth.py`, `chats.py`) — this split happened once the app grew past a single manageable file (auth + chat + RAG). Keep new endpoints in the router matching their domain rather than growing `main.py` again.
