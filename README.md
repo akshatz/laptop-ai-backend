@@ -171,6 +171,14 @@ docker compose -f devops/docker-compose.yml up -d   # start everything else
 
 Note: OpenBao starts **sealed** after every container restart or host reboot — run `cd openbao && ./auto-unseal.sh` before `custom-backend` will be able to start.
 
+### Image versions
+
+Every image in [devops/docker-compose.yml](devops/docker-compose.yml) is pinned to an exact version, most as `name:version@sha256:digest` (for example `caddy:2.11.4@sha256:…`), so a `docker compose pull` or a fresh machine gets exactly the images this stack was tested with, never a surprise upgrade. The digest decides; the version is there to read. OpenObserve is pinned by digest only, because it doesn't report a version number.
+
+The exception is **Ollama** (`ollama/ollama:latest`), on purpose: changing its image line makes the next `up` recreate Ollama, so pin it when you choose to recreate it anyway.
+
+To upgrade a service, change its line to the new version and digest (`docker buildx imagetools inspect <image>:<version>` shows the digest), one service at a time, then `docker compose -f devops/docker-compose.yml up -d --no-deps <service>`. Any changed image line recreates that service on the next `up`; OpenBao then needs `./auto-unseal.sh`.
+
 ## Open WebUI SSO + MFA (authentik)
 
 Open WebUI sign-in goes through [authentik](https://goauthentik.io) (`authentik-server` + `authentik-worker`, using a separate `authentik` database in `postgres-db`), which asks for a TOTP code from Google Authenticator or any other TOTP app on every login (`AUTHENTIK_MFA_REQUIRED=false` turns that off for everyone except authentik admins, see below). Open WebUI's own email/password sign-in is turned off.
