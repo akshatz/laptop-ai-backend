@@ -156,3 +156,10 @@ async def test_signup_and_password_change_restart_the_clock(expiry):
     expiry._set_changed = AsyncMock()
     await expiry.event({"event": "auth.password_changed", "subject": {"id": "u1"}})
     expiry._set_changed.assert_awaited_once_with("u1")
+
+
+async def test_email_is_sent_right_after_a_reboot(expiry, monkeypatch):
+    """time.monotonic() counts from boot: "never emailed" must not look like "emailed at boot"."""
+    monkeypatch.setattr(expiry.module.time, "monotonic", lambda: 5.0)
+    await expiry._handle_expired(USER, "hash-1")
+    assert len(expiry.sent) == 1

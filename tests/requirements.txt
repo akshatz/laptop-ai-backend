@@ -5,3 +5,7 @@ pytest==8.4.2
 pytest-asyncio==1.2.0
 itsdangerous==2.2.0
 aiohttp==3.13.5
+# Open WebUI fn_* migrations (devops/open-webui/migrations), same version as open-webui-fn-migrate in compose.
+psycopg[binary]==3.3.6
+# tests/configs read YAML (already pulled in by langchain; pinned so the tests never lose it).
+PyYAML==6.0.3

@@ -13,7 +13,9 @@ def pending(role="pending"):
 
 @pytest.fixture
 def verify(secret_key):
-    fn = load_function("signup_email_verification").Event()
+    module = load_function("signup_email_verification")
+    fn = module.Event()
+    fn.module = module
     fn.sent = []
     fn._send_in_background = lambda user_id, email, name: fn.sent.append(email)
     fn._mark_verified = AsyncMock(return_value=True)
@@ -75,4 +77,12 @@ async def test_resend_is_the_same_answer_for_everyone_and_has_a_cooldown(verify)
     known = await verify._resend(email="Asha@example.com")
     again = await verify._resend(email="asha@example.com")
     assert unknown == known == again
+    assert verify.sent == ["asha@example.com"]
+
+
+async def test_resend_works_right_after_a_reboot(verify, monkeypatch):
+    """time.monotonic() counts from boot: "never resent" must not look like "resent at boot"."""
+    monkeypatch.setattr(verify.module.time, "monotonic", lambda: 5.0)
+    owui.Users.get_user_by_email.return_value = pending()
+    await verify._resend(email="asha@example.com")
     assert verify.sent == ["asha@example.com"]

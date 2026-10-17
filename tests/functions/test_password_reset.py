@@ -92,3 +92,11 @@ async def test_password_change_notice(reset):
     reset.valves.notify_on_password_change = False
     await reset.event({"event": "auth.password_changed", "subject": {"id": "u1"}})
     assert len(reset.sent) == 1
+
+
+async def test_forgot_works_right_after_a_reboot(reset, monkeypatch):
+    """time.monotonic() counts from boot: "never requested" must not look like "requested at boot"."""
+    monkeypatch.setattr(reset.module.time, "monotonic", lambda: 5.0)
+    owui.Users.get_user_by_email.return_value = USER
+    await reset._forgot(email="asha@example.com")
+    assert len(reset.sent) == 1

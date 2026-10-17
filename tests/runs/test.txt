@@ -1,7 +1,7 @@
-Test run: all tests (custom-backend + every Open WebUI Function)
-Started: 2026-10-17T09:49:41Z
-Commit: 45c5755 on feat/tests-ci, with uncommitted test changes
-Python: Python 3.11.7, Postgres: postgres (PostgreSQL) 16.15
+Test run: all tests (custom-backend, Open WebUI Functions, opencode, migrations, configs, settings.py, evals)
+Started: 2026-10-17T10:09:22Z
+Commit: df9ec3b on feat/tests-ci, with uncommitted test changes
+Python: Python 3.11.7, Postgres: postgres (PostgreSQL) 16.15, psql: psql (PostgreSQL) 18.6 (Ubuntu 18.6-1.pgdg24.04+2)
 
 tests/backend/test_auth.py::test_register_stores_hash_and_emails_a_token PASSED
 tests/backend/test_auth.py::test_register_rejects_a_duplicate_email PASSED
@@ -29,6 +29,38 @@ tests/backend/test_chats.py::test_ingest_limits PASSED
 tests/backend/test_chats.py::test_ingest_milvus_failure_is_a_502 PASSED
 tests/backend/test_chats.py::test_embeddinggemma_task_prefixes PASSED
 tests/backend/test_chats.py::test_collection_is_named_per_embedding_model PASSED
+tests/configs/test_searxng.py::test_json_results_are_allowed PASSED
+tests/configs/test_searxng.py::test_google_and_bing_are_on PASSED
+tests/configs/test_searxng.py::test_internal_only_settings PASSED
+tests/evals/test_feedback_to_cases.py::test_draft_case PASSED
+tests/evals/test_feedback_to_cases.py::test_draft_without_comment_or_question PASSED
+tests/evals/test_feedback_to_cases.py::test_new_ratings_are_appended_once PASSED
+tests/evals/test_feedback_to_cases.py::test_dry_run_writes_nothing PASSED
+tests/evals/test_feedback_to_cases.py::test_the_feedback_query PASSED
+tests/evals/test_run.py::test_abstain_phrases[I don't know the score of that match.] PASSED
+tests/evals/test_run.py::test_abstain_phrases[There is no record of such a law.] PASSED
+tests/evals/test_run.py::test_abstain_phrases[I couldn't find anything about it.] PASSED
+tests/evals/test_run.py::test_abstain_phrases[That company is fictional.] PASSED
+tests/evals/test_run.py::test_abstain_phrases[The final hasn't happened yet.] PASSED
+tests/evals/test_run.py::test_abstain_phrases[No information is available.] PASSED
+tests/evals/test_run.py::test_abstain_phrases[I'm unable to confirm that.] PASSED
+tests/evals/test_run.py::test_ordinary_answers_are_not_abstaining[The Sensex closed at 81,200 on Friday.] PASSED
+tests/evals/test_run.py::test_ordinary_answers_are_not_abstaining[Gandhi Jayanti is on 2 October.] PASSED
+tests/evals/test_run.py::test_ordinary_answers_are_not_abstaining[Knowledge is power.] PASSED
+tests/evals/test_run.py::test_source_info PASSED
+tests/evals/test_run.py::test_score_checks_each_expectation PASSED
+tests/evals/test_run.py::test_abstain_cases_must_say_they_do_not_know PASSED
+tests/evals/test_run.py::test_committed_cases_are_well_formed PASSED
+tests/evals/test_run.py::test_load_cases_merges_local_and_filters PASSED
+tests/evals/test_run.py::test_load_cases_refuses_duplicates_and_unknown_ids PASSED
+tests/evals/test_run.py::test_ask_parses_the_stream PASSED
+tests/evals/test_run.py::test_auth_errors_stop_the_run PASSED
+tests/evals/test_run.py::test_server_errors_are_a_failed_case PASSED
+tests/evals/test_run.py::test_unreachable_open_webui_is_not_a_failure PASSED
+tests/evals/test_run.py::test_a_run_saves_header_and_results PASSED
+tests/evals/test_run.py::test_a_run_needs_an_api_key PASSED
+tests/evals/test_run.py::test_three_unreachable_cases_in_a_row_stop_the_run PASSED
+tests/evals/test_run.py::test_compare_two_runs PASSED
 tests/functions/test_authentik_user_cleanup.py::test_finds_by_sub_across_pages PASSED
 tests/functions/test_authentik_user_cleanup.py::test_finds_by_email_only_when_exactly_one_matches PASSED
 tests/functions/test_authentik_user_cleanup.py::test_never_deletes_superusers PASSED
@@ -77,6 +109,7 @@ tests/functions/test_password_expiry.py::test_signin_wrapper_blocks_expired_and_
 tests/functions/test_password_expiry.py::test_a_failing_check_never_blocks_sign_in PASSED
 tests/functions/test_password_expiry.py::test_reminder_at_login_within_warn_days PASSED
 tests/functions/test_password_expiry.py::test_signup_and_password_change_restart_the_clock PASSED
+tests/functions/test_password_expiry.py::test_email_is_sent_right_after_a_reboot PASSED
 tests/functions/test_password_reset.py::test_format_duration PASSED
 tests/functions/test_password_reset.py::test_fingerprint_is_short_and_tied_to_the_hash PASSED
 tests/functions/test_password_reset.py::test_reset_with_a_valid_link PASSED
@@ -86,6 +119,7 @@ tests/functions/test_password_reset.py::test_short_passwords_are_refused PASSED
 tests/functions/test_password_reset.py::test_forgot_emails_a_working_link_and_hides_unknown_emails PASSED
 tests/functions/test_password_reset.py::test_forgot_has_a_cooldown_per_email PASSED
 tests/functions/test_password_reset.py::test_password_change_notice PASSED
+tests/functions/test_password_reset.py::test_forgot_works_right_after_a_reboot PASSED
 tests/functions/test_patching_functions.py::test_audit_entries_get_the_response_status PASSED
 tests/functions/test_patching_functions.py::test_audit_keeps_a_status_open_webui_already_recorded PASSED
 tests/functions/test_patching_functions.py::test_audit_patch_installs_once PASSED
@@ -113,5 +147,45 @@ tests/functions/test_signup_email_verification.py::test_sso_accounts_are_activat
 tests/functions/test_signup_email_verification.py::test_sso_accounts_get_the_email_when_activation_is_off PASSED
 tests/functions/test_signup_email_verification.py::test_other_events_and_active_users_are_ignored PASSED
 tests/functions/test_signup_email_verification.py::test_resend_is_the_same_answer_for_everyone_and_has_a_cooldown PASSED
-====================== 110 passed, 21 warnings in 16.04s =======================
-Finished: 2026-10-17T09:49:58Z
+tests/functions/test_signup_email_verification.py::test_resend_works_right_after_a_reboot PASSED
+tests/migrations/test_migrations.py::test_backend_migrations_have_one_head PASSED
+tests/migrations/test_migrations.py::test_backend_migrations_match_the_models PASSED
+tests/migrations/test_migrations.py::test_backend_models_and_init_db_models_are_identical PASSED
+tests/migrations/test_migrations.py::test_function_migrations_have_one_head PASSED
+tests/migrations/test_migrations.py::test_function_migrations_up_down_up PASSED
+tests/opencode/test_config.py::test_only_local_providers_are_enabled PASSED
+tests/opencode/test_config.py::test_providers_point_inside_the_docker_network PASSED
+tests/opencode/test_config.py::test_default_and_title_models_are_listed PASSED
+tests/opencode/test_config.py::test_model_ids_look_like_ollama_names PASSED
+tests/opencode/test_config.py::test_searxng_add_on_is_pinned_and_internal PASSED
+tests/opencode/test_config.py::test_sharing_and_autoupdate_are_off PASSED
+tests/opencode/test_scripts.py::test_sync_creates_the_database_and_copies_everything PASSED
+tests/opencode/test_scripts.py::test_sync_twice_adds_no_duplicates PASSED
+tests/opencode/test_scripts.py::test_changes_are_updated PASSED
+tests/opencode/test_scripts.py::test_deleted_sessions_are_kept_and_marked PASSED
+tests/opencode/test_scripts.py::test_a_failed_read_changes_nothing PASSED
+tests/opencode/test_scripts.py::test_not_running_does_nothing PASSED
+tests/opencode/test_scripts.py::test_an_open_connection_counts_as_use PASSED
+tests/opencode/test_scripts.py::test_first_run_starts_the_idle_clock PASSED
+tests/opencode/test_scripts.py::test_stops_after_the_idle_limit_with_a_final_copy PASSED
+tests/opencode/test_scripts.py::test_not_yet_idle_long_enough PASSED
+tests/opencode/test_scripts.py::test_idle_limit_is_configurable PASSED
+tests/opencode/test_scripts.py::test_copies_only_when_something_changed PASSED
+tests/opencode/test_scripts.py::test_a_failed_copy_is_retried_next_run PASSED
+tests/opencode/test_scripts.py::test_unreadable_opencode_db_skips_the_copy PASSED
+tests/settings/test_settings.py::test_export_then_diff_is_in_sync PASSED
+tests/settings/test_settings.py::test_secret_valves_never_reach_the_file PASSED
+tests/settings/test_settings.py::test_apply_writes_the_changes_and_keeps_redacted_secrets PASSED
+tests/settings/test_settings.py::test_apply_backs_up_the_previous_values_unredacted PASSED
+tests/settings/test_settings.py::test_unset_config_keys_are_created PASSED
+tests/settings/test_settings.py::test_unknown_config_keys_are_refused PASSED
+tests/settings/test_settings.py::test_missing_models_and_functions_are_skipped PASSED
+tests/settings/test_settings.py::test_revisions_are_recorded_once_per_content PASSED
+tests/settings/test_settings.py::test_without_the_revisions_table_it_only_notes_it PASSED
+tests/settings/test_settings.py::test_values_containing_the_quote_tag_are_refused PASSED
+tests/settings/test_settings.py::test_which_valve_names_count_as_secret PASSED
+====================== 181 passed, 21 warnings in 41.49s =======================
+
+devops/validate-configs.sh:
+ok      caddy/Caddyfile (caddy:2)
+ok      otel-collector/authentik-events.yaml (otel/opentelemetry-collector-contrib:0.161.0)

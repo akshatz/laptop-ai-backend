@@ -183,7 +183,9 @@ def source_info(sources: list) -> dict:
             searched = True
             # Open WebUI names the web-search source after the generated queries, comma-joined.
             name = meta_source.get("name") or ""
-            queries += [q.strip() for q in name.split(",") if q.strip() and q.strip() not in queries]
+            for q in name.split(","):
+                if q.strip() and q.strip() not in queries:
+                    queries.append(q.strip())
         for meta in src.get("metadata") or []:
             chunks += 1
             url = meta.get("source") or ""

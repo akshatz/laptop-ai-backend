@@ -264,7 +264,7 @@ class Event:
             return f"{expired} Ask your Open WebUI admin to set a new one."
 
         now = time.monotonic()
-        if now - _last_expired_email.get(user.id, 0) >= EXPIRED_EMAIL_COOLDOWN:
+        if now - _last_expired_email.get(user.id, float("-inf")) >= EXPIRED_EMAIL_COOLDOWN:
             _last_expired_email[user.id] = now
             # Same format as the Password Reset Function's tokens, so its reset page accepts it — and
             # the hash fingerprint makes it single-use.
