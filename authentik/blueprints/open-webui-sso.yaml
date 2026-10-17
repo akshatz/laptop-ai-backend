@@ -59,11 +59,12 @@ entries:
       last_auth_threshold: hours=3
 
   # With AUTHENTIK_MFA_REQUIRED=false, the login's MFA step runs only for authentik admins
-  # (superusers, e.g. akadmin); everyone else signs in with the password alone, even with an
-  # authenticator (it stays registered for when the switch goes back to true). The value is written
-  # into the expression when this blueprint is applied. Login only: sign-up/invitation need nothing
-  # more (new users have no authenticator, so the stage's skip applies), and password recovery has
-  # its own MFA stage, which still asks users who have one.
+  # (superusers, e.g. akadmin) and for users who set up an authenticator themselves (the optional
+  # checkbox on sign-up, or later under "Security (TOTP)" in authentik's user settings); everyone
+  # else signs in with the password alone. The value is written into the expression when this
+  # blueprint is applied. Login only: sign-up/invitation need nothing more (new users have no
+  # authenticator, so the stage's skip applies), and password recovery has its own MFA stage, which
+  # still asks users who have one.
   - model: authentik_policies_expression.expressionpolicy
     id: mfa-switch-policy
     identifiers:
@@ -71,9 +72,11 @@ entries:
     attrs:
       expression: !Format
         - |
+          from authentik.stages.authenticator import devices_for_user
           mfa_required = %s  # AUTHENTIK_MFA_REQUIRED, filled in by the blueprint
           user = request.context.get("pending_user") or request.user
-          return mfa_required or user.is_superuser
+          # Someone who set up an authenticator (opt-in) is asked for it, or it would protect nothing.
+          return mfa_required or user.is_superuser or any(True for _ in devices_for_user(user))
         - !AtIndex [{"true": "True", "1": "True", "false": "False", "0": "False"}, !Env [AUTHENTIK_MFA_REQUIRED, "true"], "True"]
 
   # The login flow's MFA step (created by authentik's default blueprint, which sets no attrs on it).
