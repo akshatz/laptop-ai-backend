@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Copies opencode's sessions, messages and message parts from its SQLite database (opencode.db in
-# the opencode-data volume) into new tables in the `opencode` database on postgres-db: sessions,
-# messages, parts. One-way: opencode keeps using SQLite. Rows are upserted by id; a session,
+# the container's data volume) into new tables in the `opencode` database on postgres-db: sessions,
+# messages, parts, with `owner` = whose opencode it is (OPENCODE_OWNER, idle-stop.sh passes the
+# container's laptop.opencode.user label; rows from before per-person opencodes are OPENCODE_DEFAULT_OWNER's). One-way: opencode keeps using SQLite. Rows are upserted by id; a session,
 # message or part that disappears from opencode is kept and gets deleted_at set. Called by
 # idle-stop.sh just before it stops the container; can also be run by hand while opencode runs.
 # Reads opencode through `opencode db` (works while the server runs) and writes through
@@ -12,11 +13,14 @@ set -euo pipefail
 CONTAINER="${OPENCODE_CONTAINER:-laptop-opencode}"
 PG_CONTAINER="${POSTGRES_CONTAINER:-laptop-postgres}"
 PG_DB="${OPENCODE_PG_DB:-opencode}"
+DEFAULT_OWNER="${OPENCODE_DEFAULT_OWNER:-akadmin}"
+OWNER="${OPENCODE_OWNER:-$DEFAULT_OWNER}"
 ENV_FILE="$(cd "$(dirname "$0")/../.." && pwd)/.env"
 PG_USER="$(grep '^POSTGRES_USER=' "$ENV_FILE" | cut -d= -f2-)"
 
 psql_on() { docker exec -i -e PGOPTIONS=--client-min-messages=warning "$PG_CONTAINER" psql -U "$PG_USER" -v ON_ERROR_STOP=1 -q "$@"; }
-oc_json() { docker exec "$CONTAINER" opencode db --format json "$1" 2>/dev/null; }
+# A failed read returns nothing (checked below) instead of ending the script silently under set -e.
+oc_json() { docker exec "$CONTAINER" opencode db --format json "$1" 2>/dev/null || true; }
 
 if [ "$(psql_on -d postgres -tAc "select 1 from pg_database where datname = '$PG_DB'")" != "1" ]; then
   psql_on -d postgres -c "create database $PG_DB"
@@ -63,6 +67,10 @@ create table if not exists parts (
   deleted_at timestamptz
 );
 create index if not exists parts_message_id on parts (message_id);
+alter table sessions add column if not exists owner text;
+alter table messages add column if not exists owner text;
+alter table parts add column if not exists owner text;
+create index if not exists sessions_owner on sessions (owner);
 SQL
 
 sessions=$(oc_json "select * from session")
@@ -84,48 +92,54 @@ tag="oc$(od -An -N6 -tx1 /dev/urandom | tr -d ' \n')"
   echo "create temp table src_sessions as select \$$tag\$$sessions\$$tag\$::jsonb as j;"
   echo "create temp table src_messages as select \$$tag\$$messages\$$tag\$::jsonb as j;"
   echo "create temp table src_parts as select \$$tag\$$parts\$$tag\$::jsonb as j;"
+  echo "create temp table src_owner as select \$$tag\$$OWNER\$$tag\$::text as o;"
+  # Rows copied before opencode was per person belonged to the one shared (admin's) opencode.
+  for t in sessions messages parts; do
+    echo "update $t set owner = \$$tag\$$DEFAULT_OWNER\$$tag\$ where owner is null;"
+  done
   cat <<'SQL'
 insert into sessions (id, project_id, parent_id, title, directory, agent, model, tokens_input,
-                      tokens_output, cost, created_at, updated_at, raw, synced_at, deleted_at)
+                      tokens_output, cost, created_at, updated_at, raw, synced_at, deleted_at, owner)
 select r->>'id', r->>'project_id', r->>'parent_id', r->>'title', r->>'directory', r->>'agent',
        r->>'model', (r->>'tokens_input')::bigint, (r->>'tokens_output')::bigint,
        (r->>'cost')::double precision,
        to_timestamp((r->>'time_created')::bigint / 1000.0),
-       to_timestamp((r->>'time_updated')::bigint / 1000.0), r, now(), null
+       to_timestamp((r->>'time_updated')::bigint / 1000.0), r, now(), null, (select o from src_owner)
 from src_sessions, jsonb_array_elements(j) r
 on conflict (id) do update set
   project_id = excluded.project_id, parent_id = excluded.parent_id, title = excluded.title,
   directory = excluded.directory, agent = excluded.agent, model = excluded.model,
   tokens_input = excluded.tokens_input, tokens_output = excluded.tokens_output,
   cost = excluded.cost, created_at = excluded.created_at, updated_at = excluded.updated_at,
-  raw = excluded.raw, synced_at = now(), deleted_at = null;
+  raw = excluded.raw, synced_at = now(), deleted_at = null, owner = excluded.owner;
 
-insert into messages (id, session_id, role, created_at, updated_at, data, synced_at, deleted_at)
+insert into messages (id, session_id, role, created_at, updated_at, data, synced_at, deleted_at, owner)
 select r->>'id', r->>'session_id', (r->>'data')::jsonb->>'role',
        to_timestamp((r->>'time_created')::bigint / 1000.0),
-       to_timestamp((r->>'time_updated')::bigint / 1000.0), (r->>'data')::jsonb, now(), null
+       to_timestamp((r->>'time_updated')::bigint / 1000.0), (r->>'data')::jsonb, now(), null, (select o from src_owner)
 from src_messages, jsonb_array_elements(j) r
 on conflict (id) do update set
   session_id = excluded.session_id, role = excluded.role, created_at = excluded.created_at,
-  updated_at = excluded.updated_at, data = excluded.data, synced_at = now(), deleted_at = null;
+  updated_at = excluded.updated_at, data = excluded.data, synced_at = now(), deleted_at = null,
+  owner = excluded.owner;
 
 insert into parts (id, message_id, session_id, type, created_at, updated_at, data, synced_at,
-                   deleted_at)
+                   deleted_at, owner)
 select r->>'id', r->>'message_id', r->>'session_id', (r->>'data')::jsonb->>'type',
        to_timestamp((r->>'time_created')::bigint / 1000.0),
-       to_timestamp((r->>'time_updated')::bigint / 1000.0), (r->>'data')::jsonb, now(), null
+       to_timestamp((r->>'time_updated')::bigint / 1000.0), (r->>'data')::jsonb, now(), null, (select o from src_owner)
 from src_parts, jsonb_array_elements(j) r
 on conflict (id) do update set
   message_id = excluded.message_id, session_id = excluded.session_id, type = excluded.type,
   created_at = excluded.created_at, updated_at = excluded.updated_at, data = excluded.data,
-  synced_at = now(), deleted_at = null;
+  synced_at = now(), deleted_at = null, owner = excluded.owner;
 
--- Gone from opencode: keep the copy, mark it.
-update sessions set deleted_at = now() where deleted_at is null
+-- Gone from this person's opencode: keep the copy, mark it (other people's rows are untouched).
+update sessions set deleted_at = now() where deleted_at is null and owner = (select o from src_owner)
   and id not in (select r->>'id' from src_sessions, jsonb_array_elements(j) r);
-update messages set deleted_at = now() where deleted_at is null
+update messages set deleted_at = now() where deleted_at is null and owner = (select o from src_owner)
   and id not in (select r->>'id' from src_messages, jsonb_array_elements(j) r);
-update parts set deleted_at = now() where deleted_at is null
+update parts set deleted_at = now() where deleted_at is null and owner = (select o from src_owner)
   and id not in (select r->>'id' from src_parts, jsonb_array_elements(j) r);
 commit;
 SQL

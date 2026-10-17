@@ -1,0 +1,7 @@
+[Unit]
+Description=Give every authentik user their own opencode container; start stopped ones on request
+
+[Service]
+Type=oneshot
+# %h is the home directory; adjust if the repo lives elsewhere.
+ExecStart=/usr/bin/python3 %h/laptop-ai-backend/devops/opencode/provision.py

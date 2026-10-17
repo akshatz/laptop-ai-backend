@@ -1,0 +1,39 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "provider": {
+    "ollama": {
+      "npm": "@ai-sdk/openai-compatible",
+      "name": "Ollama (local)",
+      "options": {
+        "baseURL": "http://open-webui-proxy:11434/v1"
+      },
+      "models": {
+        "llama3.2:latest": {
+          "name": "Llama 3.2 3B"
+        }
+      }
+    }
+  },
+  "mcp": {
+    "searxng": {
+      "type": "local",
+      "command": [
+        "opencode",
+        "x",
+        "mcp-searxng@2.5.0"
+      ],
+      "environment": {
+        "BUN_BE_BUN": "1",
+        "SEARXNG_URL": "http://open-webui-proxy:8081"
+      },
+      "enabled": true
+    }
+  },
+  "enabled_providers": [
+    "ollama"
+  ],
+  "model": "ollama/llama3.2:latest",
+  "small_model": "ollama/llama3.2:latest",
+  "autoupdate": false,
+  "share": "disabled"
+}

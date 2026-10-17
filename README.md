@@ -87,7 +87,7 @@ All services share the `ai-network` Docker bridge network, orchestrated via [dev
 | `open-webui` | Chat UI: Ollama models, web search, RAG on Milvus, sign-in through authentik, extended by the Functions in [devops/open-webui/functions/](devops/open-webui/functions/) | 8082 → 8080 |
 | `open-webui-proxy` | Caddy HTTPS front for devices on the LAN (cert from Caddy's local CA): Open WebUI on 8444, authentik on 9443, opencode on 4443 (behind authentik sign-in) | 8444 → 443, 9443, 4443 |
 | `authentik-server` + `authentik-worker` | SSO with TOTP (Google Authenticator) for Open WebUI and OpenBao; sign-up, invitations, password reset (see [Open WebUI SSO + MFA](#open-webui-sso--mfa-authentik)) | (through `open-webui-proxy`, 9443) |
-| `opencode` | Coding agent with a web UI, models through Open WebUI's API or Ollama; stopped when idle (see [opencode](#opencode)) | 127.0.0.1:4096; LAN through `open-webui-proxy`, 4443 |
+| `opencode` | Coding agent with a web UI (the admin's; everyone else gets their own `opencode-u<pk>` container from `provision.py`); stopped when idle (see [opencode](#opencode)) | 127.0.0.1:4096; LAN through `open-webui-proxy`, 4443 |
 | `searxng` | Self-hosted metasearch engine for Open WebUI's web search | (internal, 8080) |
 | `milvus` + `milvus-etcd` + `milvus-minio` | Vector store for RAG document embeddings | (internal, 19530) |
 | `openbao` | Secrets storage (Postgres creds, AppRole broker) | 8200 |
@@ -145,7 +145,7 @@ cp .env.example .env
 | `OPENBAO_OIDC_CLIENT_ID` / `OPENBAO_OIDC_CLIENT_SECRET` | authentik, `openbao/setup-users.sh` | Optional — lets people sign in to OpenBao through authentik; see [openbao/README.md](openbao/README.md) |
 | `SEARXNG_SECRET` | `searxng` | Signs SearXNG's cookies (`openssl rand -hex 32`) |
 | `OPENCODE_SERVER_PASSWORD` | `opencode` | opencode's own login (username `opencode`) |
-| `OPENCODE_BASIC_AUTH` | `open-webui-proxy` | base64 of `opencode:<OPENCODE_SERVER_PASSWORD>`, sent to opencode by Caddy after authentik sign-in. Regenerate when the password changes: `printf 'opencode:%s' "$OPENCODE_SERVER_PASSWORD" \| base64 -w0` |
+| `OPENCODE_BASIC_AUTH` | `provision.py` | base64 of `opencode:<OPENCODE_SERVER_PASSWORD>`: the admin's `laptop-opencode` login, which the provisioner puts in their authentik headers. Regenerate when the password changes: `printf 'opencode:%s' "$OPENCODE_SERVER_PASSWORD" \| base64 -w0` |
 | `OPENWEBUI_API_KEY` | `opencode` | Open WebUI API key (Settings → Account → API Keys) for opencode's `openwebui` provider |
 | `RAG_RERANKING_MODEL` | `open-webui` | Reranker for web and document search (default `cross-encoder/ms-marco-MiniLM-L6-v2`); a saved setting in Open WebUI overrides it |
 
@@ -460,29 +460,36 @@ authentik's audit events go to O2 stream **`authentik_events`**, next to Open We
 
 ## opencode
 
-[opencode](https://opencode.ai) is a coding agent with a web UI. It works only in its own `opencode-workspace` volume (never this repo) and runs shell commands as root inside its container.
+[opencode](https://opencode.ai) is a coding agent with a web UI. **Everyone gets their own**: own container, sessions and workspace. Each runs shell commands as root inside its container, never in this repo.
 
-- **Address:** `https://<OPEN_WEBUI_HOST>:4443` on the LAN, through Caddy, or `http://127.0.0.1:4096` on the laptop itself (opencode's own login: username `opencode`, password `OPENCODE_SERVER_PASSWORD`).
-- **Sign-in on the LAN:** authentik (password + TOTP), only for members of the `opencode-users` group (Directory → Groups). Set up by [authentik/blueprints/opencode-sso.yaml](authentik/blueprints/opencode-sso.yaml) (proxy provider on authentik's embedded outpost, Caddy `forward_auth`). Everyone who gets in shares the same sessions and workspace. Allow port 4443 in the host firewall only for devices that need it.
-- **Models:** set in [devops/opencode/opencode.json](devops/opencode/opencode.json). Provider `openwebui` sends requests through Open WebUI's API (`OPENWEBUI_API_KEY`), so Global Functions run on them; provider `ollama` talks to Ollama directly. Only models listed there show up: `enabled_providers` limits opencode to these two, which turns off its built-in free cloud models (some Chinese, some of undisclosed origin), and `small_model` keeps session titles local too. After editing it, recreate: `docker compose -f devops/docker-compose.yml up -d --no-deps --force-recreate opencode`.
-- **Web search:** the MCP server `mcp-searxng` (pinned in `opencode.json`) gives opencode `searxng_web_search` and `web_url_read` tools on the stack's own SearXNG. The container has no Node, so it runs through the opencode binary acting as Bun (`BUN_BE_BUN=1 opencode x …`). Space out heavy use: SearXNG's upstream engines block bursts.
-- **Stopped when idle:** [devops/opencode/idle-stop.sh](devops/opencode/idle-stop.sh) stops the container after 30 minutes with no open connection (an open browser tab counts as use), freeing ~0.7 GB RAM. It runs every 5 minutes from a systemd user timer:
+- **Address:** `https://<OPEN_WEBUI_HOST>:4443` (also the **opencode** link in Open WebUI's sidebar). Sign-in is authentik (password + TOTP); then Caddy sends each person to their own container. Allow port 4443 in the host firewall only for devices that need it.
+- **Who gets one:** every active authentik account, oldest first, up to `OPENCODE_MAX_USERS` (default 4), created within a minute of signing up by [devops/opencode/provision.py](devops/opencode/provision.py) — a host-side script run every minute by a systemd timer, so nothing a signed-up user can reach controls Docker. It puts two headers in the person's authentik attributes (`additionalHeaders`: their container and its password); authentik ([authentik/blueprints/opencode-sso.yaml](authentik/blueprints/opencode-sso.yaml)) lets only people with them through, and Caddy routes by them. Deactivated or deleted accounts lose their container; their volumes (`opencode-u<pk>-data`, `opencode-u<pk>-workspace`) are kept until removed by hand. The admin (`OPENCODE_ADMIN_USER`, default `akadmin`) keeps compose's `laptop-opencode`.
+- **Isolation:** personal containers (`opencode-u<pk>`, 1 GB memory limit) are only on the `opencode-net` network. Through `open-webui-proxy` they reach Ollama's chat API (`/v1/*` only — no pulling or deleting models) and SearXNG's search, nothing else: no Postgres, OpenBao, Milvus or authentik, and no Open WebUI API key.
+- **Models:** personal containers use [devops/opencode/opencode-user.json](devops/opencode/opencode-user.json) (Ollama only). The admin's `laptop-opencode` uses [devops/opencode/opencode.json](devops/opencode/opencode.json): provider `openwebui` through Open WebUI's API (`OPENWEBUI_API_KEY`, so Global Functions run) and `ollama`. Only models listed show up; `enabled_providers` turns off opencode's built-in free cloud models (some Chinese, some of undisclosed origin). After editing `opencode.json`, recreate `opencode`; `opencode-user.json` applies to containers created afterwards (`docker rm -f opencode-u<pk>` and the next provisioner run recreates it, with the same password and volumes).
+- **Web search:** the MCP server `mcp-searxng` (pinned) gives opencode `searxng_web_search` and `web_url_read` tools on the stack's own SearXNG, run through the opencode binary acting as Bun (`BUN_BE_BUN=1 opencode x …`; no Node in the image). Space out heavy use: SearXNG's upstream engines block bursts.
+- **Stopped when idle, started on request:** [devops/opencode/idle-stop.sh](devops/opencode/idle-stop.sh) stops each opencode after 30 minutes with no open connection (an open browser tab counts as use), freeing ~0.7 GB RAM each. When its owner opens :4443 again, Caddy shows "starting" and the provisioner starts it within a minute (it watches Caddy's log for the failed request).
+- **Copy in Postgres:** whenever something changed, and once more before stopping, [devops/opencode/sync-to-postgres.sh](devops/opencode/sync-to-postgres.sh) copies each opencode's sessions, messages and parts into the `opencode` database on `postgres-db` (tables `sessions`, `messages`, `parts`, with `owner` = the authentik username). opencode itself can't use Postgres (`OPENCODE_DB` is a SQLite path only). The copy is one-way and keeps deleted sessions (`deleted_at` set).
+- **Timers** (systemd user units):
 
   ```bash
   mkdir -p ~/.config/systemd/user
-  ln -s ~/laptop-ai-backend/devops/opencode/systemd/opencode-idle-stop.{service,timer} ~/.config/systemd/user/
-  systemctl --user daemon-reload && systemctl --user enable --now opencode-idle-stop.timer
+  ln -sf ~/laptop-ai-backend/devops/opencode/systemd/opencode-{idle-stop,provision}.{service,timer} ~/.config/systemd/user/
+  systemctl --user daemon-reload
+  systemctl --user enable --now opencode-idle-stop.timer opencode-provision.timer
   ```
 
-  On every timer run where something changed (so within ~5 minutes of a finished answer) and once more before stopping, [devops/opencode/sync-to-postgres.sh](devops/opencode/sync-to-postgres.sh) copies opencode's sessions, messages and message parts from its SQLite database into the `opencode` database on `postgres-db` (tables `sessions`, `messages`, `parts`; text of a message is in `parts.data`). opencode itself can't use Postgres (`OPENCODE_DB` is a SQLite path only). The copy is one-way and keeps sessions deleted in opencode (`deleted_at` set). Run it by hand any time opencode is running.
-
-  Start it again with `docker start laptop-opencode` (it has `restart: "no"`, so a reboot doesn't start it).
+  `python3 devops/opencode/provision.py --dry-run` shows what it would do; it refuses to run until the running Caddy routes :4443 per person.
 
 ## Tests
 
 `pytest` covers custom-backend's endpoints (auth, chats, RAG ingestion) and the logic of every Open WebUI Function in `devops/open-webui/functions/`, including the sign-in wrappers, the class patches (Audit Status Code, Chat Soft Delete, Embedding Cache) and a check that Password Expiry's emailed links are accepted by Password Reset (the two must share a token format). GitHub Actions runs them on every push ([.github/workflows/tests.yml](.github/workflows/tests.yml)).
 
 - **custom-backend** tests import the real app with stand-ins for OpenBao and Milvus (no running stack needed) and use a real Postgres, given by `TEST_DATABASE_URL`. Its tables are dropped and recreated, so the database name must end in `_test`. Without `TEST_DATABASE_URL` these tests are skipped.
+- **Migrations** ([tests/migrations/](tests/migrations/)): both Alembic setups run upgrade → downgrade → upgrade on an empty `migrations_test` database; custom-backend's migrations must match `database/init_db.py`'s models (apart from two indexes the models don't declare), `custom-backend/models.py` must match `init_db.py` column for column, and the Functions' migrations must only create `fn_*` tables and use `fn_alembic_version`.
+- **settings.py** ([tests/settings/](tests/settings/)): export → diff → edit → apply against Open WebUI's `config`/`model`/`function` tables recreated with the same column types in `settings_test`, so its generated SQL really runs; secret valves never reach the file, backups keep them, revisions are recorded once per content.
+- **Evals** ([tests/evals/](tests/evals/)): `run.py`'s scoring (facts, exclusions, sites, abstaining), case loading, the streamed-answer parser and whole runs against a fake Open WebUI, `--compare`, and that every case in `evals/cases.yaml` is well formed (regexes compile); `feedback_to_cases.py`'s SQL against Open WebUI-shaped `feedback`/`chat_message` tables.
+- **Configs**: [tests/configs/](tests/configs/) checks the SearXNG settings web search relies on (`json` format, google and bing on, limiter off). [devops/validate-configs.sh](devops/validate-configs.sh) validates the Caddyfile and the OpenTelemetry Collector configs in the images compose uses (Build check → config-check in CI; run it after editing one of them).
+- **opencode** tests check [devops/opencode/opencode.json](devops/opencode/opencode.json) (only local providers, every named model listed and `name:tag`-shaped, add-on pinned) and run `idle-stop.sh` and `sync-to-postgres.sh` with a fake `docker` ([tests/opencode/fake-docker](tests/opencode/fake-docker)) whose `psql` calls go to the test Postgres (database `opencode_test`); they need the `psql` client.
 - **Functions** tests load each file from `devops/open-webui/functions/` with stand-ins for the Open WebUI internals it imports; their database helpers are replaced in the tests, so the SQL itself isn't covered.
 
 Run them on the laptop (Python 3.11, against a throwaway database on `postgres-db`):

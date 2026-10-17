@@ -24,7 +24,9 @@
 // 5. For anyone but admins: signed out after 3 hours without activity, from authentik too.
 //
 // 6. "My usage" and "My feedback" links in the sidebar, under Search, to the KPI Dashboard's
-//    ?view=me page and Feedback Review's ?mine=1 page.
+//    ?view=me page and Feedback Review's ?mine=1 page; then "opencode" (the person's own opencode,
+//    https://<host>:4443) and "Security (TOTP)" (authentik's user settings, where the authenticator
+//    app is set up or removed), both in a new tab.
 (() => {
 	// ---- 1. early SSO redirect ----------------------------------------------------------------
 	const params = new URLSearchParams(location.search);
@@ -347,6 +349,22 @@
 			href: '/api/v1/feedback-review?rating=all&mine=1',
 			label: 'My feedback',
 			icon: svg('M7 10v11H3V10h4zm0 0l4-8a3 3 0 013 3v4h5a2 2 0 012 2.3l-1.4 8A2 2 0 0117.6 21H7')
+		},
+		{
+			// Each person's own opencode (devops/opencode/provision.py), behind authentik on :4443.
+			id: 'sidebar-opencode',
+			href: `https://${location.hostname}:4443/`,
+			label: 'opencode',
+			external: true,
+			icon: svg('M8 9l-3 3 3 3M16 9l3 3-3 3M13 6l-2 12')
+		},
+		{
+			// authentik's user settings: MFA devices (TOTP), password, sessions.
+			id: 'sidebar-security',
+			href: `https://${location.hostname}:9443/if/user/#/settings`,
+			label: 'Security (TOTP)',
+			external: true,
+			icon: svg('M12 3l7 3v6c0 4.5-3 7.5-7 9-4-1.5-7-4.5-7-9V6l7-3z')
 		}
 	];
 
@@ -354,7 +372,7 @@
 		const search = document.getElementById('sidebar-search-button');
 		if (!search?.parentElement) return;
 		let after = search.parentElement;
-		for (const { id, href, label, icon } of SIDEBAR_LINKS) {
+		for (const { id, href, label, icon, external } of SIDEBAR_LINKS) {
 			const existing = document.getElementById(id);
 			if (existing) {
 				after = existing.parentElement;
@@ -365,7 +383,12 @@
 			const link = document.createElement('a');
 			link.id = id;
 			link.href = href;
-			link.setAttribute('data-sveltekit-reload', '');
+			if (external) {
+				link.target = '_blank';
+				link.rel = 'noopener';
+			} else {
+				link.setAttribute('data-sveltekit-reload', '');
+			}
 			link.draggable = false;
 			link.className = search.className;
 			link.innerHTML =
