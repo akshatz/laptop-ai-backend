@@ -1,0 +1,64 @@
+# Applied automatically by authentik-worker (mounted into /blueprints/custom), and re-applied
+# whenever this file changes. Values in !Env come from the worker's environment (devops/.env).
+#
+# Puts opencode (https://${OPEN_WEBUI_HOST}:4443) behind authentik: Caddy's forward_auth asks the
+# embedded outpost on every request, so people sign in with their authentik account (password +
+# TOTP, same login flow as Open WebUI). Only members of group opencode-users get in; add people
+# under Directory → Groups. After authentik lets a request through, Caddy adds opencode's own
+# basic-auth header (OPENCODE_BASIC_AUTH), so users never see opencode's password prompt.
+# Everyone who gets in shares the one opencode container: same sessions, same /workspace, root
+# shell — give access only to people you'd trust with that.
+version: 1
+metadata:
+  name: laptop-ai-backend - opencode SSO
+entries:
+  # Reuses the login flow with required TOTP and the default provider flows.
+  - model: authentik_blueprints.metaapplyblueprint
+    attrs:
+      identifiers:
+        name: laptop-ai-backend - Open WebUI SSO with required TOTP
+      required: true
+
+  - model: authentik_core.group
+    id: opencode-users
+    identifiers:
+      name: opencode-users
+
+  - model: authentik_providers_proxy.proxyprovider
+    id: opencode-provider
+    identifiers:
+      name: opencode
+    attrs:
+      mode: forward_single
+      # Must match the URL the browser uses: the outpost picks the provider by Host header.
+      external_host: !Format ["https://%s:4443", !Env OPEN_WEBUI_HOST]
+      authorization_flow: !Find [authentik_flows.flow, [slug, default-provider-authorization-implicit-consent]]
+      invalidation_flow: !Find [authentik_flows.flow, [slug, default-provider-invalidation-flow]]
+      # How long a sign-in lasts before authentik is asked again.
+      access_token_validity: hours=8
+
+  - model: authentik_core.application
+    id: opencode-app
+    identifiers:
+      slug: opencode
+    attrs:
+      name: opencode
+      provider: !KeyOf opencode-provider
+      meta_launch_url: !Format ["https://%s:4443/", !Env OPEN_WEBUI_HOST]
+      policy_engine_mode: any
+
+  - model: authentik_policies.policybinding
+    identifiers:
+      target: !KeyOf opencode-app
+      group: !KeyOf opencode-users
+    attrs:
+      order: 0
+
+  # The embedded outpost (inside authentik-server) answers Caddy's forward_auth checks. This sets
+  # its whole provider list: add any future proxy provider here too.
+  - model: authentik_outposts.outpost
+    identifiers:
+      managed: goauthentik.io/outposts/embedded
+    attrs:
+      providers:
+        - !KeyOf opencode-provider

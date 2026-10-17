@@ -1,0 +1,7 @@
+[Unit]
+Description=Copy opencode sessions to Postgres; stop opencode when idle
+
+[Service]
+Type=oneshot
+# %h is the home directory; adjust if the repo lives elsewhere.
+ExecStart=%h/laptop-ai-backend/devops/opencode/idle-stop.sh

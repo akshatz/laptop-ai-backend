@@ -25,3 +25,23 @@ https://{$OPEN_WEBUI_HOST}:9443, https://localhost:9443 {
 	redir @root https://{host}:8444/ 302
 	reverse_proxy authentik-server:9000
 }
+
+# opencode (coding agent web UI), behind authentik sign-in (authentik/blueprints/opencode-sso.yaml,
+# group opencode-users). It runs shell commands as root in its container, so allow this port in
+# the host firewall only for devices that need it.
+https://{$OPEN_WEBUI_HOST}:4443 {
+	tls internal
+	route {
+		# authentik's outpost endpoints (sign-in callback, sign-out) on this same host.
+		reverse_proxy /outpost.goauthentik.io/* authentik-server:9000
+		forward_auth authentik-server:9000 {
+			uri /outpost.goauthentik.io/auth/caddy
+			copy_headers X-Authentik-Username X-Authentik-Email
+			trusted_proxies private_ranges
+		}
+		# Signed in: add opencode's own basic auth, so it doesn't ask a second time.
+		reverse_proxy opencode:4096 {
+			header_up Authorization "Basic {$OPENCODE_BASIC_AUTH}"
+		}
+	}
+}
