@@ -209,5 +209,5 @@ def events():
 @pytest.fixture
 def secret_key(monkeypatch):
     """WEBUI_SECRET_KEY, which the token-signing Functions read."""
-    monkeypatch.setenv("WEBUI_SECRET_KEY", "test-secret-key")
-    return "test-secret-key"
+    monkeypatch.setenv("WEBUI_SECRET_KEY", "fake-signing-key-for-tests")
+    return "fake-signing-key-for-tests"

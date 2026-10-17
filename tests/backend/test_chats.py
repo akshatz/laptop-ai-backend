@@ -10,7 +10,7 @@ import chat_service
 @pytest.fixture
 async def user_id(client, emails):
     response = await client.post(
-        "/users", json={"email": "ravi@example.com", "password": "Correct-Horse-9", "name": "Ravi"}
+        "/users", json={"email": "ravi@example.com", "password": "test-only-password-1", "name": "Ravi"}
     )
     return response.json()["id"]
 

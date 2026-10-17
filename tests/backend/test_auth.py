@@ -5,7 +5,7 @@ from sqlalchemy import update
 
 import models
 
-PASSWORD = "Correct-Horse-9"
+PASSWORD = "test-only-password-1"
 
 
 def _code(email: dict) -> str:
@@ -147,12 +147,12 @@ async def test_password_reset_with_the_emailed_code(client, emails):
 
     response = await client.post(
         "/password/reset",
-        json={"email": "asha@example.com", "otp_code": code, "new_password": "New-Password-7"},
+        json={"email": "asha@example.com", "otp_code": code, "new_password": "test-only-password-2"},
     )
 
     assert response.status_code == 200
     assert (await login(client)).status_code == 401
-    assert (await login(client, password="New-Password-7")).status_code == 200
+    assert (await login(client, password="test-only-password-2")).status_code == 200
     assert emails[-1]["subject"] == "Your password was reset"
 
 
@@ -160,13 +160,13 @@ async def test_password_change_needs_the_current_password(client, emails):
     await verified_user(client, emails)
     wrong = await client.post(
         "/password/change",
-        json={"email": "asha@example.com", "current_password": "wrong", "new_password": "New-Password-7"},
+        json={"email": "asha@example.com", "current_password": "wrong", "new_password": "test-only-password-2"},
     )
     assert wrong.status_code == 401
 
     ok = await client.post(
         "/password/change",
-        json={"email": "asha@example.com", "current_password": PASSWORD, "new_password": "New-Password-7"},
+        json={"email": "asha@example.com", "current_password": PASSWORD, "new_password": "test-only-password-2"},
     )
     assert ok.status_code == 200
-    assert (await login(client, password="New-Password-7")).status_code == 200
+    assert (await login(client, password="test-only-password-2")).status_code == 200

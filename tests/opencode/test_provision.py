@@ -84,7 +84,7 @@ def world(monkeypatch, tmp_path):
     monkeypatch.setattr(provision, "authentik_set_headers", authentik.set_headers)
     monkeypatch.setattr(provision, "proxy_log", lambda: fake_docker.log)
     monkeypatch.setattr(provision, "REPO", tmp_path)  # no real .env
-    monkeypatch.setenv("OPENCODE_BASIC_AUTH", "YWRtaW4tYXV0aA==")
+    monkeypatch.setenv("OPENCODE_BASIC_AUTH", "fake-admin-auth-for-tests")
     monkeypatch.delenv("OPENCODE_MAX_USERS", raising=False)
     return fake_docker, authentik
 
@@ -109,7 +109,7 @@ def test_everyone_gets_their_own_container_and_headers(world):
         assert password_in(h[AUTH]) == docker.containers[f"opencode-u{pk}"]["password"]
     assert docker.containers["opencode-u7"]["password"] != docker.containers["opencode-u9"]["password"]
     # The admin keeps compose's laptop-opencode, with its existing password.
-    assert headers_of(authentik, 4) == {UP: "laptop-opencode", AUTH: "YWRtaW4tYXV0aA=="}
+    assert headers_of(authentik, 4) == {UP: "laptop-opencode", AUTH: "fake-admin-auth-for-tests"}
 
 
 def test_containers_are_isolated_and_limited(world):

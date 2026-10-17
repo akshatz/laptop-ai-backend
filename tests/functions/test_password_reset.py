@@ -39,25 +39,25 @@ def test_fingerprint_is_short_and_tied_to_the_hash(reset):
 
 
 async def test_reset_with_a_valid_link(reset):
-    result = await reset._reset(SimpleNamespace(), token=token_for(reset), password="New-Password-7")
+    result = await reset._reset(SimpleNamespace(), token=token_for(reset), password="test-only-password-2")
 
     assert result == {"status": "password_updated"}
-    owui.Auths.update_user_password_by_id.assert_awaited_once_with("u1", "hashed:New-Password-7")
+    owui.Auths.update_user_password_by_id.assert_awaited_once_with("u1", "hashed:test-only-password-2")
 
 
 async def test_a_link_stops_working_once_the_password_changed(reset):
     stale = token_for(reset, password_hash="hash-before-change")
     with pytest.raises(HTTPException, match="invalid or was already used"):
-        await reset._reset(SimpleNamespace(), token=stale, password="New-Password-7")
+        await reset._reset(SimpleNamespace(), token=stale, password="test-only-password-2")
     owui.Auths.update_user_password_by_id.assert_not_awaited()
 
 
 async def test_tampered_and_expired_links(reset):
     with pytest.raises(HTTPException, match="invalid"):
-        await reset._reset(SimpleNamespace(), token=token_for(reset) + "x", password="New-Password-7")
+        await reset._reset(SimpleNamespace(), token=token_for(reset) + "x", password="test-only-password-2")
     reset.valves.token_max_age_seconds = -1
     with pytest.raises(HTTPException, match="expired"):
-        await reset._reset(SimpleNamespace(), token=token_for(reset), password="New-Password-7")
+        await reset._reset(SimpleNamespace(), token=token_for(reset), password="test-only-password-2")
 
 
 async def test_short_passwords_are_refused(reset):
@@ -74,7 +74,7 @@ async def test_forgot_emails_a_working_link_and_hides_unknown_emails(reset):
     assert unknown == known  # same answer either way
     assert len(reset.sent) == 1 and reset.sent[0]["to"] == "asha@example.com"
     token = reset.sent[0]["body"].split("#token=")[1].split()[0]
-    assert (await reset._reset(SimpleNamespace(), token=token, password="New-Password-7"))["status"] == "password_updated"
+    assert (await reset._reset(SimpleNamespace(), token=token, password="test-only-password-2"))["status"] == "password_updated"
 
 
 async def test_forgot_has_a_cooldown_per_email(reset):
