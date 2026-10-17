@@ -480,10 +480,10 @@ authentik's audit events go to O2 stream **`authentik_events`**, next to Open We
 
 ## Tests
 
-`pytest` covers custom-backend's endpoints (auth, chats, RAG ingestion) and the logic of the Open WebUI Functions (Regenerate Limit, Chat History Trim, Query Log, Feedback Review, Photo Router, Web Search Notice). GitHub Actions runs them on every push ([.github/workflows/tests.yml](.github/workflows/tests.yml)).
+`pytest` covers custom-backend's endpoints (auth, chats, RAG ingestion) and the logic of every Open WebUI Function in `devops/open-webui/functions/`, including the sign-in wrappers, the class patches (Audit Status Code, Chat Soft Delete, Embedding Cache) and a check that Password Expiry's emailed links are accepted by Password Reset (the two must share a token format). GitHub Actions runs them on every push ([.github/workflows/tests.yml](.github/workflows/tests.yml)).
 
 - **custom-backend** tests import the real app with stand-ins for OpenBao and Milvus (no running stack needed) and use a real Postgres, given by `TEST_DATABASE_URL`. Its tables are dropped and recreated, so the database name must end in `_test`. Without `TEST_DATABASE_URL` these tests are skipped.
-- **Functions** tests load each file from `devops/open-webui/functions/` with stand-ins for the Open WebUI internals it imports.
+- **Functions** tests load each file from `devops/open-webui/functions/` with stand-ins for the Open WebUI internals it imports; their database helpers are replaced in the tests, so the SQL itself isn't covered.
 
 Run them on the laptop (Python 3.11, against a throwaway database on `postgres-db`):
 

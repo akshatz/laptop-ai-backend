@@ -1,5 +1,7 @@
-# Test dependencies: custom-backend's own pins plus pytest. The Functions' tests need only what's
-# already in there (pydantic, fastapi, sqlalchemy).
+# Test dependencies: custom-backend's own pins plus pytest, plus what the Open WebUI Functions import
+# that custom-backend doesn't (same versions as Open WebUI's backend/requirements.txt).
 -r ../custom-backend/requirements.txt
 pytest==8.4.2
 pytest-asyncio==1.2.0
+itsdangerous==2.2.0
+aiohttp==3.13.5
