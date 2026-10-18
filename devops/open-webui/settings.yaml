@@ -219,6 +219,9 @@ models:
     params:
       system: Today is {{CURRENT_WEEKDAY}}, {{CURRENT_DATE}}. The current time is {{CURRENT_TIME}}.
       function_calling: legacy
+      repeat_penalty: 1.15
+      repeat_last_n: 256
+      max_tokens: 1024
     meta:
       description: null
       capabilities:
