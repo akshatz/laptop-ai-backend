@@ -193,6 +193,23 @@ services:
     networks:
       - ai-network
 
+  # 📄 DOCLING: document text extraction with OCR for Open WebUI uploads (scanned PDFs, images,
+  # tables), replacing Open WebUI's built-in pypdf loader. CPU image (~7.5 GB, models included, so it
+  # works offline). Internal only (no published port). A conversion takes ~1.5–3 GB RAM and every
+  # core it can get, so it's capped to leave room for Ollama on the 16 GB laptop.
+  docling:
+    image: quay.io/docling-project/docling-serve-cpu:v1.36.0@sha256:225c8586e20d5d0fc6811a9e0e044fa602bcc4393f00389009bad42d6787b58f
+    container_name: laptop-docling
+    restart: unless-stopped
+    environment:
+      - UVICORN_WORKERS=1
+      - DOCLING_SERVE_ENG_LOC_NUM_WORKERS=1
+      - DOCLING_SERVE_ENABLE_UI=false
+    mem_limit: 3g
+    cpus: 4
+    networks:
+      - ai-network
+
   # 🛂 AUTHENTIK EVENTS SHIPPER: OpenTelemetry Collector receiving authentik-server/-worker output from
   # Docker's fluentd logging driver and sending authentik's audit events (logins, failed logins,
   # password changes, app authorizations, admin changes) to OpenObserve stream "authentik_events".
@@ -245,6 +262,10 @@ services:
       # is set). Keep in sync with custom-backend/chat_service.py.
       - "RAG_EMBEDDING_QUERY_PREFIX=task: search result | query: "
       - "RAG_EMBEDDING_CONTENT_PREFIX=title: none | text: "
+      # Uploaded documents are converted to text by the docling service (OCR included). Saved DB
+      # setting (Admin → Settings → Documents → Content Extraction Engine) overrides these once saved.
+      - CONTENT_EXTRACTION_ENGINE=docling
+      - DOCLING_SERVER_URL=http://docling:5001
       # 🔎 Web search via the searxng service: users click "Web Search" under the chat box. Results pages
       # are fetched and the relevant parts picked with the embedding model above. Enable/engine/URL are
       # saved DB settings (web.search.*) that override these once saved — see README "Web search".
