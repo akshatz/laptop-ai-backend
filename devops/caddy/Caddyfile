@@ -62,6 +62,23 @@ https://{$OPEN_WEBUI_HOST}:4443 {
 	}
 }
 
+# Attu (Milvus web UI), behind authentik sign-in (authentik/blueprints/attu-sso.yaml): only the authentik
+# account akadmin passes, and Attu then asks for Milvus's root password. Attu itself is also published on
+# 127.0.0.1:3002 for this laptop.
+https://{$OPEN_WEBUI_HOST}:3443 {
+	tls internal
+	route {
+		# authentik's outpost endpoints (sign-in callback, sign-out) on this same host.
+		reverse_proxy /outpost.goauthentik.io/* authentik-server:9000
+		forward_auth authentik-server:9000 {
+			uri /outpost.goauthentik.io/auth/caddy
+			copy_headers X-Authentik-Username
+			trusted_proxies private_ranges
+		}
+		reverse_proxy attu:3000
+	}
+}
+
 # Internal only (not published): what the personal opencode containers on opencode-net may reach.
 # Only the OpenAI-style chat API of Ollama (no pulling or deleting models) and SearXNG's search.
 http://:11434 {
