@@ -85,12 +85,13 @@ All services share the `ai-network` Docker bridge network, orchestrated via [dev
 | `postgres-db` | PostgreSQL 16 (custom-backend's database plus the `open_webui` and `authentik` databases) | 5433 → 5432 |
 | `ollama` | Local LLM inference engine (chat models and the `embeddinggemma` embedding model) | (internal) |
 | `open-webui` | Chat UI: Ollama models, web search, RAG on Milvus, sign-in through authentik, extended by the Functions in [devops/open-webui/functions/](devops/open-webui/functions/) | 8082 → 8080 |
-| `open-webui-proxy` | Caddy HTTPS front for devices on the LAN (cert from Caddy's local CA): Open WebUI on 8444, authentik on 9443, opencode on 4443 (behind authentik sign-in) | 8444 → 443, 9443, 4443 |
+| `open-webui-proxy` | Caddy HTTPS front for devices on the LAN (cert from Caddy's local CA): Open WebUI on 8444, authentik on 9443, opencode on 4443 and Attu on 3443 (both behind authentik sign-in) | 8444 → 443, 9443, 4443, 3443 |
 | `authentik-server` + `authentik-worker` | SSO with TOTP (Google Authenticator) for Open WebUI and OpenBao; sign-up, invitations, password reset (see [Open WebUI SSO + MFA](docs/sso.md#open-webui-sso--mfa-authentik)) | (through `open-webui-proxy`, 9443) |
 | `opencode` | Coding agent with a web UI (the admin's; everyone else gets their own `opencode-u<pk>` container from `provision.py`); stopped when idle (see [opencode](docs/opencode.md#opencode)) | 127.0.0.1:4096; LAN through `open-webui-proxy`, 4443 |
 | `docling` | Text extraction with OCR for documents uploaded to Open WebUI (scanned PDFs, images, tables) | (internal, 5001) |
 | `searxng` | Self-hosted metasearch engine for Open WebUI's web search | (internal, 8080) |
-| `milvus` + `milvus-etcd` + `milvus-minio` | Vector store for RAG document embeddings | (internal, 19530) |
+| `milvus` + `milvus-etcd` + `milvus-minio` | Vector store for RAG document embeddings; Open WebUI uses five shared collections (multitenancy mode), and web search rows are emptied daily by `milvus/cleanup.py` (see [docs/web-search-and-rag.md](docs/web-search-and-rag.md)) | (internal, 19530) |
+| `attu` | Web UI for browsing Milvus (Attu v2.4.12, Apache-2.0; asks for Milvus's root password) | 127.0.0.1:3002; LAN through `open-webui-proxy`, 3443 (akadmin only) |
 | `openbao` | Secrets storage (Postgres creds, AppRole broker) | 8200 |
 | `passbolt-db` | MariaDB for Passbolt (dedicated, separate from postgres-db) | (internal) |
 | `passbolt` | Password manager (stores OpenBao/AppRole tokens) | 8443 → 443 |
@@ -131,6 +132,7 @@ docker compose -f devops/docker-compose.yml up -d   # start everything else
 - Open WebUI: https://`OPEN_WEBUI_HOST`:8444 from any device on the LAN, this one included; sign-in goes through authentik. Trust Caddy's root CA once per device to get rid of the certificate warning: `docker cp laptop-open-webui-proxy:/data/caddy/pki/authorities/local/root.crt caddy-root.crt`, then import it into the OS/browser trust store. http://localhost:8082 and `http://<LAN-IP>:8082` reach Open WebUI directly too, but without HTTPS, so on the LAN everything (including the sign-in token) crosses the network unencrypted; point people at 8444.
 - authentik: https://`OPEN_WEBUI_HOST`:9443/if/admin/ (admin UI), `/if/user/` (a user's own password and authenticators)
 - OpenObserve: http://localhost:5080 (root login from `.env`)
+- Attu (Milvus): http://localhost:3002 on this laptop, or https://`OPEN_WEBUI_HOST`:3443 from the LAN (authentik sign-in as `akadmin`); connect to `milvus:19530` as `root` with `MILVUS_ROOT_PASSWORD`
 - Custom backend API: http://localhost:8011
 - OpenBao UI: http://localhost:8200/ui (sign in as `bao-admin`/`bao-readonly`, or through authentik with method OIDC; the root token in `openbao/keys.json` is for emergencies)
 - Passbolt: https://localhost:8443 (self-signed cert; see [PASSBOLT.md](PASSBOLT.md) for one-time admin registration)
