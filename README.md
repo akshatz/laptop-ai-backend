@@ -6,77 +6,69 @@ A local AI stack on a personal laptop: Open WebUI as the chat frontend on local 
 
 ```mermaid
 flowchart TB
-    subgraph client[" "]
-        browser["Browser\n(LAN devices and this laptop)"]
-    end
+    browser["Browser<br/>(LAN devices and this laptop)"]
 
-    subgraph edge["HTTPS front"]
-        proxy["open-webui-proxy (Caddy)\n:8444 Open WebUI · :9443 authentik"]
-    end
-
-    subgraph app["Application layer"]
-        webui["open-webui\n:8082\n+ Functions (sign-up, password, cleanup,\nchat archive, regenerate limit, query log,\nfeedback review, KPI dashboard, embedding cache)"]
-        backend["custom-backend (FastAPI)\n:8011\nrouters: auth, chats"]
+    subgraph edge["HTTPS front · open-webui-proxy (Caddy)"]
+        proxy[":8444 Open WebUI<br/>:9443 authentik<br/>:4443 opencode<br/>:3443 Attu"]
     end
 
     subgraph identity["Sign-in"]
-        authentik["authentik server + worker\nSSO + TOTP (Google Authenticator)"]
+        authentik["authentik server + worker<br/>SSO + TOTP · forward_auth"]
     end
 
-    subgraph inference["Models & search"]
-        ollama["ollama\nchat models + embeddinggemma"]
-        searxng["searxng\n(web search)"]
-        internet(("Internet\nGoogle, Bing, …"))
+    subgraph app["Applications"]
+        webui["open-webui :8082<br/>+ Functions"]
+        backend["custom-backend :8011<br/>FastAPI · auth, chats"]
+        opencode["opencode<br/>(one container per person)"]
+        attu["attu :3002<br/>Milvus web UI"]
+    end
+
+    subgraph ai["Models, search, documents"]
+        ollama["ollama<br/>chat models + embeddinggemma"]
+        searxng["searxng<br/>web search"]
+        docling["docling<br/>OCR for uploads"]
+        internet(("Internet"))
     end
 
     subgraph data["Data"]
-        postgres[("postgres-db\n:5433\napp / open_webui / authentik DBs")]
-        milvus["milvus\n(vector store)"]
-        milvusEtcd["milvus-etcd\n(metadata)"]
-        milvusMinio["milvus-minio\n(object storage)"]
-        passboltDb[("passbolt-db\n(MariaDB)")]
+        postgres[("postgres-db :5433<br/>app · open_webui · authentik · opencode")]
+        milvus["milvus<br/>5 shared collections"]
+        milvusDeps["milvus-etcd + milvus-minio"]
     end
 
     subgraph secrets["Secrets"]
-        openbao["openbao\n:8200"]
-        passbolt["passbolt\n:8443"]
+        openbao["openbao :8200"]
+        passbolt["passbolt :8443"]
+        passboltDb[("passbolt-db<br/>MariaDB")]
     end
 
-    subgraph observability["Observability"]
-        shippers["log shippers (OTel Collector)\nalso tail Ollama, OpenBao audit\nand authentik event logs"]
-        openobserve["openobserve (O2)\n:5080"]
+    subgraph obs["Observability"]
+        shippers["4 OTel Collector shippers<br/>tail the logs of Open WebUI (audit, queries),<br/>Ollama, OpenBao (audit), authentik (events)"]
+        openobserve["openobserve :5080"]
     end
 
-    browser -- "HTTPS (LAN)" --> proxy
-    browser -. "http :8082" .-> webui
-    browser -. "http :8011" .-> backend
-    proxy --> webui
-    proxy --> authentik
+    browser -- HTTPS --> proxy
+    proxy --> webui & authentik
+    proxy -- "after sign-in" --> opencode & attu
+    proxy -. "forward_auth" .-> authentik
 
-    webui -- "OIDC (via :9443)" --> authentik
-    webui --> ollama
-    webui --> searxng
+    webui -- OIDC --> authentik
+    openbao -- OIDC --> authentik
+    webui --> ollama & searxng & docling & milvus & postgres
     searxng --> internet
-    webui --> milvus
-    webui --> postgres
+    opencode --> ollama & searxng
+    attu --> milvus
+    backend --> ollama & milvus & postgres
+    backend -- AppRole --> openbao
     authentik --> postgres
-
-    backend --> ollama
-    backend --> milvus
-    backend --> postgres
-    backend -- "AppRole auth" --> openbao
-
-    milvus --> milvusEtcd
-    milvus --> milvusMinio
+    milvus --> milvusDeps
     passbolt --> passboltDb
-    openbao -. "root token / unseal key kept in" .-> passbolt
 
     webui -. "OTel logs" .-> openobserve
-    webui -. "audit.log, query.log" .-> shippers
     shippers -. OTLP .-> openobserve
 ```
 
-All services share the `ai-network` Docker bridge network, orchestrated via [devops/docker-compose.yml](devops/docker-compose.yml). Not drawn: the optional `lgtm` service and the one-shot setup jobs (see the table below).
+All services share the `ai-network` Docker bridge network, orchestrated via [devops/docker-compose.yml](devops/docker-compose.yml). Not drawn: the optional `lgtm` service, the one-shot setup jobs (`milvus-init-auth`, `authentik-db-init`, `open-webui-fn-migrate`, `caddy-ca-export`), and the host's systemd timers (opencode provisioning and idle stop, daily Milvus web search cleanup). Direct plain-HTTP ports (`:8082`, `:8011`, `:3002`) are for this laptop; LAN devices use the HTTPS ports.
 
 ## Stack
 
