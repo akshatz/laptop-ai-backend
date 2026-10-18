@@ -252,7 +252,7 @@ services:
       # Use Ollama for embeddings instead of downloading from HuggingFace. embeddinggemma (Google,
       # 768-dim, 2048-token context) retrieves better than nomic-embed-text; pull it first with
       # `docker exec laptop-ollama ollama pull embeddinggemma`. Engine/model are saved DB settings
-      # (rag.embedding_engine/rag.embedding_model) that override these once saved — see README.
+      # (rag.embedding_engine/rag.embedding_model) that override these once saved — see docs/web-search-and-rag.md.
       # Changing the model means re-indexing documents (Admin → Settings → Documents → Reindex).
       - RAG_EMBEDDING_ENGINE=ollama
       - RAG_EMBEDDING_MODEL=embeddinggemma
@@ -271,7 +271,7 @@ services:
       - DOCLING_SERVER_URL=http://docling:5001
       # 🔎 Web search via the searxng service: users click "Web Search" under the chat box. Results pages
       # are fetched and the relevant parts picked with the embedding model above. Enable/engine/URL are
-      # saved DB settings (web.search.*) that override these once saved — see README "Web search".
+      # saved DB settings (web.search.*) that override these once saved — see docs/web-search-and-rag.md.
       - ENABLE_WEB_SEARCH=true
       # 🔑 Direct Connections: each user may add their own OpenAI-compatible API URL + key
       # (Settings → Connections); those models are visible only to them and are called from their
@@ -283,12 +283,12 @@ services:
       - WEB_SEARCH_RESULT_COUNT=3
       # Web search on by default in every chat for all users (the user setting Settings → Interface →
       # Web Search = "Always"). A user's own choice there still wins. Saved DB setting
-      # ui.default_interface_settings overrides this once it exists — see README "Web search".
+      # ui.default_interface_settings overrides this once it exists — see docs/web-search-and-rag.md.
       - 'DEFAULT_INTERFACE_SETTINGS={"webSearch": "always"}'
       # Hide the chat "Controls" panel (system prompt, temperature and other model params, valves)
       # from regular users; admins keep it. Only the UI hides it — Open WebUI doesn't reject those
       # fields if sent through the API directly. Saved DB setting user.permissions overrides these
-      # once it exists (Admin → Users → Groups → Default permissions) — see README.
+      # once it exists (Admin → Users → Groups → Default permissions) — see docs/web-search-and-rag.md.
       - USER_PERMISSIONS_CHAT_CONTROLS=false
       - USER_PERMISSIONS_CHAT_VALVES=false
       - USER_PERMISSIONS_CHAT_SYSTEM_PROMPT=false
@@ -377,7 +377,7 @@ services:
       - AUTHENTIK_API_TOKEN=${OPEN_WEBUI_AUTHENTIK_API_TOKEN}
       # Rejects email/password sign-in at the API. The login form itself is a saved DB setting
       # (ui.enable_login_form) that overrides ENABLE_LOGIN_FORM once set — turn it off in
-      # Admin → Settings too, or password signups still work (see README "Open WebUI SSO + MFA").
+      # Admin → Settings too, or password signups still work (see docs/sso.md).
       - ENABLE_PASSWORD_AUTH=false
       - ENABLE_LOGIN_FORM=false
       # Password creation rules for any Open WebUI password that still gets set (signup, change,
