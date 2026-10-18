@@ -1,0 +1,81 @@
+# Applied automatically by authentik-worker (mounted into /blueprints/custom), and re-applied
+# whenever this file changes. Values in !Env come from the worker's environment (devops/.env).
+#
+# Puts Attu, the Milvus web UI (https://${OPEN_WEBUI_HOST}:3443), behind authentik: Caddy's
+# forward_auth asks the embedded outpost on every request, so people sign in with their authentik
+# account (password + TOTP, same login flow as Open WebUI). Only the single admin account akadmin
+# passes (no group, so nobody can be added by membership); everyone else gets "Permission denied".
+# Attu then still asks for Milvus's root password.
+version: 1
+metadata:
+  name: laptop-ai-backend - Attu SSO
+entries:
+  # Reuses the login flow with required TOTP and the default provider flows; also applies opencode's
+  # blueprint first, since the outpost entry below lists its provider too.
+  - model: authentik_blueprints.metaapplyblueprint
+    attrs:
+      identifiers:
+        name: laptop-ai-backend - Open WebUI SSO with required TOTP
+      required: true
+  - model: authentik_blueprints.metaapplyblueprint
+    attrs:
+      identifiers:
+        name: laptop-ai-backend - opencode SSO
+      required: true
+
+  - model: authentik_providers_proxy.proxyprovider
+    id: attu-provider
+    identifiers:
+      name: attu
+    attrs:
+      mode: forward_single
+      # Must match the URL the browser uses: the outpost picks the provider by Host header.
+      external_host: !Format ["https://%s:3443", !Env OPEN_WEBUI_HOST]
+      authorization_flow: !Find [authentik_flows.flow, [slug, default-provider-authorization-implicit-consent]]
+      invalidation_flow: !Find [authentik_flows.flow, [slug, default-provider-invalidation-flow]]
+      # How long a sign-in lasts before authentik is asked again.
+      access_token_validity: hours=8
+
+  - model: authentik_core.application
+    id: attu-app
+    identifiers:
+      slug: attu
+    attrs:
+      name: Attu (Milvus)
+      provider: !KeyOf attu-provider
+      meta_launch_url: !Format ["https://%s:3443/", !Env OPEN_WEBUI_HOST]
+      policy_engine_mode: any
+
+  # Attu can drop Milvus collections, so only the one admin account may reach it. Deliberately a
+  # fixed username rather than "any superuser" or a group, so making someone else an admin doesn't
+  # grant it. The old superuser-based policy is removed.
+  - model: authentik_policies_expression.expressionpolicy
+    state: absent
+    identifiers:
+      name: attu-superusers-only
+
+  - model: authentik_policies_expression.expressionpolicy
+    id: attu-akadmin-only
+    identifiers:
+      name: attu-akadmin-only
+    attrs:
+      expression: |
+        return request.user.username == "akadmin" and request.user.is_active
+
+  - model: authentik_policies.policybinding
+    identifiers:
+      target: !KeyOf attu-app
+      policy: !KeyOf attu-akadmin-only
+    attrs:
+      order: 0
+
+  # The embedded outpost (inside authentik-server) answers Caddy's forward_auth checks. This is the
+  # only blueprint that sets its provider list, so add any future proxy provider here (opencode's
+  # included; drop that line when opencode is removed).
+  - model: authentik_outposts.outpost
+    identifiers:
+      managed: goauthentik.io/outposts/embedded
+    attrs:
+      providers:
+        - !Find [authentik_providers_proxy.proxyprovider, [name, opencode]]
+        - !KeyOf attu-provider

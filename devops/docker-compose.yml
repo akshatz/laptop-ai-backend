@@ -462,6 +462,7 @@ services:
       - "8444:443"
       - "9443:9443"
       - "4443:4443"
+      - "3443:3443"   # Attu, behind authentik (admins only)
     environment:
       - OPEN_WEBUI_HOST=${OPEN_WEBUI_HOST}
     volumes:

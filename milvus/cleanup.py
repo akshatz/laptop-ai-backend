@@ -77,11 +77,13 @@ def main():
     ap.add_argument("mode", choices=["legacy", "web-search"])
     ap.add_argument("--delete", action="store_true", help="really delete (default: only list)")
     args = ap.parse_args()
-    cmd = [
-        "docker", "exec", "-i", "-e", "MILVUS_ROOT_PASSWORD", "laptop-open-webui",
-        "python3", "-", args.mode, "1" if args.delete else "0", ",".join(sorted(SHARED)),
-    ]
-    env = {"MILVUS_ROOT_PASSWORD": env_value("MILVUS_ROOT_PASSWORD"), "PATH": "/usr/bin:/bin:/usr/local/bin"}
+    # The password reaches the container as an environment variable passed through by name
+    # (--env NAME, value taken from this process's environment), so it never appears in argv.
+    var = "MILVUS_ROOT_PASSWORD"
+    container = "laptop-open-webui"
+    cmd = ["docker", "exec", "-i", f"--env={var}", container, "python3", "-"]
+    cmd += [args.mode, "1" if args.delete else "0", ",".join(sorted(SHARED))]
+    env = {var: env_value(var), "PATH": "/usr/bin:/bin:/usr/local/bin"}
     sys.exit(subprocess.run(cmd, input=REMOTE, text=True, env=env).returncode)
 
 
