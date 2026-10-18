@@ -249,6 +249,11 @@ services:
       # are fetched and the relevant parts picked with the embedding model above. Enable/engine/URL are
       # saved DB settings (web.search.*) that override these once saved — see README "Web search".
       - ENABLE_WEB_SEARCH=true
+      # 🔑 Direct Connections: each user may add their own OpenAI-compatible API URL + key
+      # (Settings → Connections); those models are visible only to them and are called from their
+      # browser, so Functions/filters, query log and KPIs don't cover them. Saved DB setting
+      # direct.enable (managed in open-webui/settings.yaml) overrides this once saved.
+      - ENABLE_DIRECT_CONNECTIONS=true
       - WEB_SEARCH_ENGINE=searxng
       - SEARXNG_QUERY_URL=http://searxng:8080/search
       - WEB_SEARCH_RESULT_COUNT=3

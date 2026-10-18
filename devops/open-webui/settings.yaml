@@ -88,6 +88,7 @@ config:
   task.title.enable: true
   task.tags.enable: false
   task.autocomplete.enable: false
+  direct.enable: true
   ui.banners:
   - id: family-guide-1
     type: info

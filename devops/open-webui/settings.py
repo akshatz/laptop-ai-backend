@@ -78,6 +78,7 @@ CONFIG_KEYS = [
     "task.tags.enable",
     "task.autocomplete.enable",
     # what users see and may do
+    "direct.enable",
     "ui.banners",
     "user.permissions",
 ]
