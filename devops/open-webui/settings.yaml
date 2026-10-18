@@ -266,17 +266,17 @@ models:
     meta:
       description: null
       capabilities:
-        file_context: true
+        memory: true
         vision: true
-        file_upload: true
-        web_search: true
-        image_generation: true
-        code_interpreter: true
         terminal: true
         citations: true
-        status_updates: true
-        memory: true
+        web_search: true
+        file_upload: true
+        file_context: true
         builtin_tools: true
+        status_updates: true
+        code_interpreter: true
+        image_generation: true
       knowledge: null
       defaultFeatureIds:
       - web_search
@@ -314,6 +314,7 @@ models:
       - image_generation
       suggestion_prompts: null
       tags: []
+      hidden: true
   smart-ai:latest:
     is_active: false
     params: {}
@@ -338,6 +339,10 @@ functions:
   chat_soft_delete:
     is_active: true
     is_global: false
+    valves: {}
+  duplicate_upload_notice:
+    is_active: true
+    is_global: true
     valves: {}
   feedback_review:
     is_active: true
