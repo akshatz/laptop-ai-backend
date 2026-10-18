@@ -29,7 +29,7 @@ processors:
           # string rather than hundreds of flattened O2 columns.
           - set(attributes["context"], String(attributes["context"])) where attributes["context"] != nil
           - delete_matching_keys(attributes, "^(event|logger|pid|schema_name|domain_url|level|timestamp|source|container_id|fluent\\.tag)$")
-          # Readable one-line body for O2's log view, e.g. "akadmin login_failed 192.168.29.119".
+          # Readable one-line body for O2's log view, e.g. "akadmin login_failed 192.168.1.50".
           - set(body, Concat([attributes["user"]["username"], attributes["action"], attributes["client_ip"]], " "))
 
   resource:
