@@ -73,11 +73,6 @@ entries:
     attrs:
       order: 0
 
-  # The embedded outpost (inside authentik-server) answers Caddy's forward_auth checks. This sets
-  # its whole provider list: add any future proxy provider here too.
-  - model: authentik_outposts.outpost
-    identifiers:
-      managed: goauthentik.io/outposts/embedded
-    attrs:
-      providers:
-        - !KeyOf opencode-provider
+  # The embedded outpost's provider list (which answers Caddy's forward_auth checks) is set in
+  # attu-sso.yaml, which applies this blueprint first and lists this provider too. Kept in one place
+  # so two blueprints don't overwrite each other's list.
