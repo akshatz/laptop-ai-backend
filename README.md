@@ -232,7 +232,7 @@ Besides self sign-up, you can send new users a one-time invite link ([authentik/
 
 1. In authentik's admin UI (`https://<OPEN_WEBUI_HOST>:9443/if/admin/`), go to **Directory → Invitations → Create**.
 2. Fill in:
-   - **Name**: e.g. `invite-jatin`
+   - **Name**: e.g. `invite-alex`
    - **Flow**: `invitation-enrollment`
    - **Expires**: a date a few days out
    - **Single use**: on
@@ -462,7 +462,7 @@ Open WebUI's regular logs (stream `openwebui_backend`) are mostly web-server req
 authentik's audit events go to O2 stream **`authentik_events`**, next to Open WebUI's `openwebui_audit`. Covered: logins, failed logins, logouts, password changes, MFA setup, Open WebUI authorizations and admin changes.
 
 - How: `authentik-server`/`authentik-worker` use Docker's `fluentd` logging driver to send their output to `authentik-events-shipper`, an OpenTelemetry Collector ([devops/otel-collector/authentik-events.yaml](devops/otel-collector/authentik-events.yaml)). It keeps only the event lines (authentik logs each event as JSON with `"event": "Created Event"`) and drops the per-request access logs.
-- Each entry's message reads `<username> <action> <IP>`, e.g. `akadmin login_failed 192.168.29.119`. Fields: `action`, `user_username`, `user_email`, `client_ip`, and `context` (a JSON string with the stage, request details, etc.). Example: `SELECT * FROM "authentik_events" WHERE action = 'login_failed'`.
+- Each entry's message reads `<username> <action> <IP>`, e.g. `akadmin login_failed 192.168.1.50`. Fields: `action`, `user_username`, `user_email`, `client_ip`, and `context` (a JSON string with the stage, request details, etc.). Example: `SELECT * FROM "authentik_events" WHERE action = 'login_failed'`.
 - The driver is async, so authentik starts even when the shipper is down (events from that time are lost), and `docker logs` still works through Docker's local cache. The shipper's port 24224 is published on 127.0.0.1 only, because the Docker daemon on the host is what connects to it.
 - authentik also keeps its own event log (**Events → Logs** in the admin UI, 1 year by default).
 
