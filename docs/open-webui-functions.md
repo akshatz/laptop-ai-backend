@@ -60,6 +60,14 @@ Open WebUI deletes chats for good: there's no trash. The Chat Soft Delete Functi
 - If the copy fails, the chat is still deleted and the error is logged.
 - A whole user's chats are left to the User Cleanup Function's `archive_chats` Valve (above), so switching that off still erases someone completely.
 
+### Duplicate uploads
+
+In a chat, Open WebUI stores, reads and embeds every upload again, even when it's a file you already uploaded (it refuses duplicates only inside a knowledge base). The Duplicate Upload Notice Function, [devops/open-webui/functions/duplicate_upload_notice.py](../devops/open-webui/functions/duplicate_upload_notice.py), records every chat upload in the `fn_file_uploads` table and, when a file you just attached has the same content as one you uploaded before, shows a line above the answer like "You uploaded menu.pdf before, on 17 Oct 2026". Import and enable it, and switch on **Global** so it covers every model. No restart needed.
+
+- Copies are matched by content (a SHA-256 of the file's bytes), so renaming a file doesn't hide a copy. Only your own earlier uploads count, and earlier copies whose processing failed don't.
+- Each file is reported once, on the first question it's attached to.
+- To see every repeat, query the view: `SELECT filename, copy_number, first_file_id FROM fn_duplicate_uploads;` (in the `open_webui` database). Uploads from before the table existed are included.
+
 ### Function tables
 
 The Functions (and the SSO status script) keep their state in Postgres, in Open WebUI's `open_webui` database, so it's backed up with the rest of Open WebUI's data:
@@ -70,6 +78,7 @@ The Functions (and the SSO status script) keep their state in Postgres, in Open 
 | `fn_password_age` | Password Expiry | When each password was last set, and the last reminder (`user_id`, `changed_at`, `last_warned_at`) |
 | `fn_archived_chats` | authentik User Cleanup, Chat Soft Delete | Chats of deleted users and deleted chats, copied just before deletion (full chat JSON and messages, the user's email/name, when, by whom and why) — see [Deleting users](#deleting-users) and [Deleted chats](#deleted-chats) |
 | `fn_embedding_cache` | Embedding Cache | One vector per web-page or file chunk already embedded, keyed by a hash of model, prefix and text; rows unused for 30 days are deleted (see [Web search](web-search-and-rag.md#web-search)) |
+| `fn_file_uploads` | Duplicate Upload Notice | One row per chat upload: file id, user, content hash, name, type, size, time; view `fn_duplicate_uploads` lists the repeats (see [Duplicate uploads](#duplicate-uploads)) |
 | `fn_user_sso_status` | `devops/open-webui/sync-user-status.sh` (not a Function) | Each person's SSO onboarding stage and when they reached each step, keyed by lowercased email (see [Inviting users](sso.md#inviting-users)) |
 
 They're created by a separate Alembic setup, [devops/open-webui/migrations/](../devops/open-webui/migrations/), which tracks its history in `fn_alembic_version` so it never touches Open WebUI's own migrations in the same database. The one-shot `open-webui-fn-migrate` service applies it on every `docker compose up` (a no-op once current), and `open-webui` waits for it. Its first revision also imports rows from the Functions' earlier SQLite files (`email_verification.db` / `password_expiry.db` on the `open-webui-data` volume), if present. Once that's done, those files are unused and can be deleted.

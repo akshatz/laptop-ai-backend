@@ -42,7 +42,7 @@ async def _no_user(*args, **kwargs):
 # Data-access namespaces: one object each, shared with every loaded Function; reset per test.
 owui = SimpleNamespace(
     Users=SimpleNamespace(), Chats=SimpleNamespace(), Auths=SimpleNamespace(), Functions=SimpleNamespace(),
-    Groups=SimpleNamespace(), Knowledges=SimpleNamespace(), Storage=SimpleNamespace(),
+    Groups=SimpleNamespace(), Knowledges=SimpleNamespace(), Storage=SimpleNamespace(), Files=SimpleNamespace(),
     ASYNC_VECTOR_DB_CLIENT=SimpleNamespace(),
 )
 _ASYNC_METHODS = {
@@ -53,6 +53,7 @@ _ASYNC_METHODS = {
     "Groups": ["get_groups_by_member_id"],
     "Knowledges": [],
     "Storage": [],
+    "Files": ["get_file_by_id"],
     "ASYNC_VECTOR_DB_CLIENT": ["delete_collection"],
 }
 
@@ -153,6 +154,7 @@ _module("open_webui.models.auths", Auth=Auth, Auths=owui.Auths)
 _module("open_webui.models.functions", Functions=owui.Functions)
 _module("open_webui.models.groups", Groups=owui.Groups)
 _module("open_webui.models.knowledge", Knowledges=owui.Knowledges)
+_module("open_webui.models.files", Files=owui.Files)
 _module("open_webui.retrieval.vector.async_client", ASYNC_VECTOR_DB_CLIENT=owui.ASYNC_VECTOR_DB_CLIENT)
 _module("open_webui.storage.provider", Storage=owui.Storage)
 _module("open_webui.events", EVENTS=EVENTS, publish_event=AsyncMock())
