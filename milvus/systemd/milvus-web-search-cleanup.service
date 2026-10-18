@@ -1,0 +1,7 @@
+[Unit]
+Description=Empty Open WebUI's shared web search collection in Milvus
+
+[Service]
+Type=oneshot
+# %h is the home directory; adjust if the repo lives elsewhere.
+ExecStart=/usr/bin/python3 %h/laptop-ai-backend/milvus/cleanup.py web-search --delete
