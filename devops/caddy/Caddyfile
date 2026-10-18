@@ -62,8 +62,8 @@ https://{$OPEN_WEBUI_HOST}:4443 {
 	}
 }
 
-# Attu (Milvus web UI), behind authentik sign-in (authentik/blueprints/attu-sso.yaml): only authentik
-# superusers pass, and Attu then asks for Milvus's root password. Attu itself is also published on
+# Attu (Milvus web UI), behind authentik sign-in (authentik/blueprints/attu-sso.yaml): only the authentik
+# account akadmin passes, and Attu then asks for Milvus's root password. Attu itself is also published on
 # 127.0.0.1:3002 for this laptop.
 https://{$OPEN_WEBUI_HOST}:3443 {
 	tls internal

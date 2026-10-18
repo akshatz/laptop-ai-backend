@@ -3,8 +3,9 @@
 #
 # Puts Attu, the Milvus web UI (https://${OPEN_WEBUI_HOST}:3443), behind authentik: Caddy's
 # forward_auth asks the embedded outpost on every request, so people sign in with their authentik
-# account (password + TOTP, same login flow as Open WebUI). Only authentik superusers (akadmin) pass;
-# everyone else gets "Permission denied". Attu then still asks for Milvus's root password.
+# account (password + TOTP, same login flow as Open WebUI). Only the single admin account akadmin
+# passes (no group, so nobody can be added by membership); everyone else gets "Permission denied".
+# Attu then still asks for Milvus's root password.
 version: 1
 metadata:
   name: laptop-ai-backend - Attu SSO
@@ -45,19 +46,26 @@ entries:
       meta_launch_url: !Format ["https://%s:3443/", !Env OPEN_WEBUI_HOST]
       policy_engine_mode: any
 
-  # Attu can drop Milvus collections, so only authentik superusers may reach it.
+  # Attu can drop Milvus collections, so only the one admin account may reach it. Deliberately a
+  # fixed username rather than "any superuser" or a group, so making someone else an admin doesn't
+  # grant it. The old superuser-based policy is removed.
   - model: authentik_policies_expression.expressionpolicy
-    id: attu-superusers-only
+    state: absent
     identifiers:
       name: attu-superusers-only
+
+  - model: authentik_policies_expression.expressionpolicy
+    id: attu-akadmin-only
+    identifiers:
+      name: attu-akadmin-only
     attrs:
       expression: |
-        return request.user.is_superuser
+        return request.user.username == "akadmin" and request.user.is_active
 
   - model: authentik_policies.policybinding
     identifiers:
       target: !KeyOf attu-app
-      policy: !KeyOf attu-superusers-only
+      policy: !KeyOf attu-akadmin-only
     attrs:
       order: 0
 
