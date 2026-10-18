@@ -308,6 +308,12 @@ services:
       - VECTOR_DB=milvus
       - MILVUS_URI=http://milvus:19530
       - MILVUS_TOKEN=root:${MILVUS_ROOT_PASSWORD}
+      # Five shared collections (open_webui_web_search/_files/_knowledge/_memories/_hash_based, rows
+      # tagged with resource_id) instead of a new collection per web search, file and knowledge base
+      # (147 of 153 were leftover web searches). Existing vectors aren't migrated: after switching,
+      # reindex knowledge (Admin → Settings → Documents) and re-upload files, then drop the old
+      # collections with milvus/cleanup.py legacy.
+      - ENABLE_MILVUS_MULTITENANCY_MODE=true
       # OpenTelemetry: only logs are exported (to OpenObserve, below). Traces/metrics went to the lgtm
       # service, which is now opt-in (profile "lgtm") — turn these back on if you start it.
       - ENABLE_OTEL=true
