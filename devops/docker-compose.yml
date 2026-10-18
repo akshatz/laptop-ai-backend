@@ -648,6 +648,24 @@ services:
     networks:
       - ai-network
 
+  # 🔭 ATTU: web UI for browsing Milvus (collections, schemas, vectors, search). v2.4.x matches Milvus
+  # 2.4 and is Apache-2.0; Attu is proprietary from 2.6.0, so don't bump past 2.5.12. Localhost only:
+  # it signs in to Milvus as root (MILVUS_ROOT_PASSWORD) and can drop collections. Open
+  # http://localhost:3002, address milvus:19530, user root.
+  attu:
+    image: zilliz/attu:v2.4.12@sha256:36a242d51dbd48e75d8378cd735807502403e4040928d77e92aefc644679855f
+    container_name: laptop-attu
+    restart: unless-stopped
+    environment:
+      - MILVUS_URL=milvus:19530
+    ports:
+      - "127.0.0.1:3002:3000"
+    mem_limit: 256m
+    depends_on:
+      - milvus
+    networks:
+      - ai-network
+
   # 🔑 Rotates Milvus's default root password on first boot, then exits.
   # Auth is enabled via COMMON_SECURITY_AUTHORIZATIONENABLED above; Milvus has
   # no env var for the initial password, so it always starts as root/Milvus.
