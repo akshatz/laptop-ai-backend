@@ -29,7 +29,7 @@ TEST_DATABASE_URL = os.environ.get("TEST_DATABASE_URL")
 DB = "migrations_test"
 FN_TABLES = {
     "fn_email_verified", "fn_password_age", "fn_archived_chats", "fn_user_sso_status",
-    "fn_settings_revisions", "fn_embedding_cache",
+    "fn_settings_revisions", "fn_embedding_cache", "fn_file_uploads",
 }
 
 needs_db = pytest.mark.skipif(not TEST_DATABASE_URL, reason="TEST_DATABASE_URL not set")

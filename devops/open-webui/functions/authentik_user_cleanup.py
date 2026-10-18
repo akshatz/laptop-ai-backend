@@ -24,7 +24,7 @@ How it works:
      Open WebUI leaves behind is purged — memories (and their `user-memory-<id>` vectors), notes,
      tags, chat-file links, uploaded files (knowledge-base links, the file on disk and its
      `file-<id>` vectors; Open WebUI's own file delete doesn't drop the Milvus collection), and this
-     repo's fn_email_verified / fn_password_age rows. fn_user_sso_status is kept on purpose: its sync
+     repo's fn_email_verified / fn_password_age / fn_file_uploads rows. fn_user_sso_status is kept on purpose: its sync
      script marks people as `removed`.
 - The authentik account is found by the OIDC `sub` Open WebUI stored at the user's first SSO login
   (`user.oauth.oidc.sub`, authentik's per-user `uid` with the provider's `hashed_user_id` sub mode).
@@ -283,7 +283,8 @@ class Event:
                 await ASYNC_VECTOR_DB_CLIENT.delete_collection(collection_name=f"user-memory-{user_id}")
             counts = {}
             async with get_async_db_context() as session:
-                for table in ("file", "chat_file", "memory", "note", "tag", "fn_email_verified", "fn_password_age"):
+                for table in ("file", "chat_file", "memory", "note", "tag", "fn_email_verified", "fn_password_age",
+                              "fn_file_uploads"):
                     result = await session.execute(text(f'DELETE FROM "{table}" WHERE user_id = :u'), {"u": user_id})
                     counts[table] = result.rowcount or 0
                 await session.commit()
