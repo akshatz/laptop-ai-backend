@@ -205,6 +205,9 @@ services:
       - UVICORN_WORKERS=1
       - DOCLING_SERVE_ENG_LOC_NUM_WORKERS=1
       - DOCLING_SERVE_ENABLE_UI=false
+      # Open WebUI waits on the synchronous convert call; the 120 s default timed out a 14-page
+      # scanned menu (OCR on CPU takes ~15–30 s per page).
+      - DOCLING_SERVE_MAX_SYNC_WAIT=900
     mem_limit: 3g
     cpus: 4
     networks:
