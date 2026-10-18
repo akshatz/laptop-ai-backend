@@ -88,6 +88,7 @@ config:
   task.title.enable: true
   task.tags.enable: false
   task.autocomplete.enable: false
+  direct.enable: true
   ui.banners:
   - id: family-guide-1
     type: info
@@ -250,7 +251,7 @@ models:
       capabilities: null
       knowledge: null
   gemma3:4b:
-    is_active: true
+    is_active: false
     params: {}
     meta:
       description: null
@@ -287,22 +288,25 @@ models:
       knowledge: null
   photo-ai:latest:
     is_active: true
-    params: {}
+    params:
+      function_calling: legacy
     meta:
       description: null
       capabilities:
-        file_context: true
+        memory: true
         vision: true
-        file_upload: true
-        web_search: true
-        image_generation: true
-        code_interpreter: true
         terminal: true
         citations: true
-        status_updates: true
-        memory: true
+        web_search: true
+        file_upload: true
+        file_context: true
         builtin_tools: true
+        status_updates: true
+        code_interpreter: true
+        image_generation: true
       knowledge: null
+      filterIds:
+      - photo_router
       defaultFeatureIds:
       - image_generation
       suggestion_prompts: null
@@ -326,7 +330,8 @@ functions:
   chat_history_trim:
     is_active: true
     is_global: false
-    valves: null
+    valves:
+      keep_previous_turns: 1
   chat_soft_delete:
     is_active: true
     is_global: false
@@ -354,6 +359,7 @@ functions:
       target_model: photo-ai:latest
       skip_web_search: true
       status: Reading the picture with photo-ai…
+      follow_up_turns: 2
   query_log:
     is_active: true
     is_global: true
