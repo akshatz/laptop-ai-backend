@@ -1,6 +1,10 @@
 """Photo Router and Web Search Notice: small filters, tested together."""
 
-from conftest import load_function
+from types import SimpleNamespace
+
+import pytest
+
+from conftest import load_function, owui
 
 photo_router = load_function("photo_router")
 web_search_notice = load_function("web_search_notice")
@@ -82,6 +86,105 @@ async def test_document_rule_can_be_turned_off_and_ignores_search_already_off(ev
     off = {"features": {"web_search": False}, "files": [PDF], "messages": [{"role": "user", "content": "q"}]}
     assert (await photo_router.Filter().inlet(off, events))["features"]["web_search"] is False
     assert events.emitted == []
+
+
+def _chat_with_previous_question(at):
+    owui.Chats.get_chat_by_id.return_value = SimpleNamespace(chat={"history": {"messages": {
+        "q1": {"role": "user", "timestamp": at},
+        "a1": {"role": "assistant", "parentId": "q1"},
+        "q2": {"role": "user", "parentId": "a1", "timestamp": at + 100},
+    }}})
+    return {"chat_id": "c1", "user_message_id": "q2"}
+
+
+@pytest.fixture
+def classifier(monkeypatch):
+    """Replaces the Ollama call; set .answer to what the classifier says."""
+    calls = SimpleNamespace(answer="WEB", prompts=[])
+
+    class Response:
+        def raise_for_status(self): pass
+        async def json(self): return {"response": calls.answer}
+        async def __aenter__(self): return self
+        async def __aexit__(self, *a): pass
+
+    class Session:
+        def __init__(self, **kw): pass
+        def post(self, url, json):
+            calls.prompts.append(json["prompt"])
+            return Response()
+        async def __aenter__(self): return self
+        async def __aexit__(self, *a): pass
+
+    monkeypatch.setattr(photo_router.aiohttp, "ClientSession", Session)
+    owui.Files.get_file_by_id.return_value = SimpleNamespace(filename="menu.pdf", data={"content": "Idli 60 Dosa 90"})
+    return calls
+
+
+async def test_a_general_question_after_an_earlier_document_keeps_web_search(events, classifier):
+    metadata = _chat_with_previous_question(at=2000)
+    body = {"model": "fast-ai:latest", "features": {"web_search": True},
+            "files": [{"type": "file", "id": "menu", "file": {"created_at": 1500}}],
+            "messages": [{"role": "user", "content": "How do I make a good idli at home?"}]}
+
+    body = await photo_router.Filter().inlet(body, events, None, metadata)
+
+    assert body["model"] == "fast-ai:latest" and body["features"]["web_search"] is True
+    assert events.emitted == []
+    assert "How do I make a good idli at home?" in classifier.prompts[0] and "Idli 60 Dosa 90" in classifier.prompts[0]
+
+
+async def test_a_question_about_an_earlier_document_goes_to_the_document(events, classifier):
+    classifier.answer = "DOC"
+    metadata = _chat_with_previous_question(at=2000)
+    body = {"model": "fast-ai:latest", "features": {"web_search": True},
+            "files": [{"type": "file", "id": "menu", "file": {"created_at": 1500}}],
+            "messages": [{"role": "user", "content": "What are their prices?"}]}
+
+    body = await photo_router.Filter().inlet(body, events, None, metadata)
+
+    assert body["model"] == "photo-ai:latest" and body["features"]["web_search"] is False
+
+
+async def test_classifier_errors_and_the_valve_keep_web_search(events, classifier, monkeypatch):
+    metadata = _chat_with_previous_question(at=2000)
+    def body():
+        return {"features": {"web_search": True}, "files": [{"type": "file", "id": "menu", "file": {"created_at": 1500}}],
+                "messages": [{"role": "user", "content": "What are their prices?"}]}
+
+    class Broken:
+        def __init__(self, **kw): raise RuntimeError("ollama down")
+    monkeypatch.setattr(photo_router.aiohttp, "ClientSession", Broken)
+    assert (await photo_router.Filter().inlet(body(), events, None, metadata))["features"]["web_search"] is True
+
+    f = photo_router.Filter()
+    f.valves.classify_followups = False
+    assert (await f.inlet(body(), events, None, metadata))["features"]["web_search"] is True
+
+
+async def test_a_document_attached_since_the_previous_question_counts(events, classifier):
+    metadata = _chat_with_previous_question(at=2000)
+    body = {"model": "fast-ai:latest", "features": {"web_search": True},
+            "files": [{"type": "file", "id": "menu", "file": {"created_at": 1500}},
+                      {"type": "file", "id": "new", "file": {"created_at": 2050}}],
+            "messages": [{"role": "user", "content": "What does this say?"}]}
+
+    body = await photo_router.Filter().inlet(body, events, None, metadata)
+
+    assert body["model"] == "photo-ai:latest" and body["features"]["web_search"] is False
+
+
+async def test_the_first_question_and_unreadable_chats_count_every_document(events):
+    owui.Chats.get_chat_by_id.return_value = SimpleNamespace(chat={"history": {"messages": {
+        "q1": {"role": "user", "timestamp": 2000}}}})
+    first = {"features": {"web_search": True}, "files": [{"type": "file", "id": "f", "file": {"created_at": 1}}],
+             "messages": [{"role": "user", "content": "q"}]}
+    assert (await photo_router.Filter().inlet(first, events, None, {"chat_id": "c1", "user_message_id": "q1"}))["features"]["web_search"] is False
+
+    owui.Chats.get_chat_by_id.side_effect = RuntimeError("db down")
+    broken = {"features": {"web_search": True}, "files": [{"type": "file", "id": "f", "file": {"created_at": 1}}],
+              "messages": [{"role": "user", "content": "q"}]}
+    assert (await photo_router.Filter().inlet(broken, events, None, {"chat_id": "c1", "user_message_id": "q9"}))["features"]["web_search"] is False
 
 
 async def test_notice_when_web_search_found_nothing(events):
