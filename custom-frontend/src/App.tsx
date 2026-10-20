@@ -6,6 +6,7 @@ import ChatScreen from './screens/ChatScreen';
 const SIGNIN_ERRORS: Record<string, string> = {
   failed: 'Sign-in did not complete. Please try again.',
   deactivated: 'This account has been deactivated.',
+  unavailable: 'Sign-in is not set up on the server yet.',
 };
 
 export default function App() {
@@ -21,9 +22,18 @@ export default function App() {
       history.replaceState(null, '', location.pathname);
     }
     api.me()
-      .then(setUser)
-      .catch(err => { if (!(err instanceof HttpError && err.status === 401)) setError('Could not reach the server: ' + err.message); })
-      .finally(() => setLoading(false));
+      .then(u => { setUser(u); setLoading(false); })
+      .catch(err => {
+        if (err instanceof HttpError && err.status === 401 && !signin) {
+          // Not signed in here: go to authentik straight away. Anyone already signed in there
+          // (e.g. to Open WebUI) comes right back signed in. After a failed attempt (?signin=…)
+          // the button is shown instead, so this can't loop.
+          location.replace(SIGN_IN_URL);
+          return;
+        }
+        if (!(err instanceof HttpError && err.status === 401)) setError('Could not reach the server: ' + err.message);
+        setLoading(false);
+      });
   }, []);
 
   async function signOut() {

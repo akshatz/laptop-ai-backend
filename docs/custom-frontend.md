@@ -4,7 +4,7 @@ A React chat UI for [custom-backend](custom-backend.md), kept as its own app in 
 
 ## Sign-in
 
-One **Sign in** button, which goes to authentik: the same account, password and TOTP as Open WebUI, so there's no separate sign-up here (new people use authentik's sign-up or an invitation, see [sso.md](sso.md)).
+Opening the app without a session goes straight to authentik (a person already signed in there, e.g. to Open WebUI, comes right back signed in without typing anything); after a failed attempt it shows a **Sign in** button instead, so it can't loop. Sign-in uses the same account, password and TOTP as Open WebUI, so there's no separate sign-up here (new people use authentik's sign-up or an invitation, see [sso.md](sso.md)).
 
 1. The button opens `/api/auth/login`. custom-backend sends the browser to authentik (`https://<OPEN_WEBUI_HOST>:9443`) with PKCE and a state value kept in a short-lived signed cookie.
 2. authentik sends the browser back to `/api/auth/callback`. custom-backend exchanges the code with authentik over the Docker network, reads the user's email and name, finds the `users` row with that email or creates one, and sets its session cookie (HttpOnly, signed, 7 days).

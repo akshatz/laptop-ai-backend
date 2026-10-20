@@ -38,6 +38,12 @@ async def test_login_redirects_to_authentik_with_pkce(client):
     assert "httponly" in response.headers["set-cookie"].lower()
 
 
+async def test_login_without_configuration_returns_to_the_app(client, monkeypatch):
+    monkeypatch.setattr(sso, "CLIENT_SECRET", "")
+    response = await client.get("/auth/login")
+    assert response.status_code == 302 and response.headers["location"] == "http://test/?signin=unavailable"
+
+
 async def test_login_refuses_an_unknown_origin(client):
     response = await client.get("/auth/login", headers={"host": "evil.example"})
     assert response.status_code == 400

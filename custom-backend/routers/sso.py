@@ -59,9 +59,10 @@ def _set_cookie(response, request: Request, name: str, value: str, max_age: int)
 
 @router.get("/login")
 async def login(request: Request):
-    if not (AUTHENTIK_PUBLIC_URL and CLIENT_ID and CLIENT_SECRET):
-        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="authentik sign-in is not configured.")
     origin = _origin(request)
+    if not (AUTHENTIK_PUBLIC_URL and CLIENT_ID and CLIENT_SECRET):
+        # Back to the app with a message rather than an error page (the app redirects here by itself).
+        return RedirectResponse(f"{origin}/?signin=unavailable", status_code=302)
     state = secrets.token_urlsafe(32)
     verifier = secrets.token_urlsafe(64)
     challenge = base64.urlsafe_b64encode(hashlib.sha256(verifier.encode()).digest()).rstrip(b"=").decode()
