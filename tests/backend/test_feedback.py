@@ -74,3 +74,34 @@ async def test_dashboard_mine_vs_admin_everyone(client, answered, session_maker,
         everyone = (await other.get("/feedback")).json()
         assert everyone["scope"] == "everyone" and everyone["likes"] == 1
         assert everyone["recent"][0]["user_name"] == "Ravi"
+
+
+async def test_dislike_with_a_comment(client, answered):
+    chat_id, _, answer = answered
+    url = f"/chats/{chat_id}/messages/{answer['id']}/feedback"
+
+    saved = (await client.put(url, json={"rating": -1, "comment": "  Wrong price, it's 250  "})).json()
+    assert saved["feedback"] == -1 and saved["feedback_comment"] == "Wrong price, it's 250"
+    assert (await client.get("/feedback")).json()["recent"][0]["comment"] == "Wrong price, it's 250"
+
+    # Clearing the rating drops the comment too.
+    assert (await client.put(url, json={"rating": None, "comment": "ignored"})).json()["feedback_comment"] is None
+    assert (await client.put(url, json={"rating": -1, "comment": "x" * 1001})).status_code == 422
+
+
+async def test_regenerating_a_disliked_answer_tells_the_model_why(client, answered, chain):
+    chat_id, _, answer = answered
+    await client.put(f"/chats/{chat_id}/messages/{answer['id']}/feedback", json={"rating": -1, "comment": "It's outdated"})
+
+    regenerated = (await client.post(f"/chats/{chat_id}/messages/{answer['id']}/regenerate")).json()
+
+    context = chain.calls[-1]["context"]
+    assert 'marked this earlier answer to the same question as bad and said: "It\'s outdated"' in context
+    assert context.endswith("Earlier answer:\n" + answer["content"])
+    assert regenerated["feedback"] is None and regenerated["feedback_comment"] is None
+
+
+async def test_regenerating_an_unrated_answer_adds_nothing(client, answered, chain):
+    chat_id, _, answer = answered
+    await client.post(f"/chats/{chat_id}/messages/{answer['id']}/regenerate")
+    assert "marked this earlier answer" not in chain.calls[-1]["context"]

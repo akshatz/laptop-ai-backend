@@ -9,6 +9,8 @@ export interface User {
   id: string;
   email: string;
   name: string;
+  // "admin" sees everyone's documents and feedback.
+  role?: string;
 }
 
 export interface Chat {
@@ -72,6 +74,10 @@ export interface ChatDocument {
   status: 'embedding' | 'ready' | 'failed' | 'replaced';
   error: string | null;
   created_at: string;
+  owner_name?: string | null;
+  owner_email?: string | null;
+  // False only in an admin's everyone list, for other people's documents.
+  mine?: boolean;
 }
 
 export interface UploadedDocument {
@@ -79,6 +85,21 @@ export interface UploadedDocument {
   filename: string;
   version: number;
   status: 'embedding' | 'duplicate';
+}
+
+export interface SignedInSession {
+  id: string;
+  user_id: string;
+  name: string;
+  email: string;
+  role: string;
+  signed_in_at: string;
+  last_seen_at: string;
+  expires_at: string;
+  // Seen in the last 5 minutes.
+  active_now: boolean;
+  user_agent: string | null;
+  is_you: boolean;
 }
 
 export interface IngestResult {
@@ -124,7 +145,8 @@ export const api = {
     files.forEach(f => form.append('files', f));
     return request<IngestResult>(`/chats/${chatId}/files`, form);
   },
-  documents: () => request<ChatDocument[]>('/documents'),
+  adminSessions: () => request<SignedInSession[]>('/admin/sessions'),
+  documents: (all = false) => request<ChatDocument[]>(all ? '/documents?all=true' : '/documents'),
   send: (chatId: string, content: string) => request<Message>(`/chats/${chatId}/messages`, { content }),
   feedback: (days: number) => request<FeedbackDashboard>(`/feedback?days=${days}`),
   regenerate: (chatId: string, messageId: string) =>

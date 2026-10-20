@@ -2,7 +2,7 @@ import os
 import uuid
 from datetime import datetime
 from typing import List, Literal, Optional
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel, EmailStr, Field
 
 DEFAULT_CHAT_MODEL = os.environ.get("DEFAULT_CHAT_MODEL", "llama3.2")
 MAX_DOCUMENTS_PER_INGEST = 5
@@ -77,6 +77,8 @@ class MessageCreate(BaseModel):
 class MessageFeedback(BaseModel):
     # 1 = like, -1 = dislike, null clears it.
     rating: Optional[Literal[1, -1]] = None
+    # Optional, mainly with 👎: what was wrong. Kept only while the rating is set.
+    comment: Optional[str] = Field(default=None, max_length=1000)
 
 class FeedbackItem(BaseModel):
     message_id: uuid.UUID
@@ -87,6 +89,7 @@ class FeedbackItem(BaseModel):
     question: Optional[str] = None
     answer: str
     rating: int
+    comment: Optional[str] = None
     created_at: datetime
 
 class FeedbackModelStats(BaseModel):
@@ -117,6 +120,7 @@ class MessageResponse(BaseModel):
     content: str
     created_at: datetime
     feedback: Optional[int] = None
+    feedback_comment: Optional[str] = None
     regenerations: int = 0
     # Only on the answer POST /chats/{id}/messages returns; not stored.
     web_searched: bool = False
@@ -144,6 +148,10 @@ class ChatDocumentResponse(BaseModel):
     status: str = "ready"
     error: Optional[str] = None
     created_at: datetime
+    owner_name: Optional[str] = None
+    owner_email: Optional[str] = None
+    # False only in an admin's ?all=true list, for other people's documents.
+    mine: bool = True
 
 class UploadedDocument(BaseModel):
     id: uuid.UUID
@@ -157,3 +165,18 @@ class DocumentIngestResponse(BaseModel):
     # Documents accepted for embedding (duplicates not counted).
     documents_ingested: int
     documents: List[UploadedDocument] = []
+
+# 🛡️ ADMIN SCHEMAS
+class SignedInSession(BaseModel):
+    id: uuid.UUID
+    user_id: uuid.UUID
+    name: str
+    email: str
+    role: str
+    signed_in_at: datetime
+    last_seen_at: datetime
+    expires_at: datetime
+    # Seen in the last 5 minutes.
+    active_now: bool
+    user_agent: Optional[str] = None
+    is_you: bool = False

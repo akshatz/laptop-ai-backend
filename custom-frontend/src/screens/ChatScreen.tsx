@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState, type FormEvent, type KeyboardEvent } from 'react';
 import DocumentsView from './DocumentsView';
 import FeedbackView from './FeedbackView';
+import LibraryView from './LibraryView';
+import AdminSessionsView from './AdminSessionsView';
 import UploadSnackbar, { type UploadItem } from './UploadSnackbar';
 import { api, HttpError, SIGN_IN_URL, type Chat, type Feedback, type Message, type User } from '../api';
 
@@ -14,8 +16,20 @@ interface Props {
 
 const initials = (name: string) => name.split(/\s+/).filter(Boolean).slice(0, 2).map(w => w[0].toUpperCase()).join('') || '?';
 
-type View = 'chat' | 'documents' | 'feedback';
+type View = 'chat' | 'documents' | 'library' | 'feedback' | 'sessions';
 type Shown = Pick<Message, 'role' | 'content' | 'web_searched' | 'web_sources'> & Partial<Pick<Message, 'id' | 'feedback' | 'regenerations'>>;
+
+// The open screen and chat live in the URL hash (#/chat/<id>, #/documents, #/library,
+// #/feedback, #/sessions; empty = Home), so a reload, Back/Forward or a copied link keeps them.
+const VIEWS: View[] = ['documents', 'library', 'feedback', 'sessions'];
+function readRoute(): { view: View; chatId: string | null } {
+  const [, first, second] = location.hash.replace(/^#/, '').split('/');
+  if (first === 'chat' && second) return { view: 'chat', chatId: decodeURIComponent(second) };
+  if ((VIEWS as string[]).includes(first)) return { view: first as View, chatId: null };
+  return { view: 'chat', chatId: null };
+}
+const routeHash = (view: View, chatId: string | null) =>
+  view === 'chat' ? (chatId ? `#/chat/${encodeURIComponent(chatId)}` : '') : `#/${view}`;
 
 // Start-page suggestions: one click asks them in a new chat.
 const SUGGESTIONS = [
@@ -39,7 +53,7 @@ export default function ChatScreen({ user, notice, onSignOut, onSessionExpired }
   const [messages, setMessages] = useState<Shown[]>([]);
   const [input, setInput] = useState('');
   const [sending, setSending] = useState(false);
-  const [view, setView] = useState<View>('chat');
+  const [view, setView] = useState<View>(() => readRoute().view);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   // From custom-backend's MAX_QUESTIONS_PER_CHAT (0 = no limit); it refuses more with a 409.
   const [maxQuestions, setMaxQuestions] = useState(0);
@@ -68,8 +82,41 @@ export default function ChatScreen({ user, notice, onSignOut, onSessionExpired }
       setModels(models);
       setModel(models.includes(wanted) ? wanted : models[0]);
     }).catch(err => fail('Could not load the model list: ', err));
-    api.chats().then(setChats).catch(err => fail('Could not load your chats: ', err));
+    api.chats().then(list => {
+      setChats(list);
+      // Reopen the chat named in the URL (after a reload or from a link).
+      const { chatId } = readRoute();
+      const wanted = chatId && list.find(c => c.id === chatId);
+      if (wanted) openChat(wanted);
+      else if (chatId) history.replaceState(null, '', location.pathname + location.search);
+    }).catch(err => fail('Could not load your chats: ', err));
   }, [user?.id]);
+
+  // State → URL. A new screen or chat adds a history entry, so Back returns to the previous one.
+  useEffect(() => {
+    const want = routeHash(view, chat?.id ?? null);
+    const have = location.hash === '#' ? '' : location.hash;
+    // While the chat named in the URL is still loading, leave the URL alone.
+    const pending = readRoute();
+    if (view === 'chat' && !chat && pending.chatId && !chats.length) return;
+    if (want !== have) history.pushState(null, '', want || location.pathname + location.search);
+  }, [view, chat?.id]);
+
+  // URL → state, for Back/Forward.
+  useEffect(() => {
+    const onPop = () => {
+      const { view: v, chatId } = readRoute();
+      if (v === 'chat' && chatId) {
+        const c = chats.find(x => x.id === chatId);
+        if (c && c.id !== chat?.id) openChat(c);
+        return;
+      }
+      setView(v);
+      if (v === 'chat') { setChat(null); setMessages([]); }
+    };
+    window.addEventListener('popstate', onPop);
+    return () => window.removeEventListener('popstate', onPop);
+  }, [chats, chat?.id]);
 
   useEffect(() => { endRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [messages, sending]);
 
@@ -188,10 +235,20 @@ export default function ChatScreen({ user, notice, onSignOut, onSessionExpired }
           onClick={() => { setView('documents'); setSidebarOpen(false); }}>
           📄 Documents
         </button>
+        <button type="button" className={'side-action' + (view === 'library' ? ' active' : '')} disabled={!user}
+          onClick={() => { setView('library'); setSidebarOpen(false); }}>
+          🗂️ {user?.role === 'admin' ? 'All documents' : 'My documents'}
+        </button>
         <button type="button" className={'side-action' + (view === 'feedback' ? ' active' : '')} disabled={!user}
           onClick={() => { setView('feedback'); setSidebarOpen(false); }}>
           📊 Feedback
         </button>
+        {user?.role === 'admin' && (
+          <button type="button" className={'side-action' + (view === 'sessions' ? ' active' : '')}
+            onClick={() => { setView('sessions'); setSidebarOpen(false); }}>
+            🛡️ Signed-in users
+          </button>
+        )}
 
         <div className="side-heading">Recent chats</div>
         <nav className="history">
@@ -225,7 +282,7 @@ export default function ChatScreen({ user, notice, onSignOut, onSessionExpired }
       <main className="content">
         <header className="topbar">
           <button type="button" className="menu-toggle" aria-label="Menu" onClick={() => setSidebarOpen(o => !o)}>☰</button>
-          <span className="title">{view === 'documents' ? 'Documents' : view === 'feedback' ? 'Feedback' : chat ? chat.title : 'New chat'}</span>
+          <span className="title">{view === 'documents' ? 'Documents' : view === 'library' ? (user?.role === 'admin' ? 'All documents' : 'My documents') : view === 'sessions' ? 'Signed-in users' : view === 'feedback' ? 'Feedback' : chat ? chat.title : 'New chat'}</span>
           <label className="model"><span>Model</span>
             <select value={chat ? chat.model_id : model} disabled={!!chat || !user} onChange={e => setModel(e.target.value)}
               title={chat ? 'A chat keeps the model it was started with' : undefined}>
@@ -250,6 +307,11 @@ export default function ChatScreen({ user, notice, onSignOut, onSessionExpired }
             setUploads={setUploads} reloadKey={docsVersion}
             onOpenChat={id => { const c = chats.find(x => x.id === id); if (c) openChat(c); }}
             onBack={() => setView('chat')} />
+        ) : view === 'library' ? (
+          <LibraryView user={user} onError={fail} reloadKey={docsVersion}
+            onOpenChat={id => { const c = chats.find(x => x.id === id); if (c) openChat(c); }} />
+        ) : view === 'sessions' && user.role === 'admin' ? (
+          <AdminSessionsView onError={fail} />
         ) : view === 'feedback' ? (
           <FeedbackView onError={fail}
             onOpenChat={id => { const c = chats.find(x => x.id === id); if (c) openChat(c); }} />
@@ -260,7 +322,7 @@ export default function ChatScreen({ user, notice, onSignOut, onSessionExpired }
                 {messages.length === 0 && !sending && (
                   <div className="empty home">
                     <h2>How can I help, {user.name.split(' ')[0]}?</h2>
-                    <p className="muted">Questions about current events are searched on the web automatically.</p>
+                    <p className="muted">Answers come only from your documents and a web search, with sources.</p>
                     <div className="suggestions">
                       {SUGGESTIONS.map(s => (
                         <button type="button" key={s.text} className="suggestion" onClick={() => ask(s.text)}>

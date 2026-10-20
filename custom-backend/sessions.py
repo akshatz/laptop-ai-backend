@@ -11,19 +11,22 @@ import json
 import os
 import time
 import uuid
+from datetime import datetime, timedelta, timezone
 
 from fastapi import Depends, HTTPException, Request, status
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 import db
 from db import get_db
-from models import UserModel
+from models import UserModel, UserSessionModel
 
 SESSION_COOKIE = "session"
 STATE_COOKIE = "sso_state"
 SESSION_MAX_AGE = int(os.environ.get("SESSION_MAX_AGE_SECONDS", str(7 * 24 * 3600)))
 STATE_MAX_AGE = 600
+# last_seen_at is written at most this often per session.
+LAST_SEEN_EVERY = timedelta(seconds=60)
 
 
 def _secret() -> bytes:
@@ -67,6 +70,48 @@ async def current_user(request: Request, db: AsyncSession = Depends(get_db)) -> 
             user_id = None
         if user_id:
             user = (await db.execute(select(UserModel).where(UserModel.id == user_id))).scalar_one_or_none()
+        # Cookies from before user_sessions carry no sid and stay valid until they expire.
+        if user and data.get("sid"):
+            if not await _touch_session(db, data["sid"], user.id):
+                user = None
     if not user or not user.is_active:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not signed in.")
     return user
+
+
+async def _touch_session(db: AsyncSession, sid: str, user_id: uuid.UUID) -> bool:
+    """False when the session was signed out (or isn't this user's); otherwise updates last_seen_at."""
+    try:
+        session_id = uuid.UUID(sid)
+    except ValueError:
+        return False
+    row = (await db.execute(
+        select(UserSessionModel).where(UserSessionModel.id == session_id, UserSessionModel.user_id == user_id)
+    )).scalar_one_or_none()
+    if not row or row.ended_at is not None:
+        return False
+    now = datetime.now(timezone.utc)
+    if now - row.last_seen_at >= LAST_SEEN_EVERY:
+        await db.execute(update(UserSessionModel).where(UserSessionModel.id == session_id).values(last_seen_at=now))
+        await db.commit()
+    return True
+
+
+async def start_session(db: AsyncSession, user_id: uuid.UUID, user_agent: str | None) -> str:
+    """A new user_sessions row; returns the signed session cookie value carrying its id."""
+    now = datetime.now(timezone.utc)
+    row = UserSessionModel(user_id=user_id, created_at=now, last_seen_at=now, user_agent=(user_agent or "")[:300] or None)
+    db.add(row)
+    await db.commit()
+    return sign({"uid": str(user_id), "sid": str(row.id)}, SESSION_MAX_AGE)
+
+
+async def end_session(db: AsyncSession, cookie: str | None) -> None:
+    data = unsign(cookie)
+    try:
+        session_id = uuid.UUID((data or {}).get("sid", ""))
+    except ValueError:
+        return
+    await db.execute(update(UserSessionModel).where(UserSessionModel.id == session_id, UserSessionModel.ended_at.is_(None))
+                     .values(ended_at=datetime.now(timezone.utc)))
+    await db.commit()
