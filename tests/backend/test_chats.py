@@ -148,10 +148,12 @@ async def test_ingest_limits(client, chat_id, vector_store):
     assert vector_store.added == []
 
 
-async def test_ingest_milvus_failure_is_a_502(client, chat_id, vector_store):
+async def test_ingest_milvus_failure_marks_the_document_failed(client, chat_id, vector_store):
+    # Embedding runs after the response, so a Milvus failure shows up as the document's status.
     vector_store.add_error = RuntimeError("milvus down")
     response = await client.post(f"/chats/{chat_id}/documents", json={"documents": [{"text": "x"}]})
-    assert response.status_code == 502
+    assert response.status_code == 201
+    assert (await client.get("/documents")).json()[0]["status"] == "failed"
 
 
 def test_embeddinggemma_task_prefixes(monkeypatch):
@@ -192,7 +194,8 @@ async def test_models_lists_only_installed_chat_models(client, monkeypatch):
     monkeypatch.setattr(chat_service, "CHAT_MODELS", "fast-ai, llama3.2,gemma3:4b")
     response = await client.get("/models")
     assert response.status_code == 200
-    assert response.json() == {"default": chat_service.DEFAULT_CHAT_MODEL, "models": ["fast-ai:latest", "llama3.2:latest"]}
+    assert response.json() == {"default": chat_service.DEFAULT_CHAT_MODEL, "models": ["fast-ai:latest", "llama3.2:latest"],
+                               "max_questions_per_chat": 1}
 
 
 async def test_models_ollama_down_is_a_502(client, monkeypatch):
