@@ -15,7 +15,7 @@ OpenObserve (http://localhost:5080, **Logs**) collects these streams:
 
 ### Email alerts
 
-OpenObserve emails `OPENOBSERVE_ALERT_EMAIL` (in `.env`, copied to OpenBao by `bootstrap.sh`) through the same Gmail relay as Passbolt when something needs a look: bursts of Ollama errors, several questions in a row without web results, a refused OpenBao request, repeated failed sign-ins, the SSO sign-in loop, or a log stream that has gone quiet. On a normal day nothing is sent. Each alert is silenced for an hour or more after it fires, and there's no "resolved" email.
+OpenObserve emails `OPENOBSERVE_ALERT_EMAIL` (in `.env`, copied to OpenBao by `bootstrap.sh`) through the shared Gmail relay (`SMTP_*`) when something needs a look: bursts of Ollama errors, several questions in a row without web results, a refused OpenBao request, repeated failed sign-ins, the SSO sign-in loop, or a log stream that has gone quiet. On a normal day nothing is sent. Each alert is silenced for an hour or more after it fires, and there's no "resolved" email.
 
 The alerts are defined in [devops/openobserve/alerts.yaml](../devops/openobserve/alerts.yaml) (query, threshold, how often it's checked). After editing it, run `python3 devops/openobserve/alerts.py` on the host; it creates or updates them by name (`--dry-run` shows what it would send). To test delivery, make one refused OpenBao request (e.g. read `sys/policies/acl` with the `bao-readonly` token); the email arrives within about 10 minutes.
 
