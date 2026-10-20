@@ -15,7 +15,17 @@ interface Props {
 const initials = (name: string) => name.split(/\s+/).filter(Boolean).slice(0, 2).map(w => w[0].toUpperCase()).join('') || '?';
 
 type View = 'chat' | 'documents' | 'feedback';
-type Shown = Pick<Message, 'role' | 'content' | 'web_searched' | 'web_sources'> & Partial<Pick<Message, 'id' | 'feedback'>>;
+type Shown = Pick<Message, 'role' | 'content' | 'web_searched' | 'web_sources'> & Partial<Pick<Message, 'id' | 'feedback' | 'regenerations'>>;
+
+// Start-page suggestions: one click asks them in a new chat.
+const SUGGESTIONS = [
+  { icon: '📰', text: "What are today's top news headlines in India?" },
+  { icon: '📈', text: 'How did the Sensex and Nifty close today?' },
+  { icon: '🌦️', text: "What's the weather forecast for Ahmedabad this week?" },
+  { icon: '📄', text: 'Summarise the documents I added to this chat.' },
+  { icon: '🍲', text: 'Suggest a quick vegetarian dinner recipe for four people.' },
+  { icon: '✉️', text: 'Help me write a polite leave application to my manager.' },
+];
 
 // Same rule as custom-backend's send_message: a new chat is named after its first question.
 const titleFrom = (text: string) => (text.length > 60 ? text.slice(0, 57).trimEnd() + '…' : text);
@@ -32,7 +42,11 @@ export default function ChatScreen({ user, notice, onSignOut, onSessionExpired }
   const [view, setView] = useState<View>('chat');
   const [sidebarOpen, setSidebarOpen] = useState(false);
   // From custom-backend's MAX_QUESTIONS_PER_CHAT (0 = no limit); it refuses more with a 409.
-  const [maxQuestions, setMaxQuestions] = useState(1);
+  const [maxQuestions, setMaxQuestions] = useState(0);
+  // From custom-backend's MAX_REGENERATIONS (0 = no limit).
+  const [maxRegenerations, setMaxRegenerations] = useState(2);
+  // The answer being regenerated (shown dimmed until the new one replaces it).
+  const [regenerating, setRegenerating] = useState<string | null>(null);
   const [uploads, setUploads] = useState<UploadItem[]>([]);
   // Bumped when an embedding finishes, so the Documents list reloads.
   const [docsVersion, setDocsVersion] = useState(0);
@@ -46,8 +60,9 @@ export default function ChatScreen({ user, notice, onSignOut, onSessionExpired }
   useEffect(() => {
     if (!user) return;
     // Fill the model list from Ollama; on failure llama3.2 stays.
-    api.models().then(({ default: def, models, max_questions_per_chat }) => {
+    api.models().then(({ default: def, models, max_questions_per_chat, max_regenerations }) => {
       if (max_questions_per_chat !== undefined) setMaxQuestions(max_questions_per_chat);
+      if (max_regenerations !== undefined) setMaxRegenerations(max_regenerations);
       if (!models.length) return;
       const wanted = def.includes(':') ? def : def + ':latest';
       setModels(models);
@@ -95,7 +110,10 @@ export default function ChatScreen({ user, notice, onSignOut, onSessionExpired }
 
   async function send(e?: FormEvent) {
     e?.preventDefault();
-    const content = input.trim();
+    await ask(input.trim());
+  }
+
+  async function ask(content: string) {
     if (!content || sending || chatFull) return;
     setStatus('');
     setSending(true);
@@ -115,6 +133,23 @@ export default function ChatScreen({ user, notice, onSignOut, onSessionExpired }
     } catch (err) {
       fail('Failed to send message: ', err);
     } finally {
+      setSending(false);
+    }
+  }
+
+  // A new answer to the same question, replacing the latest one in place.
+  async function regenerate(m: Shown) {
+    if (!chat || !m.id || sending) return;
+    setStatus('');
+    setSending(true);
+    setRegenerating(m.id);
+    try {
+      const reply = await api.regenerate(chat.id, m.id);
+      setMessages(ms => ms.map(x => (x.id === m.id ? reply : x)));
+    } catch (err) {
+      fail('Could not regenerate the answer: ', err);
+    } finally {
+      setRegenerating(null);
       setSending(false);
     }
   }
@@ -144,6 +179,10 @@ export default function ChatScreen({ user, notice, onSignOut, onSessionExpired }
     <div className={'layout' + (sidebarOpen ? ' sidebar-open' : '')}>
       <aside className="sidebar">
         <div className="brand">Laptop Dev Chat</div>
+        <a href="/" className={'side-action' + (view === 'chat' && !chat ? ' active' : '')}
+          onClick={e => { if (e.button === 0 && !e.metaKey && !e.ctrlKey && !e.shiftKey) { e.preventDefault(); newChat(); } }}>
+          🏠 Home
+        </a>
         <button type="button" className="side-action" onClick={newChat} disabled={!user}>＋ New chat</button>
         <button type="button" className={'side-action' + (view === 'documents' ? ' active' : '')} disabled={!user}
           onClick={() => { setView('documents'); setSidebarOpen(false); }}>
@@ -219,13 +258,20 @@ export default function ChatScreen({ user, notice, onSignOut, onSessionExpired }
             <section className="messages">
               <div className="thread">
                 {messages.length === 0 && !sending && (
-                  <div className="empty">
+                  <div className="empty home">
                     <h2>How can I help, {user.name.split(' ')[0]}?</h2>
                     <p className="muted">Questions about current events are searched on the web automatically.</p>
+                    <div className="suggestions">
+                      {SUGGESTIONS.map(s => (
+                        <button type="button" key={s.text} className="suggestion" onClick={() => ask(s.text)}>
+                          <span aria-hidden="true">{s.icon}</span> {s.text}
+                        </button>
+                      ))}
+                    </div>
                   </div>
                 )}
                 {messages.map((m, i) => (
-                  <div key={i} className={'msg ' + m.role}>
+                  <div key={i} className={'msg ' + m.role + (m.id && m.id === regenerating ? ' regenerating' : '')}>
                     <div className="bubble">{m.content}</div>
                     {m.web_sources && m.web_sources.length > 0 && (
                       <div className="sources">
@@ -242,11 +288,22 @@ export default function ChatScreen({ user, notice, onSignOut, onSessionExpired }
                           className={m.feedback === 1 ? 'selected' : ''} onClick={() => rate(m, 1)}>👍</button>
                         <button type="button" title="Bad answer" aria-label="Bad answer" aria-pressed={m.feedback === -1}
                           className={m.feedback === -1 ? 'selected' : ''} onClick={() => rate(m, -1)}>👎</button>
+                        {i === messages.length - 1 && (() => {
+                          const used = m.regenerations ?? 0;
+                          const left = maxRegenerations > 0 ? maxRegenerations - used : Infinity;
+                          return (
+                            <button type="button" className="regen" onClick={() => regenerate(m)} disabled={sending || left <= 0}
+                              title={left <= 0 ? 'No more regenerations for this answer' : left === Infinity ? 'Regenerate' : `Regenerate (${left} left)`}
+                              aria-label="Regenerate answer">
+                              ↻{maxRegenerations > 0 && <small> {used + 1}/{maxRegenerations + 1}</small>}
+                            </button>
+                          );
+                        })()}
                       </div>
                     )}
                   </div>
                 ))}
-                {sending && <div className="msg assistant"><div className="bubble typing">Thinking…</div></div>}
+                {sending && !regenerating && <div className="msg assistant"><div className="bubble typing">Thinking…</div></div>}
                 <div ref={endRef} />
               </div>
             </section>

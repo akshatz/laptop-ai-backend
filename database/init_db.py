@@ -58,6 +58,8 @@ class MessageModel(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
     # Answers only: 1 = like, -1 = dislike, NULL = not rated.
     feedback: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    # Answers only: how often this answer was regenerated (replaced in place).
+    regenerations: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
 
 class ChatDocumentModel(Base):
     """A file (or pasted text) added to a chat as context, kept so its owner can see and open it."""

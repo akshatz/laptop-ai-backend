@@ -117,6 +117,7 @@ class MessageResponse(BaseModel):
     content: str
     created_at: datetime
     feedback: Optional[int] = None
+    regenerations: int = 0
     # Only on the answer POST /chats/{id}/messages returns; not stored.
     web_searched: bool = False
     web_sources: List[WebSource] = []

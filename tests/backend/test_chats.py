@@ -83,7 +83,8 @@ async def test_send_message_stores_question_and_answer(client, chat_id, chain, v
     ]
 
 
-async def test_one_question_per_chat_by_default(client, chat_id, chain, vector_store):
+async def test_question_limit_per_chat(client, chat_id, chain, vector_store, monkeypatch):
+    monkeypatch.setattr(routers.chats, "MAX_QUESTIONS_PER_CHAT", 1)
     assert (await client.post(f"/chats/{chat_id}/messages", json={"content": "First question"})).status_code == 201
     second = await client.post(f"/chats/{chat_id}/messages", json={"content": "Second question"})
 
@@ -92,8 +93,7 @@ async def test_one_question_per_chat_by_default(client, chat_id, chain, vector_s
     assert [m["content"] for m in (await client.get(f"/chats/{chat_id}/messages")).json()] == ["First question", "Test reply"]
 
 
-async def test_earlier_messages_are_sent_as_history(client, chat_id, chain, vector_store, monkeypatch):
-    monkeypatch.setattr(routers.chats, "MAX_QUESTIONS_PER_CHAT", 0)
+async def test_earlier_messages_are_sent_as_history(client, chat_id, chain, vector_store):
     await client.post(f"/chats/{chat_id}/messages", json={"content": "First question"})
     await client.post(f"/chats/{chat_id}/messages", json={"content": "Second question"})
 
@@ -195,7 +195,7 @@ async def test_models_lists_only_installed_chat_models(client, monkeypatch):
     response = await client.get("/models")
     assert response.status_code == 200
     assert response.json() == {"default": chat_service.DEFAULT_CHAT_MODEL, "models": ["fast-ai:latest", "llama3.2:latest"],
-                               "max_questions_per_chat": 1}
+                               "max_questions_per_chat": 0, "max_regenerations": 2}
 
 
 async def test_models_ollama_down_is_a_502(client, monkeypatch):
@@ -251,8 +251,7 @@ async def test_decision_and_search_fail_safe(monkeypatch, web):
     assert await web.real_search("news") == []
 
 
-async def test_first_question_names_the_chat(client, chat_id, chain, vector_store, monkeypatch):
-    monkeypatch.setattr(routers.chats, "MAX_QUESTIONS_PER_CHAT", 0)
+async def test_first_question_names_the_chat(client, chat_id, chain, vector_store):
     await client.post(f"/chats/{chat_id}/messages", json={"content": "What  is the\ncapital of Gujarat?"})
     await client.post(f"/chats/{chat_id}/messages", json={"content": "And its population?"})
     chats = (await client.get("/chats")).json()
@@ -263,3 +262,37 @@ async def test_long_first_question_is_shortened(client, chat_id, chain, vector_s
     await client.post(f"/chats/{chat_id}/messages", json={"content": "word " * 30})
     title = (await client.get("/chats")).json()[0]["title"]
     assert len(title) <= 60 and title.endswith("…")
+
+
+async def test_regenerate_replaces_the_latest_answer(client, chat_id, chain, vector_store):
+    answer = (await client.post(f"/chats/{chat_id}/messages", json={"content": "Capital of Gujarat?"})).json()
+    await client.put(f"/chats/{chat_id}/messages/{answer['id']}/feedback", json={"rating": -1})
+    chain.reply = "Gandhinagar"
+
+    response = await client.post(f"/chats/{chat_id}/messages/{answer['id']}/regenerate")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["id"] == answer["id"] and body["content"] == "Gandhinagar"
+    assert body["regenerations"] == 1 and body["feedback"] is None
+    assert chain.calls[1]["input"] == "Capital of Gujarat?" and chain.calls[1]["history"] == []
+    stored = (await client.get(f"/chats/{chat_id}/messages")).json()
+    assert [m["content"] for m in stored] == ["Capital of Gujarat?", "Gandhinagar"]
+
+
+async def test_regenerate_limit(client, chat_id, chain, vector_store):
+    answer = (await client.post(f"/chats/{chat_id}/messages", json={"content": "Hi"})).json()
+    url = f"/chats/{chat_id}/messages/{answer['id']}/regenerate"
+    assert (await client.post(url)).status_code == 200
+    assert (await client.post(url)).status_code == 200
+    third = await client.post(url)
+    assert third.status_code == 409 and len(chain.calls) == 3
+
+
+async def test_only_the_latest_answer_of_your_own_chat(client, chat_id, chain, vector_store, sign_in, make_client):
+    answer = (await client.post(f"/chats/{chat_id}/messages", json={"content": "Hi"})).json()
+    question = (await client.get(f"/chats/{chat_id}/messages")).json()[0]
+    assert (await client.post(f"/chats/{chat_id}/messages/{question['id']}/regenerate")).status_code == 404
+    async with await make_client() as other:
+        await sign_in(other, "meera@example.com", "Meera")
+        assert (await other.post(f"/chats/{chat_id}/messages/{answer['id']}/regenerate")).status_code == 404

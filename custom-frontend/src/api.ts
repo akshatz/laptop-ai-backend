@@ -31,6 +31,8 @@ export interface Message {
   web_sources?: WebSource[];
   // Answers only: 1 = like, -1 = dislike, null = not rated.
   feedback?: Feedback;
+  // Answers only: how often this answer was regenerated.
+  regenerations?: number;
 }
 
 export type Feedback = 1 | -1 | null;
@@ -110,7 +112,7 @@ async function request<T>(path: string, body?: unknown, method = body === undefi
 export const api = {
   me: () => request<User>('/auth/me'),
   logout: () => request<{ authentik_logout_url: string | null }>('/auth/logout', undefined, 'POST'),
-  models: () => request<{ default: string; models: string[]; max_questions_per_chat?: number }>('/models'),
+  models: () => request<{ default: string; models: string[]; max_questions_per_chat?: number; max_regenerations?: number }>('/models'),
   chats: () => request<Chat[]>('/chats'),
   createChat: (model_id: string) => request<Chat>('/chats', { model_id }),
   messages: (chatId: string) => request<Message[]>(`/chats/${chatId}/messages`),
@@ -125,6 +127,8 @@ export const api = {
   documents: () => request<ChatDocument[]>('/documents'),
   send: (chatId: string, content: string) => request<Message>(`/chats/${chatId}/messages`, { content }),
   feedback: (days: number) => request<FeedbackDashboard>(`/feedback?days=${days}`),
+  regenerate: (chatId: string, messageId: string) =>
+    request<Message>(`/chats/${chatId}/messages/${messageId}/regenerate`, undefined, 'POST'),
   rate: (chatId: string, messageId: string, rating: Feedback) =>
     request<Message>(`/chats/${chatId}/messages/${messageId}/feedback`, { rating }, 'PUT'),
 };

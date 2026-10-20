@@ -26,9 +26,12 @@ from schemas import (
 router = APIRouter()
 log = logging.getLogger(__name__)
 
-# Questions allowed per chat (1: every question gets a new chat, so answers never mix topics);
-# 0 = no limit.
-MAX_QUESTIONS_PER_CHAT = int(os.environ.get("MAX_QUESTIONS_PER_CHAT", "1"))
+# Questions allowed per chat; 0 (default) = no limit. 1 makes every question a new chat, so small
+# models can't mix in earlier topics, at the cost of follow-up questions.
+MAX_QUESTIONS_PER_CHAT = int(os.environ.get("MAX_QUESTIONS_PER_CHAT", "0"))
+# Regenerations allowed per answer (2: first answer + 2 more, like Open WebUI's Regenerate Limit
+# Function); 0 = no limit.
+MAX_REGENERATIONS = int(os.environ.get("MAX_REGENERATIONS", "2"))
 
 @router.get("/models")
 async def list_models():
@@ -38,7 +41,7 @@ async def list_models():
     except Exception as exc:
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=f"Ollama unavailable: {exc}")
     return {"default": chat_service.DEFAULT_CHAT_MODEL, "models": models,
-            "max_questions_per_chat": MAX_QUESTIONS_PER_CHAT}
+            "max_questions_per_chat": MAX_QUESTIONS_PER_CHAT, "max_regenerations": MAX_REGENERATIONS}
 
 async def _own_chat(chat_id: uuid.UUID, user: UserModel, db: AsyncSession) -> UserChatModel:
     """The chat if it belongs to the signed-in user; someone else's chat is a 404 too, so chat ids
@@ -320,6 +323,40 @@ async def open_document(document_id: uuid.UUID, user: UserModel = Depends(curren
         },
     )
 
+async def _generate(chat: UserChatModel, question: str, history: list) -> tuple[str, bool, list[dict]]:
+    """One answer to `question`: the chat's document chunks from Milvus, web results when the
+    question needs them (web_search.needs_web_search), then the chat's model with `history`.
+    Returns (answer, web_searched, web_results); 502 when Ollama can't be reached."""
+    try:
+        retrieved_docs = await chat_service.vector_store.asimilarity_search(
+            question, k=4, expr=f'chat_id == "{chat.id}"'
+        )
+    except Exception:
+        retrieved_docs = []
+    context_parts = []
+    if retrieved_docs:
+        context_parts.append("From the chat's documents:\n" + "\n\n".join(doc.page_content for doc in retrieved_docs))
+
+    # Web search only when the question needs it (web_search.needs_web_search).
+    web_searched = await web_search.needs_web_search(question)
+    web_results = await web_search.search(question) if web_searched else []
+    if web_results:
+        context_parts.append("Web search results:\n" + web_search.as_context(web_results))
+    context = "\n\n".join(context_parts) or "No relevant context found."
+
+    chain = chat_service.build_rag_chat_chain(chat.model_id)
+    try:
+        ai_reply = await chain.ainvoke({
+            "history": history, "input": question, "context": context, "today": date.today().isoformat(),
+        })
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"Failed to reach the Ollama model '{chat.model_id}': {exc}",
+        )
+
+    return ai_reply.content, web_searched, web_results
+
 @router.post("/chats/{chat_id}/messages", response_model=MessageResponse, status_code=status.HTTP_201_CREATED)
 async def send_message(chat_id: uuid.UUID, payload: MessageCreate, user: UserModel = Depends(current_user),
                        db: AsyncSession = Depends(get_db)):
@@ -359,39 +396,13 @@ async def send_message(chat_id: uuid.UUID, payload: MessageCreate, user: UserMod
     db.add(user_message)
     await db.commit()
 
-    try:
-        retrieved_docs = await chat_service.vector_store.asimilarity_search(
-            payload.content, k=4, expr=f'chat_id == "{chat_id}"'
-        )
-    except Exception:
-        retrieved_docs = []
-    context_parts = []
-    if retrieved_docs:
-        context_parts.append("From the chat's documents:\n" + "\n\n".join(doc.page_content for doc in retrieved_docs))
-
-    # Web search only when the question needs it (web_search.needs_web_search).
-    web_searched = await web_search.needs_web_search(payload.content)
-    web_results = await web_search.search(payload.content) if web_searched else []
-    if web_results:
-        context_parts.append("Web search results:\n" + web_search.as_context(web_results))
-    context = "\n\n".join(context_parts) or "No relevant context found."
-
-    chain = chat_service.build_rag_chat_chain(chat.model_id)
-    try:
-        ai_reply = await chain.ainvoke({
-            "history": history, "input": payload.content, "context": context, "today": date.today().isoformat(),
-        })
-    except Exception as exc:
-        raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=f"Failed to reach the Ollama model '{chat.model_id}': {exc}",
-        )
+    content, web_searched, web_results = await _generate(chat, payload.content, history)
 
     assistant_message = MessageModel(
         chat_id=chat_id,
         user_id=chat.user_id,
         role="assistant",
-        content=ai_reply.content,
+        content=content,
     )
     db.add(assistant_message)
     chat.updated_at = datetime.utcnow()
@@ -399,6 +410,45 @@ async def send_message(chat_id: uuid.UUID, payload: MessageCreate, user: UserMod
     await db.refresh(assistant_message)
 
     return MessageResponse.model_validate(assistant_message).model_copy(update={
+        "web_searched": web_searched,
+        "web_sources": [WebSource(title=r["title"], url=r["url"]) for r in web_results],
+    })
+
+@router.post("/chats/{chat_id}/messages/{message_id}/regenerate", response_model=MessageResponse)
+async def regenerate_answer(chat_id: uuid.UUID, message_id: uuid.UUID, user: UserModel = Depends(current_user),
+                            db: AsyncSession = Depends(get_db)):
+    """A new answer to the question before the chat's latest answer, replacing it in place (its
+    rating is cleared, `regenerations` counts up). Only the latest answer can be regenerated, at
+    most MAX_REGENERATIONS times (409 after that)."""
+    chat = await _own_chat(chat_id, user, db)
+    messages = (await db.execute(
+        select(MessageModel).where(MessageModel.chat_id == chat_id).order_by(MessageModel.created_at)
+    )).scalars().all()
+    if not messages or messages[-1].id != message_id or messages[-1].role != "assistant":
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Only the latest answer can be regenerated.")
+    answer = messages[-1]
+    if MAX_REGENERATIONS and answer.regenerations >= MAX_REGENERATIONS:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"This answer was already regenerated {answer.regenerations} times.",
+        )
+    question_index = max((i for i, m in enumerate(messages[:-1]) if m.role == "user"), default=None)
+    if question_index is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No question to answer.")
+    history = [
+        AIMessage(content=m.content) if m.role == "assistant" else HumanMessage(content=m.content)
+        for m in messages[:question_index]
+    ]
+
+    content, web_searched, web_results = await _generate(chat, messages[question_index].content, history)
+
+    answer.content = content
+    answer.feedback = None
+    answer.regenerations += 1
+    chat.updated_at = datetime.utcnow()
+    await db.commit()
+    await db.refresh(answer)
+    return MessageResponse.model_validate(answer).model_copy(update={
         "web_searched": web_searched,
         "web_sources": [WebSource(title=r["title"], url=r["url"]) for r in web_results],
     })
