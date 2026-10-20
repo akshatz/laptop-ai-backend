@@ -9,6 +9,8 @@ interface Props {
 
 const MAX_DOCS = 5;
 
+type View = 'chat' | 'documents';
+
 export default function ChatScreen({ user, onSignOut, onSessionExpired }: Props) {
   const [status, setStatus] = useState('');
   const [models, setModels] = useState<string[]>(['llama3.2']);
@@ -19,6 +21,7 @@ export default function ChatScreen({ user, onSignOut, onSessionExpired }: Props)
   const [messages, setMessages] = useState<{ role: string; content: string }[]>([]);
   const [input, setInput] = useState('');
   const [sending, setSending] = useState(false);
+  const [view, setView] = useState<View>('chat');
 
   function fail(prefix: string, err: unknown) {
     if (err instanceof HttpError && err.status === 401) { onSessionExpired(); return; }
@@ -68,6 +71,7 @@ export default function ChatScreen({ user, onSignOut, onSessionExpired }: Props)
     setStatus('');
     try {
       const r = await api.ingest(chat.id, texts);
+      setDocs(Array(MAX_DOCS).fill(''));
       setStatus(`Ingested ${r.documents_ingested} document(s), ${r.chunks_ingested} chunk(s).`);
     } catch (err) {
       fail('Failed to ingest documents: ', err);
@@ -99,6 +103,13 @@ export default function ChatScreen({ user, onSignOut, onSessionExpired }: Props)
         <button type="button" onClick={onSignOut}>Sign out</button>
       </div>
 
+      <nav className="menu">
+        <button type="button" className={view === 'chat' ? 'active' : ''} onClick={() => setView('chat')}>Chat</button>
+        <button type="button" className={view === 'documents' ? 'active' : ''} onClick={() => setView('documents')}>
+          Documents
+        </button>
+      </nav>
+
       {status && <p className="status">{status}</p>}
 
       <section className="card">
@@ -124,18 +135,28 @@ export default function ChatScreen({ user, onSignOut, onSessionExpired }: Props)
         )}
       </section>
 
-      {chat && (
-        <>
-          <details className="card">
-            <summary>Add documents for context (optional, up to {MAX_DOCS})</summary>
-            {docs.map((d, i) => (
-              <label key={i}>Text {i + 1}
-                <textarea value={d} onChange={e => setDocs(ds => ds.map((x, j) => (j === i ? e.target.value : x)))} />
-              </label>
-            ))}
-            <button type="button" onClick={ingest}>Ingest</button>
-          </details>
+      {view === 'documents' && (
+        <section className="card">
+          <h2>Documents</h2>
+          {chat ? (
+            <>
+              <p>Texts added here are used as context for answers in <strong>{chat.title}</strong> ({chat.model_id}),
+                up to {MAX_DOCS} at a time.</p>
+              {docs.map((d, i) => (
+                <label key={i}>Text {i + 1}
+                  <textarea value={d} onChange={e => setDocs(ds => ds.map((x, j) => (j === i ? e.target.value : x)))} />
+                </label>
+              ))}
+              <button type="button" onClick={ingest}>Add to chat</button>
+            </>
+          ) : (
+            <p>Documents belong to a chat: start a new chat or pick one of yours above first.</p>
+          )}
+        </section>
+      )}
 
+      {view === 'chat' && chat && (
+        <>
           <section className="card">
             <div className="messages">
               {messages.map((m, i) => (

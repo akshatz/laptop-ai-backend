@@ -14,7 +14,7 @@ One **Sign in** button, which goes to authentik: the same account, password and 
 
 ## Chat screen
 
-Pick a model, start a **New chat** or reopen one of **Your chats**, optionally add up to 5 texts as context for the chat (collapsible section; pasted text, not file upload), and chat.
+Pick a model, start a **New chat** or reopen one of **Your chats**. A menu switches between two views: **Chat** (the conversation) and **Documents** (up to 5 pasted texts at a time added as context for the selected chat; pasted text, not file upload).
 
 ## Running it
 

@@ -19,3 +19,6 @@ button.link { background: none; border: none; padding: 0; margin: 0; color: #36c
 a.button { display: inline-block; padding: 0.6rem 1.6rem; border-radius: 6px; background: #36c; color: #fff; text-decoration: none; }
 .row { display: flex; gap: 0.75rem; align-items: end; }
 .row label { flex: 1; }
+.menu { display: flex; gap: 0.25rem; border-bottom: 1px solid #8884; margin-bottom: 1rem; }
+.menu button { margin: 0; border: none; background: none; padding: 0.5rem 1rem; border-bottom: 2px solid transparent; }
+.menu button.active { border-bottom-color: #36c; font-weight: 600; }
