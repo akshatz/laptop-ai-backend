@@ -17,7 +17,8 @@ DEFAULT_CHAT_MODEL = os.environ.get("DEFAULT_CHAT_MODEL", "llama3.2")
 CHAT_TEMPERATURE = float(os.environ.get("CHAT_TEMPERATURE", "0.1"))
 
 RAG_PROMPT = ChatPromptTemplate.from_messages([
-    ("system", "You are a helpful assistant. Use the context below to answer, if relevant.\n\nContext:\n{context}"),
+    ("system", "You are a helpful assistant. Today is {today}. Use the context below to answer, if relevant. "
+               "When you use a numbered web result, cite it like [1].\n\nContext:\n{context}"),
     MessagesPlaceholder("history"),
     ("human", "{input}"),
 ])

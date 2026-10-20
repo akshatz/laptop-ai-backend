@@ -71,17 +71,20 @@ else:
 
     sys.modules["langchain_milvus"] = types.SimpleNamespace(Milvus=FakeMilvus)
     os.environ.setdefault("MILVUS_URI", "http://milvus.invalid:19530")
+    # Session signing and the authentik sign-in (routers/sso.py reads these at import).
+    os.environ.setdefault("SESSION_SECRET", "test-only-session-secret-0123456789abcdef")
+    os.environ.setdefault("AUTHENTIK_PUBLIC_URL", "https://auth.example.test:9443")
+    os.environ.setdefault("CUSTOM_FRONTEND_OIDC_CLIENT_ID", "test-client")
+    os.environ.setdefault("CUSTOM_FRONTEND_OIDC_CLIENT_SECRET", "test-secret")
+    os.environ.setdefault("FRONTEND_ORIGINS", "http://test,http://localhost:8012")
 
     sys.path.insert(0, str(BACKEND_DIR))
-    cwd = os.getcwd()
-    os.chdir(BACKEND_DIR)  # main.py mounts the relative "static" directory
-    try:
-        import chat_service  # noqa: E402
-        import main  # noqa: E402
-        import models  # noqa: E402
-        from routers import auth  # noqa: E402
-    finally:
-        os.chdir(cwd)
+    import chat_service  # noqa: E402
+    import main  # noqa: E402
+    import models  # noqa: E402
+    import sessions  # noqa: E402
+    import web_search  # noqa: E402
+    from routers import auth  # noqa: E402
 
     @pytest.fixture
     async def session_maker():
@@ -104,6 +107,34 @@ else:
             yield c
         main.app.dependency_overrides.clear()
 
+    async def sign_in_as(session_maker, client, email, name="Test User"):
+        """Creates a user and gives `client` that user's session cookie. Returns the user id."""
+        async with session_maker() as session:
+            user = models.UserModel(email=email, name=name, password_hash="!", is_verified=True)
+            session.add(user)
+            await session.commit()
+            await session.refresh(user)
+        client.cookies.set(sessions.SESSION_COOKIE, sessions.sign({"uid": str(user.id)}, 3600))
+        return str(user.id)
+
+    @pytest.fixture
+    async def signed_in(session_maker, client):
+        """`client` signed in as Ravi; the value is his user id."""
+        return await sign_in_as(session_maker, client, "ravi@example.com", "Ravi")
+
+    @pytest.fixture
+    def sign_in(session_maker):
+        """sign_in(client, email): another signed-in person."""
+        return lambda c, email, name="Other": sign_in_as(session_maker, c, email, name)
+
+    @pytest.fixture
+    def make_client(session_maker):
+        """Extra clients (other people) sharing the test database."""
+        async def make():
+            transport = httpx.ASGITransport(app=main.app)
+            return httpx.AsyncClient(transport=transport, base_url="http://test")
+        return make
+
     @pytest.fixture(autouse=True)
     def emails(monkeypatch):
         """Every email the backend would send, instead of sending it."""
@@ -113,6 +144,25 @@ else:
             lambda to_address, subject, body: sent.append({"to": to_address, "subject": subject, "body": body}),
         )
         return sent
+
+    @pytest.fixture(autouse=True)
+    def web(monkeypatch):
+        """The web search decision and SearXNG, without Ollama or the network. By default no
+        question needs the web; tests set `needed` / `results` / `queries`."""
+        state = SimpleNamespace(needed=False, results=[], decisions=[], queries=[],
+                                real_needs=web_search.needs_web_search, real_search=web_search.search)
+
+        async def needs(question):
+            state.decisions.append(question)
+            return state.needed
+
+        async def search(query):
+            state.queries.append(query)
+            return state.results
+
+        monkeypatch.setattr(web_search, "needs_web_search", needs)
+        monkeypatch.setattr(web_search, "search", search)
+        return state
 
     @pytest.fixture
     def vector_store():

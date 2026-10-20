@@ -553,6 +553,9 @@ services:
       # Read by authentik/blueprints/openbao-sso.yaml (!Env).
       OPENBAO_OIDC_CLIENT_ID: ${OPENBAO_OIDC_CLIENT_ID}
       OPENBAO_OIDC_CLIENT_SECRET: ${OPENBAO_OIDC_CLIENT_SECRET}
+      # Read by authentik/blueprints/custom-frontend-sso.yaml (!Env).
+      CUSTOM_FRONTEND_OIDC_CLIENT_ID: ${CUSTOM_FRONTEND_OIDC_CLIENT_ID}
+      CUSTOM_FRONTEND_OIDC_CLIENT_SECRET: ${CUSTOM_FRONTEND_OIDC_CLIENT_SECRET}
       # Read by open-webui-sso.yaml / password-recovery.yaml (!Env): MFA required for everyone (true)
       # or only for users who already set up an authenticator (false).
       AUTHENTIK_MFA_REQUIRED: ${AUTHENTIK_MFA_REQUIRED:-true}
@@ -791,6 +794,11 @@ services:
       - MILVUS_URI=http://milvus:19530
       # Same embedding model as open-webui's RAG_EMBEDDING_MODEL; picks collection custom_backend_docs_<model>
       - EMBEDDING_MODEL=embeddinggemma
+      # Sign-in through authentik for custom-frontend (routers/sso.py, authentik/blueprints/custom-frontend-sso.yaml).
+      - AUTHENTIK_PUBLIC_URL=https://${OPEN_WEBUI_HOST}:9443
+      - AUTHENTIK_INTERNAL_URL=http://authentik-server:9000
+      # The OIDC client id/secret and the session key come from OpenBao (apps/default/custom-backend).
+      - FRONTEND_ORIGINS=http://localhost:8012,http://${OPEN_WEBUI_HOST}:8012
     depends_on:
       postgres-db:
         condition: service_healthy

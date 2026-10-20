@@ -56,7 +56,6 @@ class PasswordResetRequest(BaseModel):
 
 # 📋 CHAT / RAG SCHEMAS
 class ChatCreate(BaseModel):
-    user_id: uuid.UUID
     title: str = "New Chat"
     model_id: str = DEFAULT_CHAT_MODEL
 
@@ -75,6 +74,10 @@ class ChatResponse(BaseModel):
 class MessageCreate(BaseModel):
     content: str
 
+class WebSource(BaseModel):
+    title: str
+    url: str
+
 class MessageResponse(BaseModel):
     id: uuid.UUID
     chat_id: uuid.UUID
@@ -82,6 +85,9 @@ class MessageResponse(BaseModel):
     role: str
     content: str
     created_at: datetime
+    # Only on the answer POST /chats/{id}/messages returns; not stored.
+    web_searched: bool = False
+    web_sources: List[WebSource] = []
 
     class Config:
         from_attributes = True

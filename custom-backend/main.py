@@ -1,16 +1,13 @@
 from fastapi import FastAPI
 from fastapi.responses import ORJSONResponse
-from fastapi.staticfiles import StaticFiles
-from routers import auth, chats
+from routers import auth, chats, sso
 
 app = FastAPI(title="Laptop Dev Backend Engine", default_response_class=ORJSONResponse)
 
-# 🖥️ Minimal static chat UI for exercising /chats + /chats/{chat_id}/messages
-# by hand, at http://localhost:8011/ui/
-app.mount("/ui", StaticFiles(directory="static", html=True), name="ui")
-
+# API only: the chat UI is the separate custom-frontend app.
 app.include_router(auth.router)
 app.include_router(chats.router)
+app.include_router(sso.router)
 
 @app.get("/health")
 async def health_check():

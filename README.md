@@ -60,6 +60,7 @@ flowchart TB
     opencode --> ollama & searxng
     attu --> milvus
     frontend -- "/api" --> backend
+    backend -- OIDC --> authentik
     backend --> ollama & milvus & postgres
     backend -- AppRole --> openbao
     authentik --> postgres
@@ -80,7 +81,7 @@ All services share the `ai-network` Docker bridge network, orchestrated via [dev
 | `ollama` | Local LLM inference engine (chat models and the `embeddinggemma` embedding model) | (internal) |
 | `open-webui` | Chat UI: Ollama models, web search, RAG on Milvus, sign-in through authentik, extended by the Functions in [devops/open-webui/functions/](devops/open-webui/functions/) | 8082 → 8080 |
 | `open-webui-proxy` | Caddy HTTPS front for devices on the LAN (cert from Caddy's local CA): Open WebUI on 8444, authentik on 9443, opencode on 4443 and Attu on 3443 (both behind authentik sign-in) | 8444 → 443, 9443, 4443, 3443 |
-| `authentik-server` + `authentik-worker` | SSO with TOTP (Google Authenticator) for Open WebUI and OpenBao; sign-up, invitations, password reset (see [Open WebUI SSO + MFA](docs/sso.md#open-webui-sso--mfa-authentik)) | (through `open-webui-proxy`, 9443) |
+| `authentik-server` + `authentik-worker` | SSO with TOTP (Google Authenticator) for Open WebUI, OpenBao and custom-frontend: one sign-in lasts 7 days and covers every app ([One sign-in for all apps](docs/sso.md#one-sign-in-for-all-apps)); sign-up, invitations, password reset (see [Open WebUI SSO + MFA](docs/sso.md#open-webui-sso--mfa-authentik)) | (through `open-webui-proxy`, 9443) |
 | `opencode` | Coding agent with a web UI (the admin's; everyone else gets their own `opencode-u<pk>` container from `provision.py`); stopped when idle (see [opencode](docs/opencode.md#opencode)) | 127.0.0.1:4096; LAN through `open-webui-proxy`, 4443 |
 | `docling` | Text extraction with OCR for documents uploaded to Open WebUI (scanned PDFs, images, tables) | (internal, 5001) |
 | `searxng` | Self-hosted metasearch engine for Open WebUI's web search | (internal, 8080) |
@@ -90,7 +91,7 @@ All services share the `ai-network` Docker bridge network, orchestrated via [dev
 | `passbolt-db` | MariaDB for Passbolt (dedicated, separate from postgres-db), opt-in with it | (internal) |
 | `passbolt` | Password manager, opt-in (`--profile passbolt`) | 8443 → 443 |
 | `custom-backend` | FastAPI app: auth, chats, RAG document ingestion | 8011 → 8000 |
-| `custom-frontend` | React (Vite + TypeScript) chat UI for custom-backend, a separate app in [custom-frontend/](custom-frontend/): sign up, sign in (with optional email MFA), chats, documents; nginx forwards `/api/*` to custom-backend (see [docs/custom-frontend.md](docs/custom-frontend.md)) | 8012 → 80 |
+| `custom-frontend` | React (Vite + TypeScript) chat UI for custom-backend, a separate app in [custom-frontend/](custom-frontend/): sign-in through authentik (same account as Open WebUI), chats, documents; nginx forwards `/api/*` to custom-backend (see [docs/custom-frontend.md](docs/custom-frontend.md)) | 8012 → 80 |
 | `openobserve` | O2 observability platform: logs and audit trails (see [Logs in OpenObserve](docs/observability.md#logs-in-openobserve)) | 5080 |
 | `openwebui-audit-shipper` | OpenTelemetry Collector shipping Open WebUI's audit log (who did what) and query log to O2 | (internal) |
 | `ollama-log-shipper` | OpenTelemetry Collector shipping Ollama's request log (read from its Docker log file) to O2 | (internal) |
