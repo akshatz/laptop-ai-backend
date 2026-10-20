@@ -9,6 +9,8 @@ export interface User {
   id: string;
   email: string;
   name: string;
+  // "admin" sees everyone's documents and feedback.
+  role?: string;
 }
 
 export interface Chat {
@@ -31,6 +33,8 @@ export interface Message {
   web_sources?: WebSource[];
   // Answers only: 1 = like, -1 = dislike, null = not rated.
   feedback?: Feedback;
+  // Answers only: how often this answer was regenerated.
+  regenerations?: number;
 }
 
 export type Feedback = 1 | -1 | null;
@@ -70,6 +74,10 @@ export interface ChatDocument {
   status: 'embedding' | 'ready' | 'failed' | 'replaced';
   error: string | null;
   created_at: string;
+  owner_name?: string | null;
+  owner_email?: string | null;
+  // False only in an admin's everyone list, for other people's documents.
+  mine?: boolean;
 }
 
 export interface UploadedDocument {
@@ -77,6 +85,21 @@ export interface UploadedDocument {
   filename: string;
   version: number;
   status: 'embedding' | 'duplicate';
+}
+
+export interface SignedInSession {
+  id: string;
+  user_id: string;
+  name: string;
+  email: string;
+  role: string;
+  signed_in_at: string;
+  last_seen_at: string;
+  expires_at: string;
+  // Seen in the last 5 minutes.
+  active_now: boolean;
+  user_agent: string | null;
+  is_you: boolean;
 }
 
 export interface IngestResult {
@@ -110,7 +133,7 @@ async function request<T>(path: string, body?: unknown, method = body === undefi
 export const api = {
   me: () => request<User>('/auth/me'),
   logout: () => request<{ authentik_logout_url: string | null }>('/auth/logout', undefined, 'POST'),
-  models: () => request<{ default: string; models: string[]; max_questions_per_chat?: number }>('/models'),
+  models: () => request<{ default: string; models: string[]; max_questions_per_chat?: number; max_regenerations?: number }>('/models'),
   chats: () => request<Chat[]>('/chats'),
   createChat: (model_id: string) => request<Chat>('/chats', { model_id }),
   messages: (chatId: string) => request<Message[]>(`/chats/${chatId}/messages`),
@@ -122,9 +145,12 @@ export const api = {
     files.forEach(f => form.append('files', f));
     return request<IngestResult>(`/chats/${chatId}/files`, form);
   },
-  documents: () => request<ChatDocument[]>('/documents'),
+  adminSessions: () => request<SignedInSession[]>('/admin/sessions'),
+  documents: (all = false) => request<ChatDocument[]>(all ? '/documents?all=true' : '/documents'),
   send: (chatId: string, content: string) => request<Message>(`/chats/${chatId}/messages`, { content }),
   feedback: (days: number) => request<FeedbackDashboard>(`/feedback?days=${days}`),
+  regenerate: (chatId: string, messageId: string) =>
+    request<Message>(`/chats/${chatId}/messages/${messageId}/regenerate`, undefined, 'POST'),
   rate: (chatId: string, messageId: string, rating: Feedback) =>
     request<Message>(`/chats/${chatId}/messages/${messageId}/feedback`, { rating }, 'PUT'),
 };

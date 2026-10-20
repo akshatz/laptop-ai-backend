@@ -26,9 +26,21 @@ RAG_PROMPT = ChatPromptTemplate.from_messages([
     ("human", "{input}"),
 ])
 
-def build_rag_chat_chain(model: str):
+# ANSWER_FROM_SOURCES_ONLY (routers/chats.py): nothing from the model's own knowledge.
+SOURCES_ONLY_PROMPT = ChatPromptTemplate.from_messages([
+    ("system", "You are a helpful assistant. Today is {today}. Answer ONLY with information found in the "
+               "context below, which comes from the user's uploaded documents and a web search. Do not "
+               "use your own knowledge, and never guess or invent facts, numbers, names or dates. If the "
+               "context doesn't contain the answer, reply exactly: \"I couldn't find this in your "
+               "documents or on the web.\" When you use a numbered web result, cite it like [1].\n\n"
+               "Context:\n{context}"),
+    MessagesPlaceholder("history"),
+    ("human", "{input}"),
+])
+
+def build_rag_chat_chain(model: str, sources_only: bool = False):
     llm = ChatOllama(base_url=OLLAMA_BASE_URL, model=model, temperature=CHAT_TEMPERATURE)
-    return RAG_PROMPT | llm
+    return (SOURCES_ONLY_PROMPT if sources_only else RAG_PROMPT) | llm
 
 # Models offered in /ui's dropdown, comma-separated; a name without a tag means `:latest`.
 # Only chat models that fit in RAM: not embedding models, photo-ai (pictures; /ui sends text

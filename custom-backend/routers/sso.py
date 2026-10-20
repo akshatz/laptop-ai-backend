@@ -22,6 +22,7 @@ from routers.auth import pwd_context
 from schemas import UserResponse
 from sessions import (
     SESSION_COOKIE, SESSION_MAX_AGE, STATE_COOKIE, STATE_MAX_AGE, current_user, sign, unsign,
+    end_session, start_session,
 )
 
 router = APIRouter(prefix="/auth", tags=["sso"])
@@ -132,7 +133,8 @@ async def callback(request: Request, code: str = "", state: str = "", error: str
         return RedirectResponse(f"{origin}/?signin=deactivated", status_code=302)
 
     response = RedirectResponse(f"{origin}/", status_code=302)
-    _set_cookie(response, request, SESSION_COOKIE, sign({"uid": str(user.id)}, SESSION_MAX_AGE), SESSION_MAX_AGE)
+    cookie = await start_session(db, user.id, request.headers.get("user-agent"))
+    _set_cookie(response, request, SESSION_COOKIE, cookie, SESSION_MAX_AGE)
     response.delete_cookie(STATE_COOKIE, path="/")
     return response
 
@@ -143,11 +145,12 @@ async def me(user: UserModel = Depends(current_user)):
 
 
 @router.post("/logout")
-async def logout():
-    """Ends this app's session. authentik's own session is ended by the browser visiting
+async def logout(request: Request, db: AsyncSession = Depends(get_db)):
+    """Ends this app's session (user_sessions.ended_at). authentik's own session is ended by the browser visiting
     `authentik_logout_url`, otherwise the next sign-in goes straight through."""
     response = ORJSONResponse({
         "authentik_logout_url": f"{AUTHENTIK_PUBLIC_URL}/flows/-/default/invalidation/" if AUTHENTIK_PUBLIC_URL else None,
     })
+    await end_session(db, request.cookies.get(SESSION_COOKIE))
     response.delete_cookie(SESSION_COOKIE, path="/")
     return response

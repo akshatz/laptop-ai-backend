@@ -32,6 +32,17 @@ class UserModel(Base):
     password_reset_otp: Mapped[Optional[str]] = mapped_column(String(6), nullable=True)
     password_reset_otp_expires_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
 
+class UserSessionModel(Base):
+    """One sign-in to custom-frontend (its id is in the session cookie), so admins can see who is
+    signed in. Ended on sign-out; a session past SESSION_MAX_AGE is over too."""
+    __tablename__ = "user_sessions"
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
+    last_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
+    ended_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    user_agent: Mapped[Optional[str]] = mapped_column(String(300), nullable=True)
+
 class UserChatModel(Base):
     __tablename__ = "user_chats"
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
@@ -52,6 +63,10 @@ class MessageModel(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
     # Answers only: 1 = like, -1 = dislike, NULL = not rated.
     feedback: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    # Answers only: what the user said was wrong (with 👎), used when the answer is regenerated.
+    feedback_comment: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    # Answers only: how often this answer was regenerated (replaced in place).
+    regenerations: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
 
 class ChatDocumentModel(Base):
     """A file (or pasted text) added to a chat as context, kept so its owner can see and open it."""

@@ -167,3 +167,27 @@ async def test_documents_in_other_chats_are_not_duplicates(client, chat_id, vect
 async def test_documents_need_a_session(client):
     assert (await client.get("/documents")).status_code == 401
     assert (await client.get(f"/documents/{uuid.uuid4()}/file")).status_code == 401
+
+
+async def test_all_documents_for_admins_only(client, chat_id, vector_store, session_maker, sign_in, make_client):
+    from sqlalchemy import update
+    import models
+
+    await client.post(f"/chats/{chat_id}/files", files=[("files", ("ravi.txt", b"ravi's list", "text/plain"))])
+    async with await make_client() as other:
+        meera = await sign_in(other, "meera@example.com", "Meera")
+        assert (await other.get("/documents?all=true")).status_code == 403
+        assert (await other.get("/documents")).json() == []
+        ravis = (await client.get("/documents")).json()[0]
+        assert ravis["owner_name"] == "Ravi" and ravis["mine"] is True
+        assert (await other.get(f"/documents/{ravis['id']}/file")).status_code == 404
+
+        async with session_maker() as session:
+            await session.execute(update(models.UserModel).where(models.UserModel.id == uuid.UUID(meera)).values(role="admin"))
+            await session.commit()
+        everyone = (await other.get("/documents?all=true")).json()
+        assert [(d["filename"], d["owner_name"], d["owner_email"], d["mine"]) for d in everyone] == [
+            ("ravi.txt", "Ravi", "ravi@example.com", False)]
+        assert (await other.get("/documents")).json() == []
+        opened = await other.get(f"/documents/{ravis['id']}/file")
+        assert opened.status_code == 200 and opened.content == b"ravi's list"

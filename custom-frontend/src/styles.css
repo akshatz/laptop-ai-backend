@@ -73,6 +73,16 @@ button { padding: 0.45rem 1rem; cursor: pointer; font: inherit; }
 .feedback { display: flex; gap: 0.2rem; margin-top: 0.3rem; }
 .feedback button { border: 1px solid transparent; background: none; border-radius: 8px; padding: 0.15rem 0.4rem; font-size: 0.9rem; cursor: pointer; opacity: 0.45; filter: grayscale(1); }
 .feedback button:hover { opacity: 0.9; }
+.feedback .regen { filter: none; opacity: 0.7; }
+.feedback .regen small { font-size: 0.72rem; color: var(--muted); }
+.feedback .regen:disabled { opacity: 0.3; cursor: default; }
+.msg.regenerating .bubble { opacity: 0.45; animation: pulse 1.2s ease-in-out infinite; }
+@keyframes pulse { 50% { opacity: 0.25; } }
+a.side-action { display: block; text-decoration: none; color: inherit; }
+.home .suggestions { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 0.6rem; margin-top: 1.25rem; width: 100%; max-width: 720px; text-align: left; }
+.suggestion { border: 1px solid var(--border); background: none; color: inherit; border-radius: 12px; padding: 0.7rem 0.85rem; font: inherit; font-size: 0.9rem; cursor: pointer; line-height: 1.35; }
+.suggestion:hover { background: var(--hover); }
+@media (max-width: 760px) { .home .suggestions { grid-template-columns: 1fr; } }
 .feedback button.selected { opacity: 1; filter: none; border-color: var(--border); }
 .sources a { color: var(--accent); max-width: 22rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
@@ -180,3 +190,33 @@ button.link { background: none; border: none; padding: 0; color: var(--accent); 
   .feedback { gap: 0.4rem; }
   .feedback button { padding: 0.35rem 0.6rem; font-size: 1.05rem; }
 }
+
+/* Documents library: cards */
+.library-filters { display: flex; gap: 0.5rem; flex-wrap: wrap; margin: 0.75rem 0 0.25rem; }
+.library-filters input { flex: 1 1 220px; margin: 0; }
+.library-filters select { width: auto; margin: 0; }
+.library-count { font-size: 0.8rem; margin: 0.4rem 0 0.6rem; }
+.segmented { display: inline-flex; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+.segmented button { margin: 0 !important; border: none; border-radius: 0; background: none; color: inherit; padding: 0.35rem 0.75rem; font: inherit; font-size: 0.85rem; cursor: pointer; }
+.segmented button.on { background: var(--user-bg); }
+.doc-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 0.75rem; }
+.doc-card { border: 1px solid var(--border); border-radius: 12px; padding: 0.8rem 0.9rem; display: flex; flex-direction: column; gap: 0.35rem; min-width: 0; }
+.doc-card.replaced { opacity: 0.6; }
+.doc-card-top { display: flex; align-items: center; justify-content: space-between; }
+.doc-card-icon { font-size: 1.6rem; }
+.doc-card-name { font-weight: 600; color: var(--accent); text-decoration: none; overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.doc-card-name:hover { text-decoration: underline; }
+.doc-card-error { color: #d9534f; font-size: 0.8rem; margin: 0; overflow-wrap: anywhere; }
+.doc-card-meta { display: grid; grid-template-columns: auto 1fr; gap: 0.15rem 0.6rem; margin: 0.2rem 0 0; font-size: 0.8rem; }
+.doc-card-meta dt { color: var(--muted); }
+.doc-card-meta dd { margin: 0; min-width: 0; overflow-wrap: anywhere; }
+.doc-card-meta .link { background: none; border: none; padding: 0; margin: 0 !important; color: var(--accent); cursor: pointer; font: inherit; text-align: left; overflow-wrap: anywhere; }
+.chip { display: inline-block; align-self: flex-start; font-size: 0.72rem; padding: 0.1rem 0.5rem; border-radius: 999px; border: 1px solid var(--border); color: var(--muted); white-space: nowrap; }
+.chip.ready { color: #3c9d5d; border-color: color-mix(in srgb, #3c9d5d 45%, transparent); }
+.chip.failed { color: #d9534f; border-color: color-mix(in srgb, #d9534f 45%, transparent); }
+.chip.embedding { color: var(--accent); }
+@media (max-width: 760px) { .doc-cards { grid-template-columns: 1fr; } }
+
+.session-name { overflow-wrap: anywhere; }
+.session-email { font-size: 0.8rem; overflow-wrap: anywhere; }
+.sessions .doc-card-meta { grid-template-columns: 5.5rem 1fr; }

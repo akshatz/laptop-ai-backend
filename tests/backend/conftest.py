@@ -151,6 +151,12 @@ else:
         return sent
 
     @pytest.fixture(autouse=True)
+    def answers_may_use_model_knowledge(monkeypatch):
+        """Most tests check the plain answering path; test_sources_only.py turns this back on."""
+        import routers.chats
+        monkeypatch.setattr(routers.chats, "ANSWER_FROM_SOURCES_ONLY", False)
+
+    @pytest.fixture(autouse=True)
     def web(monkeypatch):
         """The web search decision and SearXNG, without Ollama or the network. By default no
         question needs the web; tests set `needed` / `results` / `queries`."""
@@ -190,8 +196,9 @@ else:
         fake = FakeChain()
         fake.models = []
 
-        def build(model):
+        def build(model, sources_only=False):
             fake.models.append(model)
+            fake.sources_only = sources_only
             return fake
 
         monkeypatch.setattr(chat_service, "build_rag_chat_chain", build)

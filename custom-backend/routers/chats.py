@@ -26,9 +26,18 @@ from schemas import (
 router = APIRouter()
 log = logging.getLogger(__name__)
 
-# Questions allowed per chat (1: every question gets a new chat, so answers never mix topics);
-# 0 = no limit.
-MAX_QUESTIONS_PER_CHAT = int(os.environ.get("MAX_QUESTIONS_PER_CHAT", "1"))
+# Questions allowed per chat; 0 (default) = no limit. 1 makes every question a new chat, so small
+# models can't mix in earlier topics, at the cost of follow-up questions.
+MAX_QUESTIONS_PER_CHAT = int(os.environ.get("MAX_QUESTIONS_PER_CHAT", "0"))
+# Answers only from the chat's documents and web results: questions the documents don't cover
+# are always searched on the web, and with nothing found the model isn't asked at all
+# (NO_SOURCES_REPLY). false = the earlier behaviour (web search only when the model asks for it,
+# answers may draw on the model's own knowledge).
+ANSWER_FROM_SOURCES_ONLY = os.environ.get("ANSWER_FROM_SOURCES_ONLY", "true").lower() not in ("false", "0", "no")
+NO_SOURCES_REPLY = "I couldn't find this in your documents or on the web."
+# Regenerations allowed per answer (2: first answer + 2 more, like Open WebUI's Regenerate Limit
+# Function); 0 = no limit.
+MAX_REGENERATIONS = int(os.environ.get("MAX_REGENERATIONS", "2"))
 
 @router.get("/models")
 async def list_models():
@@ -38,7 +47,7 @@ async def list_models():
     except Exception as exc:
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=f"Ollama unavailable: {exc}")
     return {"default": chat_service.DEFAULT_CHAT_MODEL, "models": models,
-            "max_questions_per_chat": MAX_QUESTIONS_PER_CHAT}
+            "max_questions_per_chat": MAX_QUESTIONS_PER_CHAT, "max_regenerations": MAX_REGENERATIONS}
 
 async def _own_chat(chat_id: uuid.UUID, user: UserModel, db: AsyncSession) -> UserChatModel:
     """The chat if it belongs to the signed-in user; someone else's chat is a 404 too, so chat ids
@@ -93,6 +102,8 @@ async def rate_message(chat_id: uuid.UUID, message_id: uuid.UUID, payload: Messa
     if not message:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Answer not found.")
     message.feedback = payload.rating
+    comment = (payload.comment or "").strip()
+    message.feedback_comment = (comment or None) if payload.rating is not None else None
     await db.commit()
     await db.refresh(message)
     return message
@@ -142,6 +153,7 @@ async def feedback_dashboard(days: int = 30, user: UserModel = Depends(current_u
         by_model=by_model,
         recent=[FeedbackItem(message_id=m.id, chat_id=m.chat_id, chat_title=title, model_id=model_id,
                              user_name=name, question=q, answer=m.content, rating=m.feedback,
+                             comment=m.feedback_comment,
                              created_at=m.created_at)
                 for m, title, model_id, name, q in recent],
     )
@@ -281,29 +293,36 @@ async def upload_files(chat_id: uuid.UUID, background: BackgroundTasks, files: l
     return await _ingest(chat_id, user, items, db, background)
 
 @router.get("/documents", response_model=List[ChatDocumentResponse])
-async def list_documents(user: UserModel = Depends(current_user), db: AsyncSession = Depends(get_db)):
-    """Your own documents across all your chats, newest first (the file contents aren't sent)."""
-    query = await db.execute(
-        select(ChatDocumentModel, UserChatModel.title)
+async def list_documents(all: bool = False, user: UserModel = Depends(current_user), db: AsyncSession = Depends(get_db)):
+    """Your own documents across all your chats, newest first (the file contents aren't sent).
+    `?all=true` lists everyone's, with the owner, for admins (users.role == "admin") only."""
+    if all and user.role != "admin":
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only admins can see everyone's documents.")
+    query = (
+        select(ChatDocumentModel, UserChatModel.title, UserModel.name, UserModel.email)
         .join(UserChatModel, UserChatModel.id == ChatDocumentModel.chat_id)
-        .where(ChatDocumentModel.user_id == user.id)
+        .join(UserModel, UserModel.id == ChatDocumentModel.user_id)
         .order_by(ChatDocumentModel.created_at.desc())
     )
+    if not all:
+        query = query.where(ChatDocumentModel.user_id == user.id)
     return [
         ChatDocumentResponse(
             id=d.id, chat_id=d.chat_id, chat_title=title, filename=d.filename, content_type=d.content_type,
             size_bytes=d.size_bytes, chunks=d.chunks, version=d.version, status=d.status, error=d.error,
-            created_at=d.created_at,
+            created_at=d.created_at, owner_name=name, owner_email=email, mine=d.user_id == user.id,
         )
-        for d, title in query.all()
+        for d, title, name, email in (await db.execute(query)).all()
     ]
 
 @router.get("/documents/{document_id}/file")
 async def open_document(document_id: uuid.UUID, user: UserModel = Depends(current_user), db: AsyncSession = Depends(get_db)):
-    """The original file, shown in the browser where it can (PDF, text). Someone else's document is a 404."""
-    query = await db.execute(
-        select(ChatDocumentModel).where(ChatDocumentModel.id == document_id, ChatDocumentModel.user_id == user.id)
-    )
+    """The original file, shown in the browser where it can (PDF, text). Someone else's document is
+    a 404, except for admins (they see everyone's in the documents library)."""
+    query = select(ChatDocumentModel).where(ChatDocumentModel.id == document_id)
+    if user.role != "admin":
+        query = query.where(ChatDocumentModel.user_id == user.id)
+    query = await db.execute(query)
     doc = query.scalar_one_or_none()
     if not doc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found.")
@@ -319,6 +338,57 @@ async def open_document(document_id: uuid.UUID, user: UserModel = Depends(curren
             "Content-Security-Policy": "sandbox",
         },
     )
+
+async def _generate(chat: UserChatModel, question: str, history: list,
+                    rejected: tuple[str, str | None] | None = None) -> tuple[str, bool, list[dict]]:
+    """One answer to `question`: the chat's document chunks from Milvus, web results (always when
+    the documents have nothing and ANSWER_FROM_SOURCES_ONLY is on, else when the question needs
+    them), then the chat's model with `history`.
+    `rejected` = (previous answer, the user's comment) when regenerating an answer rated 👎: both go
+    into the context so the new answer doesn't repeat it.
+    Returns (answer, web_searched, web_results); 502 when Ollama can't be reached."""
+    try:
+        retrieved_docs = await chat_service.vector_store.asimilarity_search(
+            question, k=4, expr=f'chat_id == "{chat.id}"'
+        )
+    except Exception:
+        retrieved_docs = []
+    context_parts = []
+    if retrieved_docs:
+        context_parts.append("From the chat's documents:\n" + "\n\n".join(doc.page_content for doc in retrieved_docs))
+
+    # Sources only: the web whenever the documents have nothing; otherwise only when the question
+    # needs it (web_search.needs_web_search).
+    if ANSWER_FROM_SOURCES_ONLY and not retrieved_docs:
+        web_searched = True
+    else:
+        web_searched = await web_search.needs_web_search(question)
+    web_results = await web_search.search(question) if web_searched else []
+    if web_results:
+        context_parts.append("Web search results:\n" + web_search.as_context(web_results))
+    if ANSWER_FROM_SOURCES_ONLY and not context_parts:
+        return NO_SOURCES_REPLY, web_searched, []
+    context = "\n\n".join(context_parts) or "No relevant context found."
+    if rejected:
+        previous, comment = rejected
+        context += (
+            "\n\nThe user marked this earlier answer to the same question as bad"
+            + (f" and said: \"{comment}\"" if comment else "")
+            + ". Don't repeat its mistakes; check the sources above again.\nEarlier answer:\n" + previous
+        )
+
+    chain = chat_service.build_rag_chat_chain(chat.model_id, sources_only=ANSWER_FROM_SOURCES_ONLY)
+    try:
+        ai_reply = await chain.ainvoke({
+            "history": history, "input": question, "context": context, "today": date.today().isoformat(),
+        })
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"Failed to reach the Ollama model '{chat.model_id}': {exc}",
+        )
+
+    return ai_reply.content, web_searched, web_results
 
 @router.post("/chats/{chat_id}/messages", response_model=MessageResponse, status_code=status.HTTP_201_CREATED)
 async def send_message(chat_id: uuid.UUID, payload: MessageCreate, user: UserModel = Depends(current_user),
@@ -359,39 +429,13 @@ async def send_message(chat_id: uuid.UUID, payload: MessageCreate, user: UserMod
     db.add(user_message)
     await db.commit()
 
-    try:
-        retrieved_docs = await chat_service.vector_store.asimilarity_search(
-            payload.content, k=4, expr=f'chat_id == "{chat_id}"'
-        )
-    except Exception:
-        retrieved_docs = []
-    context_parts = []
-    if retrieved_docs:
-        context_parts.append("From the chat's documents:\n" + "\n\n".join(doc.page_content for doc in retrieved_docs))
-
-    # Web search only when the question needs it (web_search.needs_web_search).
-    web_searched = await web_search.needs_web_search(payload.content)
-    web_results = await web_search.search(payload.content) if web_searched else []
-    if web_results:
-        context_parts.append("Web search results:\n" + web_search.as_context(web_results))
-    context = "\n\n".join(context_parts) or "No relevant context found."
-
-    chain = chat_service.build_rag_chat_chain(chat.model_id)
-    try:
-        ai_reply = await chain.ainvoke({
-            "history": history, "input": payload.content, "context": context, "today": date.today().isoformat(),
-        })
-    except Exception as exc:
-        raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=f"Failed to reach the Ollama model '{chat.model_id}': {exc}",
-        )
+    content, web_searched, web_results = await _generate(chat, payload.content, history)
 
     assistant_message = MessageModel(
         chat_id=chat_id,
         user_id=chat.user_id,
         role="assistant",
-        content=ai_reply.content,
+        content=content,
     )
     db.add(assistant_message)
     chat.updated_at = datetime.utcnow()
@@ -399,6 +443,48 @@ async def send_message(chat_id: uuid.UUID, payload: MessageCreate, user: UserMod
     await db.refresh(assistant_message)
 
     return MessageResponse.model_validate(assistant_message).model_copy(update={
+        "web_searched": web_searched,
+        "web_sources": [WebSource(title=r["title"], url=r["url"]) for r in web_results],
+    })
+
+@router.post("/chats/{chat_id}/messages/{message_id}/regenerate", response_model=MessageResponse)
+async def regenerate_answer(chat_id: uuid.UUID, message_id: uuid.UUID, user: UserModel = Depends(current_user),
+                            db: AsyncSession = Depends(get_db)):
+    """A new answer to the question before the chat's latest answer, replacing it in place (its
+    rating is cleared, `regenerations` counts up). Only the latest answer can be regenerated, at
+    most MAX_REGENERATIONS times (409 after that)."""
+    chat = await _own_chat(chat_id, user, db)
+    messages = (await db.execute(
+        select(MessageModel).where(MessageModel.chat_id == chat_id).order_by(MessageModel.created_at)
+    )).scalars().all()
+    if not messages or messages[-1].id != message_id or messages[-1].role != "assistant":
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Only the latest answer can be regenerated.")
+    answer = messages[-1]
+    if MAX_REGENERATIONS and answer.regenerations >= MAX_REGENERATIONS:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"This answer was already regenerated {answer.regenerations} times.",
+        )
+    question_index = max((i for i, m in enumerate(messages[:-1]) if m.role == "user"), default=None)
+    if question_index is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No question to answer.")
+    history = [
+        AIMessage(content=m.content) if m.role == "assistant" else HumanMessage(content=m.content)
+        for m in messages[:question_index]
+    ]
+
+    # A 👎 (and its comment) tells the new answer what was wrong with this one.
+    rejected = (answer.content, answer.feedback_comment) if answer.feedback == -1 else None
+    content, web_searched, web_results = await _generate(chat, messages[question_index].content, history, rejected)
+
+    answer.content = content
+    answer.feedback = None
+    answer.feedback_comment = None
+    answer.regenerations += 1
+    chat.updated_at = datetime.utcnow()
+    await db.commit()
+    await db.refresh(answer)
+    return MessageResponse.model_validate(answer).model_copy(update={
         "web_searched": web_searched,
         "web_sources": [WebSource(title=r["title"], url=r["url"]) for r in web_results],
     })
