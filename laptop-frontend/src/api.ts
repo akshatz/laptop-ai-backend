@@ -35,6 +35,7 @@ export interface Message {
   feedback?: Feedback;
   // Answers only: how often this answer was regenerated.
   regenerations?: number;
+  created_at?: string;
 }
 
 export type Feedback = 1 | -1 | null;

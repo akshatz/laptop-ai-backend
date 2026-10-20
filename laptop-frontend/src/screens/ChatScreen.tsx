@@ -18,7 +18,7 @@ interface Props {
 const initials = (name: string) => name.split(/\s+/).filter(Boolean).slice(0, 2).map(w => w[0].toUpperCase()).join('') || '?';
 
 type View = 'chat' | 'documents' | 'library' | 'feedback' | 'sessions';
-type Shown = Pick<Message, 'role' | 'content' | 'web_searched' | 'web_sources'> & Partial<Pick<Message, 'id' | 'feedback' | 'regenerations'>>;
+type Shown = Pick<Message, 'role' | 'content' | 'web_searched' | 'web_sources'> & Partial<Pick<Message, 'id' | 'feedback' | 'regenerations' | 'created_at'>>;
 
 // The open screen and chat live in the URL hash (#/chat/<id>, #/documents, #/library,
 // #/feedback, #/sessions; empty = Home), so a reload, Back/Forward or a copied link keeps them.
@@ -31,6 +31,16 @@ function readRoute(): { view: View; chatId: string | null } {
 }
 const routeHash = (view: View, chatId: string | null) =>
   view === 'chat' ? (chatId ? `#/chat/${encodeURIComponent(chatId)}` : '') : `#/${view}`;
+
+// An answer still being written after a reload: the backend keeps going when the page goes
+// away, so a question this recent without an answer is polled until the answer is saved.
+const PENDING_WINDOW_MS = 5 * 60_000;
+const POLL_PENDING_MS = 3000;
+function awaitingAnswer(list: Shown[]) {
+  const last = list[list.length - 1];
+  return !!last && last.role === 'user' && !!last.created_at &&
+    Date.now() - new Date(last.created_at).getTime() < PENDING_WINDOW_MS;
+}
 
 // Start-page suggestions: one click asks them in a new chat.
 const SUGGESTIONS = [
@@ -62,6 +72,9 @@ export default function ChatScreen({ user, notice, onSignOut, onSessionExpired }
   const [maxRegenerations, setMaxRegenerations] = useState(2);
   // The answer being regenerated (shown dimmed until the new one replaces it).
   const [regenerating, setRegenerating] = useState<string | null>(null);
+  // The open chat's last question is still being answered by an earlier page (see awaitingAnswer).
+  const [waiting, setWaiting] = useState(false);
+  const busy = sending || waiting;
   // Index of the message just copied, for a short "Copied" confirmation.
   const [copied, setCopied] = useState<number | null>(null);
   const [uploads, setUploads] = useState<UploadItem[]>([]);
@@ -121,11 +134,27 @@ export default function ChatScreen({ user, notice, onSignOut, onSessionExpired }
     return () => window.removeEventListener('popstate', onPop);
   }, [chats, chat?.id]);
 
+  useEffect(() => {
+    if (!waiting || !chat) return;
+    const chatId = chat.id;
+    const timer = setInterval(async () => {
+      try {
+        const list = await api.messages(chatId);
+        if (!awaitingAnswer(list)) {
+          setMessages(list);
+          setWaiting(false);
+        }
+      } catch { /* try again next time */ }
+    }, POLL_PENDING_MS);
+    return () => clearInterval(timer);
+  }, [waiting, chat?.id]);
+
   useEffect(() => { endRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [messages, sending]);
 
   // "New chat" only clears the screen; the chat is created with the first message (or the first
   // documents), so empty chats don't pile up in the history.
   function newChat() {
+    setWaiting(false);
     setStatus('');
     setChat(null);
     setMessages([]);
@@ -138,7 +167,9 @@ export default function ChatScreen({ user, notice, onSignOut, onSessionExpired }
     setView('chat');
     setSidebarOpen(false);
     try {
-      setMessages(await api.messages(c.id));
+      const list = await api.messages(c.id);
+      setMessages(list);
+      setWaiting(awaitingAnswer(list));
       setChat(c);
     } catch (err) {
       fail('Could not open the chat: ', err);
@@ -164,7 +195,7 @@ export default function ChatScreen({ user, notice, onSignOut, onSessionExpired }
   }
 
   async function ask(content: string) {
-    if (!content || sending || chatFull) return;
+    if (!content || busy || chatFull) return;
     setStatus('');
     setSending(true);
     const target = await ensureChat();
@@ -202,7 +233,7 @@ export default function ChatScreen({ user, notice, onSignOut, onSessionExpired }
 
   // A new answer to the same question, replacing the latest one in place.
   async function regenerate(m: Shown) {
-    if (!chat || !m.id || sending) return;
+    if (!chat || !m.id || busy) return;
     setStatus('');
     setSending(true);
     setRegenerating(m.id);
@@ -231,7 +262,7 @@ export default function ChatScreen({ user, notice, onSignOut, onSessionExpired }
   }
 
   const asked = messages.filter(m => m.role === 'user').length;
-  const chatFull = maxQuestions > 0 && asked >= maxQuestions && !sending;
+  const chatFull = maxQuestions > 0 && asked >= maxQuestions && !busy;
 
   // Enter sends, Shift+Enter adds a line.
   function onComposerKey(e: KeyboardEvent<HTMLTextAreaElement>) {
@@ -335,7 +366,7 @@ export default function ChatScreen({ user, notice, onSignOut, onSessionExpired }
           <>
             <section className="messages">
               <div className="thread">
-                {messages.length === 0 && !sending && (
+                {messages.length === 0 && !busy && (
                   <div className="empty home">
                     <h2>How can I help, {user.name.split(' ')[0]}?</h2>
                     <p className="muted">Answers come only from your documents and a web search, with sources.</p>
@@ -378,7 +409,7 @@ export default function ChatScreen({ user, notice, onSignOut, onSessionExpired }
                           const used = m.regenerations ?? 0;
                           const left = maxRegenerations > 0 ? maxRegenerations - used : Infinity;
                           return (
-                            <button type="button" className="regen" onClick={() => regenerate(m)} disabled={sending || left <= 0}
+                            <button type="button" className="regen" onClick={() => regenerate(m)} disabled={busy || left <= 0}
                               title={left <= 0 ? 'No more regenerations for this answer' : left === Infinity ? 'Regenerate' : `Regenerate (${left} left)`}
                               aria-label="Regenerate answer">
                               ↻{maxRegenerations > 0 && <small> {used + 1}/{maxRegenerations + 1}</small>}
@@ -389,7 +420,7 @@ export default function ChatScreen({ user, notice, onSignOut, onSessionExpired }
                     )}
                   </div>
                 ))}
-                {sending && !regenerating && <div className="msg assistant"><div className="bubble typing">Thinking…</div></div>}
+                {busy && !regenerating && <div className="msg assistant"><div className="bubble typing">{waiting ? 'Still answering…' : 'Thinking…'}</div></div>}
                 <div ref={endRef} />
               </div>
             </section>
@@ -404,10 +435,10 @@ export default function ChatScreen({ user, notice, onSignOut, onSessionExpired }
             ) : (
             <form onSubmit={send} className="composer">
               <div className="composer-box">
-                <textarea rows={1} value={input} disabled={sending} aria-busy={sending}
-                  placeholder={sending ? 'Waiting for the answer…' : 'Send a message (Shift+Enter for a new line)'}
+                <textarea rows={1} value={input} disabled={busy} aria-busy={busy}
+                  placeholder={busy ? 'Waiting for the answer…' : 'Send a message (Shift+Enter for a new line)'}
                   onChange={e => setInput(e.target.value)} onKeyDown={onComposerKey} autoFocus />
-                <button type="submit" disabled={sending || !input.trim()} aria-label="Send">➤</button>
+                <button type="submit" disabled={busy || !input.trim()} aria-label="Send">➤</button>
               </div>
             </form>
             )}
