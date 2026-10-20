@@ -15,3 +15,7 @@ button.link { background: none; border: none; padding: 0; margin: 0; color: #36c
 .msg .role { font-weight: 600; }
 .send { display: flex; gap: 0.5rem; align-items: end; }
 .send button { margin-right: 0; }
+.signin { text-align: center; padding: 2rem 1rem; }
+a.button { display: inline-block; padding: 0.6rem 1.6rem; border-radius: 6px; background: #36c; color: #fff; text-decoration: none; }
+.row { display: flex; gap: 0.75rem; align-items: end; }
+.row label { flex: 1; }

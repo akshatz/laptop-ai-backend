@@ -8,17 +8,10 @@ import chat_service
 
 
 @pytest.fixture
-async def user_id(client, emails):
-    response = await client.post(
-        "/users", json={"email": "ravi@example.com", "password": "test-only-password-1", "name": "Ravi"}
-    )
-    return response.json()["id"]
-
-
-@pytest.fixture
-async def chat_id(client, user_id):
-    response = await client.post("/chats", json={"user_id": user_id, "model_id": "llama3.2"})
+async def chat_id(client, signed_in):
+    response = await client.post("/chats", json={"model_id": "llama3.2"})
     assert response.status_code == 201
+    assert response.json()["user_id"] == signed_in
     return response.json()["id"]
 
 
@@ -26,9 +19,38 @@ async def test_health(client):
     assert (await client.get("/health")).json()["status"] == "healthy"
 
 
-async def test_create_chat_needs_an_existing_user(client):
+async def test_chat_endpoints_need_a_session(client):
+    assert (await client.post("/chats", json={})).status_code == 401
+    assert (await client.get("/chats")).status_code == 401
+    assert (await client.get(f"/chats/{uuid.uuid4()}/messages")).status_code == 401
+    assert (await client.post(f"/chats/{uuid.uuid4()}/messages", json={"content": "hi"})).status_code == 401
+
+
+async def test_forged_or_expired_session_is_refused(client, signed_in):
+    import sessions
+
+    client.cookies.set(sessions.SESSION_COOKIE, sessions.sign({"uid": signed_in}, -1))
+    assert (await client.get("/chats")).status_code == 401
+    good = sessions.sign({"uid": signed_in}, 3600)
+    client.cookies.set(sessions.SESSION_COOKIE, good[:-1] + ("0" if good[-1] != "0" else "1"))
+    assert (await client.get("/chats")).status_code == 401
+
+
+async def test_user_id_in_the_body_is_ignored(client, signed_in):
     response = await client.post("/chats", json={"user_id": str(uuid.uuid4())})
-    assert response.status_code == 404
+    assert response.status_code == 201 and response.json()["user_id"] == signed_in
+
+
+async def test_chats_lists_only_your_own(client, chat_id, sign_in, make_client):
+    async with await make_client() as other:
+        await sign_in(other, "meera@example.com", "Meera")
+        assert (await other.post("/chats", json={})).status_code == 201
+        assert [c["id"] for c in (await client.get("/chats")).json()] == [chat_id]
+        # Someone else's chat looks like it doesn't exist.
+        assert (await other.get(f"/chats/{chat_id}/messages")).status_code == 404
+        assert (await other.post(f"/chats/{chat_id}/messages", json={"content": "hi"})).status_code == 404
+        response = await other.post(f"/chats/{chat_id}/documents", json={"documents": [{"text": "x"}]})
+        assert response.status_code == 404
 
 
 async def test_new_chat_has_no_messages(client, chat_id):
@@ -36,7 +58,7 @@ async def test_new_chat_has_no_messages(client, chat_id):
     assert response.status_code == 200 and response.json() == []
 
 
-async def test_messages_of_an_unknown_chat(client):
+async def test_messages_of_an_unknown_chat(client, signed_in):
     assert (await client.get(f"/chats/{uuid.uuid4()}/messages")).status_code == 404
     response = await client.post(f"/chats/{uuid.uuid4()}/messages", json={"content": "hi"})
     assert response.status_code == 404

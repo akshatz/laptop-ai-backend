@@ -56,7 +56,6 @@ class PasswordResetRequest(BaseModel):
 
 # 📋 CHAT / RAG SCHEMAS
 class ChatCreate(BaseModel):
-    user_id: uuid.UUID
     title: str = "New Chat"
     model_id: str = DEFAULT_CHAT_MODEL
 

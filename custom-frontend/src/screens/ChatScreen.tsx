@@ -1,42 +1,63 @@
 import { useEffect, useState, type FormEvent } from 'react';
-import { api, type Chat, type User } from '../api';
+import { api, HttpError, type Chat, type User } from '../api';
 
 interface Props {
   user: User;
-  onUserChange: (user: User) => void;
   onSignOut: () => void;
+  onSessionExpired: () => void;
 }
 
 const MAX_DOCS = 5;
 
-export default function ChatScreen({ user, onUserChange, onSignOut }: Props) {
+export default function ChatScreen({ user, onSignOut, onSessionExpired }: Props) {
   const [status, setStatus] = useState('');
   const [models, setModels] = useState<string[]>(['llama3.2']);
   const [model, setModel] = useState('llama3.2');
+  const [chats, setChats] = useState<Chat[]>([]);
   const [chat, setChat] = useState<Chat | null>(null);
   const [docs, setDocs] = useState<string[]>(Array(MAX_DOCS).fill(''));
   const [messages, setMessages] = useState<{ role: string; content: string }[]>([]);
   const [input, setInput] = useState('');
   const [sending, setSending] = useState(false);
-  const [mfaPassword, setMfaPassword] = useState('');
 
-  // Fill the model list from Ollama; on failure llama3.2 stays.
+  function fail(prefix: string, err: unknown) {
+    if (err instanceof HttpError && err.status === 401) { onSessionExpired(); return; }
+    setStatus(prefix + (err as Error).message);
+  }
+
   useEffect(() => {
+    // Fill the model list from Ollama; on failure llama3.2 stays.
     api.models().then(({ default: def, models }) => {
       if (!models.length) return;
       const wanted = def.includes(':') ? def : def + ':latest';
       setModels(models);
       setModel(models.includes(wanted) ? wanted : models[0]);
-    }).catch(err => setStatus('Could not load the model list: ' + err.message));
+    }).catch(err => fail('Could not load the model list: ', err));
+    api.chats().then(setChats).catch(err => fail('Could not load your chats: ', err));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  async function createChat() {
+  async function newChat() {
     setStatus('');
     try {
-      setChat(await api.createChat(user.id, model));
+      const created = await api.createChat(model);
+      setChats(cs => [created, ...cs]);
+      setChat(created);
       setMessages([]);
     } catch (err) {
-      setStatus('Failed to create chat: ' + (err as Error).message);
+      fail('Failed to create chat: ', err);
+    }
+  }
+
+  async function openChat(id: string) {
+    const found = chats.find(c => c.id === id);
+    if (!found) return;
+    setStatus('');
+    try {
+      setMessages(await api.messages(id));
+      setChat(found);
+    } catch (err) {
+      fail('Could not open the chat: ', err);
     }
   }
 
@@ -49,7 +70,7 @@ export default function ChatScreen({ user, onUserChange, onSignOut }: Props) {
       const r = await api.ingest(chat.id, texts);
       setStatus(`Ingested ${r.documents_ingested} document(s), ${r.chunks_ingested} chunk(s).`);
     } catch (err) {
-      setStatus('Failed to ingest documents: ' + (err as Error).message);
+      fail('Failed to ingest documents: ', err);
     }
   }
 
@@ -65,25 +86,9 @@ export default function ChatScreen({ user, onUserChange, onSignOut }: Props) {
       const reply = await api.send(chat.id, content);
       setMessages(m => [...m, { role: 'assistant', content: reply.content }]);
     } catch (err) {
-      setStatus('Failed to send message: ' + (err as Error).message);
+      fail('Failed to send message: ', err);
     } finally {
       setSending(false);
-    }
-  }
-
-  // /mfa/enable and /mfa/disable check the password again.
-  async function toggleMfa(e: FormEvent) {
-    e.preventDefault();
-    setStatus('');
-    try {
-      const updated = await api.setMfa(!user.mfa_enabled, user.email, mfaPassword);
-      setMfaPassword('');
-      onUserChange(updated);
-      setStatus(updated.mfa_enabled
-        ? 'MFA is on: signing in now also asks for a code sent by email.'
-        : 'MFA is off: signing in needs only your password.');
-    } catch (err) {
-      setStatus('Changing MFA failed: ' + (err as Error).message);
     }
   }
 
@@ -92,36 +97,37 @@ export default function ChatScreen({ user, onUserChange, onSignOut }: Props) {
       <div className="account">
         <span>Signed in as <strong>{user.name}</strong> &lt;{user.email}&gt;</span>
         <button type="button" onClick={onSignOut}>Sign out</button>
-        <details>
-          <summary>Account</summary>
-          <form onSubmit={toggleMfa}>
-            <p>Email code at sign-in (MFA): <strong>{user.mfa_enabled ? 'on' : 'off'}</strong></p>
-            <label>Password (needed to change MFA)
-              <input type="password" autoComplete="current-password" required value={mfaPassword}
-                onChange={e => setMfaPassword(e.target.value)} />
-            </label>
-            <button type="submit">{user.mfa_enabled ? 'Turn MFA off' : 'Turn MFA on'}</button>
-          </form>
-        </details>
       </div>
 
       {status && <p className="status">{status}</p>}
 
       <section className="card">
-        <h2>1. Create a chat</h2>
-        <label>Model
-          <select value={model} onChange={e => setModel(e.target.value)}>
-            {models.map(m => <option key={m} value={m}>{m}</option>)}
-          </select>
-        </label>
-        <button type="button" onClick={createChat}>{chat ? 'New chat' : 'Create chat'}</button>
-        <p>Chat ID: <code>{chat ? chat.id : '(none yet)'}</code></p>
+        <div className="row">
+          <label>Model
+            <select value={model} onChange={e => setModel(e.target.value)}>
+              {models.map(m => <option key={m} value={m}>{m}</option>)}
+            </select>
+          </label>
+          <button type="button" onClick={newChat}>New chat</button>
+        </div>
+        {chats.length > 0 && (
+          <label>Your chats
+            <select value={chat?.id ?? ''} onChange={e => openChat(e.target.value)}>
+              <option value="" disabled>Pick a chat…</option>
+              {chats.map(c => (
+                <option key={c.id} value={c.id}>
+                  {c.title} · {c.model_id} · {new Date(c.created_at).toLocaleString()}
+                </option>
+              ))}
+            </select>
+          </label>
+        )}
       </section>
 
       {chat && (
         <>
           <details className="card">
-            <summary>2. Add documents for context (optional, up to {MAX_DOCS})</summary>
+            <summary>Add documents for context (optional, up to {MAX_DOCS})</summary>
             {docs.map((d, i) => (
               <label key={i}>Text {i + 1}
                 <textarea value={d} onChange={e => setDocs(ds => ds.map((x, j) => (j === i ? e.target.value : x)))} />
@@ -131,7 +137,6 @@ export default function ChatScreen({ user, onUserChange, onSignOut }: Props) {
           </details>
 
           <section className="card">
-            <h2>3. Chat</h2>
             <div className="messages">
               {messages.map((m, i) => (
                 <div key={i} className={'msg ' + m.role}><span className="role">{m.role}:</span> {m.content}</div>

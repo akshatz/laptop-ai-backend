@@ -1,49 +1,53 @@
-import { useState } from 'react';
-import type { User } from './api';
-import SignIn from './screens/SignIn';
-import SignUp from './screens/SignUp';
+import { useEffect, useState } from 'react';
+import { api, HttpError, SIGN_IN_URL, type User } from './api';
 import ChatScreen from './screens/ChatScreen';
 
-// Remembered for this tab only. There's no session token yet: the backend doesn't check who
-// calls the chat endpoints, so this only decides which screen to show.
-const STORAGE_KEY = 'signedInUser';
-
-function loadUser(): User | null {
-  try { return JSON.parse(sessionStorage.getItem(STORAGE_KEY) || 'null'); } catch { return null; }
-}
-
-function saveUser(user: User | null) {
-  try {
-    if (user) sessionStorage.setItem(STORAGE_KEY, JSON.stringify(user));
-    else sessionStorage.removeItem(STORAGE_KEY);
-  } catch { /* storage blocked */ }
-}
+// Set by custom-backend's /auth/callback when sign-in didn't complete.
+const SIGNIN_ERRORS: Record<string, string> = {
+  failed: 'Sign-in did not complete. Please try again.',
+  deactivated: 'This account has been deactivated.',
+};
 
 export default function App() {
-  const [user, setUserState] = useState<User | null>(loadUser);
-  const [screen, setScreen] = useState<'signin' | 'signup'>('signin');
-  const [notice, setNotice] = useState('');
-  const [prefillEmail, setPrefillEmail] = useState('');
+  const [user, setUser] = useState<User | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
 
-  const setUser = (u: User | null) => { saveUser(u); setUserState(u); };
+  useEffect(() => {
+    const params = new URLSearchParams(location.search);
+    const signin = params.get('signin');
+    if (signin) {
+      setError(SIGNIN_ERRORS[signin] ?? SIGNIN_ERRORS.failed);
+      history.replaceState(null, '', location.pathname);
+    }
+    api.me()
+      .then(setUser)
+      .catch(err => { if (!(err instanceof HttpError && err.status === 401)) setError('Could not reach the server: ' + err.message); })
+      .finally(() => setLoading(false));
+  }, []);
+
+  async function signOut() {
+    try {
+      const { authentik_logout_url } = await api.logout();
+      // Also end authentik's session, or the next sign-in would go straight through.
+      if (authentik_logout_url) { location.href = authentik_logout_url; return; }
+    } catch { /* the cookie may already be gone */ }
+    setUser(null);
+  }
+
+  if (loading) return <main><p>Loading…</p></main>;
 
   return (
     <main>
       <h1>Laptop Dev Chat</h1>
       {user ? (
-        <ChatScreen user={user} onUserChange={setUser} onSignOut={() => { setUser(null); setScreen('signin'); }} />
-      ) : screen === 'signup' ? (
-        <SignUp
-          onVerified={email => { setPrefillEmail(email); setNotice('Email verified. You can sign in now.'); setScreen('signin'); }}
-          onShowSignIn={() => { setNotice(''); setScreen('signin'); }}
-        />
+        <ChatScreen user={user} onSignOut={signOut} onSessionExpired={() => setUser(null)} />
       ) : (
-        <SignIn
-          initialEmail={prefillEmail}
-          notice={notice}
-          onSignedIn={u => { setNotice(''); setUser(u); }}
-          onShowSignUp={() => { setNotice(''); setScreen('signup'); }}
-        />
+        <div className="card signin">
+          {error && <p className="status">{error}</p>}
+          <p>Sign in with your family account, the same one you use for Open WebUI.</p>
+          <a className="button" href={SIGN_IN_URL}>Sign in</a>
+        </div>
       )}
     </main>
   );
