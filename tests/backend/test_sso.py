@@ -96,3 +96,66 @@ async def test_logout_clears_the_session(client, signed_in):
     # The browser is told to drop the cookie (the test client's hand-set cookie isn't matched by it).
     set_cookie = response.headers["set-cookie"]
     assert set_cookie.startswith(f"{sessions.SESSION_COOKIE}=") and "Max-Age=0" in set_cookie
+
+
+@pytest.fixture
+def open_webui(monkeypatch):
+    """Who Open WebUI says its `token` cookie belongs to; tests set `user` (None = not signed in)."""
+    state = {"user": None, "tokens": []}
+
+    async def fake(token):
+        state["tokens"].append(token)
+        return state["user"] if token else None
+
+    monkeypatch.setattr(sso, "_open_webui_user", fake)
+    return state
+
+
+async def test_me_follows_open_webui_without_a_session_of_its_own(client, open_webui):
+    open_webui["user"] = {"email": "meera@example.com", "name": "Meera"}
+    client.cookies.set("token", "owui-jwt")
+
+    response = await client.get("/auth/me")
+
+    assert response.status_code == 200 and response.json()["email"] == "meera@example.com"
+    assert open_webui["tokens"] == ["owui-jwt"]
+    assert sessions.SESSION_COOKIE in response.headers.get("set-cookie", "")
+    # The new session works on its own afterwards.
+    client.cookies.delete("token")
+    assert (await client.get("/auth/me")).json()["email"] == "meera@example.com"
+
+
+async def test_me_switches_to_the_open_webui_user(client, signed_in, open_webui):
+    open_webui["user"] = {"email": "meera@example.com", "name": "Meera"}
+    client.cookies.set("token", "owui-jwt")
+    assert (await client.get("/auth/me")).json()["email"] == "meera@example.com"
+
+
+async def test_me_keeps_its_own_session_without_open_webui(client, signed_in, open_webui):
+    assert (await client.get("/auth/me")).json()["email"] == "ravi@example.com"
+    client.cookies.set("token", "expired-jwt")  # Open WebUI doesn't recognise it
+    assert (await client.get("/auth/me")).json()["email"] == "ravi@example.com"
+    assert "set-cookie" not in (await client.get("/auth/me")).headers
+
+
+async def test_me_without_any_session_is_401(client, open_webui):
+    assert (await client.get("/auth/me")).status_code == 401
+
+
+async def test_open_webui_user_is_checked_by_open_webui(monkeypatch):
+    seen = []
+
+    def handler(request):
+        seen.append(request.headers["authorization"])
+        role = "pending" if request.headers["authorization"].endswith("pending") else "user"
+        return sso.httpx.Response(200, json={"email": "Meera@Example.com", "name": "Meera", "role": role})
+
+    real_client = sso.httpx.AsyncClient
+    monkeypatch.setattr(sso.httpx, "AsyncClient",
+                        lambda **kw: real_client(transport=sso.httpx.MockTransport(handler), **kw))
+    sso._owui_cache.clear()
+    assert await sso._open_webui_user("abc") == {"email": "meera@example.com", "name": "Meera"}
+    assert await sso._open_webui_user("abc") == {"email": "meera@example.com", "name": "Meera"}  # cached
+    assert await sso._open_webui_user("t-pending") is None  # pending accounts aren't followed
+    assert seen == ["Bearer abc", "Bearer t-pending"]
+    assert await sso._open_webui_user(None) is None

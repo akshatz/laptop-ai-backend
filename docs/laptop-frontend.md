@@ -10,6 +10,8 @@ Opening the app without a session goes straight to authentik (like Open WebUI's 
 2. authentik sends the browser back to `/api/auth/callback`. laptop-backend exchanges the code with authentik over the Docker network, reads the user's email and name, finds the `users` row with that email or creates one, and sets its session cookie (HttpOnly, signed, 7 days).
 3. Every chat endpoint takes the user from that cookie; the request body can't name another user, and other people's chats answer 404.
 
+**Follows Open WebUI's session**: Open WebUI's sign-in cookie (`token`, not HTTPS-only, SameSite=Lax) reaches laptop-frontend too on the same host, since cookies ignore the port. `GET /auth/me`, which the app calls on every load, asks Open WebUI (`http://open-webui:8080/api/v1/auths/`, `OPEN_WEBUI_INTERNAL_URL`) who that token belongs to, cached for a minute; when it's an active Open WebUI user other than the app's current one, or the app has no session, laptop-frontend switches to that person (matched by email, created if new) with a new session. Without an Open WebUI sign-in the app's own authentik session counts. Signing out of Open WebUI doesn't sign laptop-frontend out. `FOLLOW_OPEN_WEBUI_SESSION=false` turns it off. Only on the same host name: Open WebUI at `localhost` and laptop-frontend at the LAN IP don't share cookies.
+
 **Sign out** ends the app's session and then authentik's (its invalidation flow), otherwise the next Sign in would go straight through.
 
 ## Dashboard
