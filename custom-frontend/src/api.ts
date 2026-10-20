@@ -31,15 +31,30 @@ export interface Message {
   web_sources?: WebSource[];
 }
 
+export interface ChatDocument {
+  id: string;
+  chat_id: string;
+  chat_title: string;
+  filename: string;
+  content_type: string;
+  size_bytes: number;
+  chunks: number;
+  created_at: string;
+}
+
+export const documentUrl = (id: string) => `${BASE}/documents/${id}/file`;
+
 export class HttpError extends Error {
   constructor(public status: number, message: string) { super(message); }
 }
 
 async function request<T>(path: string, body?: unknown, method = body === undefined ? 'GET' : 'POST'): Promise<T> {
+  // FormData (file uploads) goes as multipart; the browser sets its Content-Type.
+  const isForm = body instanceof FormData;
   const res = await fetch(BASE + path, {
     method,
-    headers: body === undefined ? undefined : { 'Content-Type': 'application/json' },
-    body: body === undefined ? undefined : JSON.stringify(body),
+    headers: body === undefined || isForm ? undefined : { 'Content-Type': 'application/json' },
+    body: body === undefined ? undefined : isForm ? body : JSON.stringify(body),
   });
   if (!res.ok) {
     const text = await res.text();
@@ -60,5 +75,11 @@ export const api = {
   ingest: (chatId: string, texts: string[]) =>
     request<{ documents_ingested: number; chunks_ingested: number }>(
       `/chats/${chatId}/documents`, { documents: texts.map(text => ({ text })) }),
+  upload: (chatId: string, files: File[]) => {
+    const form = new FormData();
+    files.forEach(f => form.append('files', f));
+    return request<{ documents_ingested: number; chunks_ingested: number }>(`/chats/${chatId}/files`, form);
+  },
+  documents: () => request<ChatDocument[]>('/documents'),
   send: (chatId: string, content: string) => request<Message>(`/chats/${chatId}/messages`, { content }),
 };

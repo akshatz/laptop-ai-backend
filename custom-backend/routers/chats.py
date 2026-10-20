@@ -1,18 +1,20 @@
 import uuid
 from datetime import date, datetime
 from typing import List
-from fastapi import APIRouter, Depends, HTTPException, status
+from urllib.parse import quote
+from fastapi import APIRouter, Depends, File, HTTPException, Response, UploadFile, status
 from langchain_core.messages import AIMessage, HumanMessage
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 import chat_service
+import file_text
 import web_search
 from db import get_db
-from models import MessageModel, UserChatModel, UserModel
+from models import ChatDocumentModel, MessageModel, UserChatModel, UserModel
 from sessions import current_user
 from schemas import (
-    MAX_DOCUMENTS_PER_INGEST, ChatCreate, ChatResponse, DocumentIngest, DocumentIngestResponse,
-    MessageCreate, MessageResponse, WebSource,
+    MAX_DOCUMENTS_PER_INGEST, ChatCreate, ChatDocumentResponse, ChatResponse, DocumentIngest, DocumentIngestResponse,
+    DocumentItem, MessageCreate, MessageResponse, WebSource,
 )
 
 router = APIRouter()
@@ -85,17 +87,105 @@ async def ingest_document(chat_id: uuid.UUID, payload: DocumentIngest, user: Use
 
     await _own_chat(chat_id, user, db)
 
-    documents = chat_service.chunk_documents(chat_id, payload.documents)
+    files = [
+        (item, (item.source or f"Pasted text {i}.txt"), "text/plain; charset=utf-8", item.text.encode())
+        for i, item in enumerate(payload.documents, start=1)
+    ]
+    return await _ingest(chat_id, user, files, db)
 
-    try:
-        await chat_service.vector_store.aadd_documents(documents)
-    except Exception as exc:
+async def _ingest(chat_id: uuid.UUID, user: UserModel, files: list, db: AsyncSession) -> DocumentIngestResponse:
+    """Embeds each (item, filename, content_type, original bytes) into Milvus (collection
+    chat_service.MILVUS_COLLECTION, chunks tagged with the chat id) and keeps the original in
+    chat_documents so its owner can see and open it. Nothing is kept if Milvus fails."""
+    total = 0
+    rows = []
+    for item, filename, content_type, data in files:
+        chunks = chat_service.chunk_documents(chat_id, [item])
+        try:
+            await chat_service.vector_store.aadd_documents(chunks)
+        except Exception as exc:
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail=f"Failed to ingest document into Milvus: {exc}",
+            )
+        total += len(chunks)
+        rows.append(ChatDocumentModel(
+            chat_id=chat_id, user_id=user.id, filename=filename[:255], content_type=content_type[:100],
+            size_bytes=len(data), chunks=len(chunks), data=data,
+        ))
+    db.add_all(rows)
+    await db.commit()
+    return DocumentIngestResponse(documents_ingested=len(rows), chunks_ingested=total)
+
+MAX_FILE_BYTES = 10 * 1024 * 1024
+
+@router.post("/chats/{chat_id}/files", response_model=DocumentIngestResponse, status_code=status.HTTP_201_CREATED)
+async def upload_files(chat_id: uuid.UUID, files: list[UploadFile] = File(...),
+                       user: UserModel = Depends(current_user), db: AsyncSession = Depends(get_db)):
+    """Same as /documents, from uploaded files (PDF, .docx, text; see file_text.py): up to
+    MAX_DOCUMENTS_PER_INGEST files of at most 10 MB each. Every file is checked before any is
+    added, so one bad file adds nothing."""
+    if not files:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="At least one file is required.")
+    if len(files) > MAX_DOCUMENTS_PER_INGEST:
         raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=f"Failed to ingest document into Milvus: {exc}",
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"At most {MAX_DOCUMENTS_PER_INGEST} files can be added at once.",
         )
+    await _own_chat(chat_id, user, db)
 
-    return DocumentIngestResponse(documents_ingested=len(payload.documents), chunks_ingested=len(documents))
+    items = []
+    for upload in files:
+        name = upload.filename or "file"
+        data = await upload.read(MAX_FILE_BYTES + 1)
+        if len(data) > MAX_FILE_BYTES:
+            raise HTTPException(status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, detail=f"{name}: larger than 10 MB.")
+        try:
+            item = DocumentItem(text=file_text.extract_text(name, data), source=name)
+        except file_text.UnsupportedFile as exc:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+        items.append((item, name, upload.content_type or "application/octet-stream", data))
+
+    return await _ingest(chat_id, user, items, db)
+
+@router.get("/documents", response_model=List[ChatDocumentResponse])
+async def list_documents(user: UserModel = Depends(current_user), db: AsyncSession = Depends(get_db)):
+    """Your own documents across all your chats, newest first (the file contents aren't sent)."""
+    query = await db.execute(
+        select(ChatDocumentModel, UserChatModel.title)
+        .join(UserChatModel, UserChatModel.id == ChatDocumentModel.chat_id)
+        .where(ChatDocumentModel.user_id == user.id)
+        .order_by(ChatDocumentModel.created_at.desc())
+    )
+    return [
+        ChatDocumentResponse(
+            id=d.id, chat_id=d.chat_id, chat_title=title, filename=d.filename, content_type=d.content_type,
+            size_bytes=d.size_bytes, chunks=d.chunks, created_at=d.created_at,
+        )
+        for d, title in query.all()
+    ]
+
+@router.get("/documents/{document_id}/file")
+async def open_document(document_id: uuid.UUID, user: UserModel = Depends(current_user), db: AsyncSession = Depends(get_db)):
+    """The original file, shown in the browser where it can (PDF, text). Someone else's document is a 404."""
+    query = await db.execute(
+        select(ChatDocumentModel).where(ChatDocumentModel.id == document_id, ChatDocumentModel.user_id == user.id)
+    )
+    doc = query.scalar_one_or_none()
+    if not doc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found.")
+    # Served with its own type, but never as HTML/SVG (scripts would run on this origin).
+    safe_type = doc.content_type
+    if any(t in safe_type for t in ("html", "svg", "xml", "javascript")):
+        safe_type = "text/plain; charset=utf-8"
+    return Response(
+        content=doc.data, media_type=safe_type,
+        headers={
+            "Content-Disposition": f"inline; filename*=UTF-8''{quote(doc.filename)}",
+            "X-Content-Type-Options": "nosniff",
+            "Content-Security-Policy": "sandbox",
+        },
+    )
 
 @router.post("/chats/{chat_id}/messages", response_model=MessageResponse, status_code=status.HTTP_201_CREATED)
 async def send_message(chat_id: uuid.UUID, payload: MessageCreate, user: UserModel = Depends(current_user),

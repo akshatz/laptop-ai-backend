@@ -99,6 +99,16 @@ class DocumentItem(BaseModel):
 class DocumentIngest(BaseModel):
     documents: List[DocumentItem]
 
+class ChatDocumentResponse(BaseModel):
+    id: uuid.UUID
+    chat_id: uuid.UUID
+    chat_title: str
+    filename: str
+    content_type: str
+    size_bytes: int
+    chunks: int
+    created_at: datetime
+
 class DocumentIngestResponse(BaseModel):
     documents_ingested: int
     chunks_ingested: int

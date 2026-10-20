@@ -16,7 +16,7 @@ Without a session the app shows its normal layout with a **Sign in** button at t
 
 Full-width, like other chat apps: a sidebar with **New chat**, **Add documents** and **Recent chats** (most recently used first; each chat is named after its first question), and the account at the bottom (initials, name, Sign out; or Sign in when signed out; on phones the sidebar opens from ☰). The conversation is a centred column with a message box at the bottom (Enter sends, Shift+Enter adds a line); the model is picked in the top bar for a new chat and stays fixed for an existing one. New chat only clears the screen: the chat is created with the first message or the first documents, so empty chats don't pile up.
 
-**Add documents**: up to 5 pasted texts at a time, added as context for the open chat (or a new one). Pasted text only, not file upload.
+**Documents**: upload files (choose or drag; PDF with a text layer, Word .docx, or text files; up to 5 at a time, 10 MB each), or paste text, as context for the open chat (or a new one). Their chunks are embedded with `embeddinggemma` into the Milvus collection `custom_backend_docs_embeddinggemma`, tagged with the chat id; the original file is kept in Postgres (`chat_documents`) so **My documents** lists everything you added (only your own) and opens it in the browser. Scanned PDFs without a text layer are refused (no OCR here).
 
 **Web search** happens only when the question needs it: custom-backend asks the model WEB or NO first (`web_search.py`, ~1 s), and only WEB searches SearXNG. The answer then shows its web sources as links under it.
 

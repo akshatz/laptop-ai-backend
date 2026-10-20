@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, type FormEvent, type KeyboardEvent } from 'react';
+import DocumentsView from './DocumentsView';
 import { api, HttpError, SIGN_IN_URL, type Chat, type Message, type User } from '../api';
 
 interface Props {
@@ -10,8 +11,6 @@ interface Props {
 }
 
 const initials = (name: string) => name.split(/\s+/).filter(Boolean).slice(0, 2).map(w => w[0].toUpperCase()).join('') || '?';
-
-const MAX_DOCS = 5;
 
 type View = 'chat' | 'documents';
 type Shown = Pick<Message, 'role' | 'content' | 'web_searched' | 'web_sources'>;
@@ -25,7 +24,6 @@ export default function ChatScreen({ user, notice, onSignOut, onSessionExpired }
   const [model, setModel] = useState('llama3.2');
   const [chats, setChats] = useState<Chat[]>([]);
   const [chat, setChat] = useState<Chat | null>(null);
-  const [docs, setDocs] = useState<string[]>(Array(MAX_DOCS).fill(''));
   const [messages, setMessages] = useState<Shown[]>([]);
   const [input, setInput] = useState('');
   const [sending, setSending] = useState(false);
@@ -87,21 +85,6 @@ export default function ChatScreen({ user, notice, onSignOut, onSessionExpired }
     }
   }
 
-  async function ingest() {
-    const texts = docs.map(d => d.trim()).filter(Boolean);
-    if (!texts.length) { setStatus('Paste some text first.'); return; }
-    setStatus('');
-    const target = await ensureChat();
-    if (!target) return;
-    try {
-      const r = await api.ingest(target.id, texts);
-      setDocs(Array(MAX_DOCS).fill(''));
-      setStatus(`Added ${r.documents_ingested} document(s) (${r.chunks_ingested} chunks) to this chat.`);
-    } catch (err) {
-      fail('Failed to add documents: ', err);
-    }
-  }
-
   async function send(e?: FormEvent) {
     e?.preventDefault();
     const content = input.trim();
@@ -140,7 +123,7 @@ export default function ChatScreen({ user, notice, onSignOut, onSessionExpired }
         <button type="button" className="side-action" onClick={newChat} disabled={!user}>＋ New chat</button>
         <button type="button" className={'side-action' + (view === 'documents' ? ' active' : '')} disabled={!user}
           onClick={() => { setView('documents'); setSidebarOpen(false); }}>
-          📄 Add documents
+          📄 Documents
         </button>
 
         <div className="side-heading">Recent chats</div>
@@ -175,7 +158,7 @@ export default function ChatScreen({ user, notice, onSignOut, onSessionExpired }
       <main className="content">
         <header className="topbar">
           <button type="button" className="menu-toggle" aria-label="Menu" onClick={() => setSidebarOpen(o => !o)}>☰</button>
-          <span className="title">{view === 'documents' ? 'Add documents' : chat ? chat.title : 'New chat'}</span>
+          <span className="title">{view === 'documents' ? 'Documents' : chat ? chat.title : 'New chat'}</span>
           <label className="model"><span>Model</span>
             <select value={chat ? chat.model_id : model} disabled={!!chat || !user} onChange={e => setModel(e.target.value)}
               title={chat ? 'A chat keeps the model it was started with' : undefined}>
@@ -196,20 +179,9 @@ export default function ChatScreen({ user, notice, onSignOut, onSessionExpired }
             </div>
           </section>
         ) : view === 'documents' ? (
-          <section className="documents">
-            <p>
-              Texts added here are used as context for answers in{' '}
-              {chat ? <strong>{chat.title}</strong> : 'a new chat (started when you add them)'}, up to {MAX_DOCS} at a time.
-              Paste text; file upload isn't supported yet.
-            </p>
-            {docs.map((d, i) => (
-              <label key={i}>Text {i + 1}
-                <textarea value={d} onChange={e => setDocs(ds => ds.map((x, j) => (j === i ? e.target.value : x)))} />
-              </label>
-            ))}
-            <button type="button" onClick={ingest}>Add to chat</button>
-            {chat && <button type="button" onClick={() => setView('chat')}>Back to chat</button>}
-          </section>
+          <DocumentsView chat={chat} ensureChat={ensureChat} onError={fail}
+            onOpenChat={id => { const c = chats.find(x => x.id === id); if (c) openChat(c); }}
+            onBack={() => setView('chat')} />
         ) : (
           <>
             <section className="messages">
