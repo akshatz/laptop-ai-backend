@@ -18,6 +18,9 @@ CHAT_TEMPERATURE = float(os.environ.get("CHAT_TEMPERATURE", "0.1"))
 
 RAG_PROMPT = ChatPromptTemplate.from_messages([
     ("system", "You are a helpful assistant. Today is {today}. Use the context below to answer, if relevant. "
+               "Take facts, numbers, names and dates about news or current events only from the context; "
+               "if the context doesn't cover the question, say plainly that you found no current "
+               "information on it instead of answering from memory, and don't invent events. "
                "When you use a numbered web result, cite it like [1].\n\nContext:\n{context}"),
     MessagesPlaceholder("history"),
     ("human", "{input}"),

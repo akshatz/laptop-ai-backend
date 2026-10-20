@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type DragEvent } from 'react';
-import { api, documentUrl, type Chat, type ChatDocument } from '../api';
+import { api, documentUrl, type Chat, type ChatDocument, type UploadedDocument } from '../api';
+import { fromUploaded, type UploadItem } from './UploadSnackbar';
 
 interface Props {
   chat: Chat | null;
@@ -7,6 +8,9 @@ interface Props {
   onError: (prefix: string, err: unknown) => void;
   onOpenChat: (chatId: string) => void;
   onBack: () => void;
+  setUploads: (update: (items: UploadItem[]) => UploadItem[]) => void;
+  // Changes when a background embedding finishes.
+  reloadKey: number;
 }
 
 const MAX_FILES = 5;
@@ -16,7 +20,11 @@ const ACCEPT = '.pdf,.docx,.txt,.md,.markdown,.csv,.tsv,.json,.html,.htm,.xml,.l
 
 const size = (n: number) => (n < 1024 ? `${n} B` : n < 1024 * 1024 ? `${(n / 1024).toFixed(0)} KB` : `${(n / 1024 / 1024).toFixed(1)} MB`);
 
-export default function DocumentsView({ chat, ensureChat, onError, onOpenChat, onBack }: Props) {
+const STATUS_LABEL: Record<ChatDocument['status'], string> = {
+  embedding: '⏳ Embedding', ready: '✓ Ready', failed: '✕ Failed', replaced: 'Replaced',
+};
+
+export default function DocumentsView({ chat, ensureChat, onError, onOpenChat, onBack, setUploads, reloadKey }: Props) {
   const [picked, setPicked] = useState<File[]>([]);
   const [pasted, setPasted] = useState('');
   const [busy, setBusy] = useState(false);
@@ -26,7 +34,7 @@ export default function DocumentsView({ chat, ensureChat, onError, onOpenChat, o
   const inputRef = useRef<HTMLInputElement>(null);
 
   const reload = () => api.documents().then(setDocs).catch(err => onError('Could not load your documents: ', err));
-  useEffect(() => { reload(); }, []);
+  useEffect(() => { reload(); }, [reloadKey]);
 
   function addFiles(list: FileList | null) {
     if (!list) return;
@@ -44,21 +52,30 @@ export default function DocumentsView({ chat, ensureChat, onError, onOpenChat, o
     addFiles(e.dataTransfer.files);
   }
 
+  // Uploading only stores the files; embedding them runs in the background and the snackbar
+  // (UploadSnackbar) shows its progress, so the page is free again as soon as the upload is done.
   async function upload() {
     if (!picked.length && !pasted.trim()) { setNote('Choose a file first.'); return; }
     setBusy(true);
     setNote('');
     const target = await ensureChat();
     if (!target) { setBusy(false); return; }
+    const files = picked, text = pasted.trim();
+    const batch = Date.now() + ':';
+    const names = [...files.map(f => f.name), ...(text ? ['Pasted text'] : [])];
+    const placeholders = names.map((filename, i): UploadItem => ({ key: batch + i, filename, status: 'uploading' }));
+    setUploads(items => [...items.filter(i => i.status !== 'ready' && i.status !== 'duplicate'), ...placeholders]);
     try {
-      let added = 0;
-      if (picked.length) added += (await api.upload(target.id, picked)).documents_ingested;
-      if (pasted.trim()) added += (await api.ingest(target.id, [pasted.trim()])).documents_ingested;
+      const results: UploadedDocument[] = [];
+      if (files.length) results.push(...(await api.upload(target.id, files)).documents);
+      if (text) results.push(...(await api.ingest(target.id, [text])).documents);
+      setUploads(items => [...items.filter(i => !i.key.startsWith(batch)), ...results.map(fromUploaded)]);
       setPicked([]);
       setPasted('');
-      setNote(`Added ${added} document(s) to “${target.title}”. Ask about them in the chat.`);
+      setNote(`Uploaded to “${target.title}”. You can ask about them in the chat once they're ready.`);
       reload();
     } catch (err) {
+      setUploads(items => items.filter(i => !i.key.startsWith(batch)));
       onError('Upload failed: ', err);
     } finally {
       setBusy(false);
@@ -103,7 +120,7 @@ export default function DocumentsView({ chat, ensureChat, onError, onOpenChat, o
 
       {note && <p className="note">{note}</p>}
       <div className="actions">
-        <button type="button" className="primary" onClick={upload} disabled={busy}>{busy ? 'Adding…' : 'Add to chat'}</button>
+        <button type="button" className="primary" onClick={upload} disabled={busy}>{busy ? 'Uploading…' : 'Add to chat'}</button>
         {chat && <button type="button" onClick={onBack}>Back to chat</button>}
       </div>
 
@@ -112,12 +129,16 @@ export default function DocumentsView({ chat, ensureChat, onError, onOpenChat, o
         <p className="muted">You haven't added any documents yet.</p>
       ) : (
         <table className="doc-table">
-          <thead><tr><th>Name</th><th>Chat</th><th>Size</th><th>Added</th></tr></thead>
+          <thead><tr><th>Name</th><th>Chat</th><th>Status</th><th>Size</th><th>Added</th></tr></thead>
           <tbody>
             {docs.map(d => (
               <tr key={d.id}>
-                <td><a href={documentUrl(d.id)} target="_blank" rel="noreferrer">📄 {d.filename}</a></td>
+                <td>
+                  <a href={documentUrl(d.id)} target="_blank" rel="noreferrer">📄 {d.filename}</a>
+                  {d.version > 1 && <span className="muted"> v{d.version}</span>}
+                </td>
                 <td><button type="button" className="link" onClick={() => onOpenChat(d.chat_id)}>{d.chat_title}</button></td>
+                <td className={'doc-status ' + d.status} title={d.error ?? undefined}>{STATUS_LABEL[d.status] ?? d.status}</td>
                 <td>{size(d.size_bytes)}</td>
                 <td>{new Date(d.created_at).toLocaleString()}</td>
               </tr>

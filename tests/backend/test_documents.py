@@ -52,7 +52,11 @@ async def test_upload_pdf_docx_and_text(client, chat_id, vector_store):
     response = await client.post(f"/chats/{chat_id}/files", files=files)
 
     assert response.status_code == 201
-    assert response.json() == {"documents_ingested": 3, "chunks_ingested": 3}
+    assert response.json()["documents_ingested"] == 3
+    assert [(d["filename"], d["version"], d["status"]) for d in response.json()["documents"]] == [
+        ("menu.pdf", 1, "embedding"), ("notes.docx", 1, "embedding"), ("list.txt", 1, "embedding")]
+    # The embedding ran as a background task after the response.
+    assert {d["status"] for d in (await client.get("/documents")).json()} == {"ready"}
     texts = [d.page_content for d in vector_store.added]
     assert "Paneer tikka 250" in texts[0]
     assert "Meeting on Friday" in texts[1] and "Budget 5000" in texts[1]
@@ -111,11 +115,53 @@ async def test_upload_limits(client, chat_id, vector_store, monkeypatch):
     assert (await client.post(f"/chats/{chat_id}/files", files=big)).status_code == 413
 
 
-async def test_milvus_failure_keeps_nothing(client, chat_id, vector_store):
+async def test_milvus_failure_marks_the_document_failed(client, chat_id, vector_store):
     vector_store.add_error = RuntimeError("milvus down")
     response = await client.post(f"/chats/{chat_id}/files", files=[("files", ("a.txt", b"text", "text/plain"))])
-    assert response.status_code == 502
-    assert (await client.get("/documents")).json() == []
+    assert response.status_code == 201 and response.json()["documents"][0]["status"] == "embedding"
+    [doc] = (await client.get("/documents")).json()
+    assert doc["status"] == "failed" and doc["error"] == "milvus down" and doc["chunks"] == 0
+
+    # A failed copy doesn't count as a duplicate: uploading it again is embedded again.
+    vector_store.add_error = None
+    again = await client.post(f"/chats/{chat_id}/files", files=[("files", ("a.txt", b"text", "text/plain"))])
+    assert again.json()["documents"][0]["status"] == "embedding"
+    assert [d["status"] for d in (await client.get("/documents")).json()] == ["ready", "failed"]
+
+
+async def test_same_content_again_is_a_duplicate(client, chat_id, vector_store):
+    first = (await client.post(f"/chats/{chat_id}/files", files=[("files", ("a.txt", b"same", "text/plain"))])).json()
+    # Renamed copy of the same bytes, plus the same text pasted.
+    second = (await client.post(f"/chats/{chat_id}/files", files=[("files", ("copy.txt", b"same", "text/plain"))])).json()
+    pasted = (await client.post(f"/chats/{chat_id}/documents", json={"documents": [{"text": "same"}]})).json()
+
+    assert second["documents_ingested"] == 0 and pasted["documents_ingested"] == 0
+    assert second["documents"][0] == {**first["documents"][0], "status": "duplicate"}
+    assert len(vector_store.added) == 1 and len((await client.get("/documents")).json()) == 1
+
+
+async def test_changed_file_with_the_same_name_is_a_new_version(client, chat_id, vector_store):
+    await client.post(f"/chats/{chat_id}/files", files=[("files", ("menu.txt", b"Tea 10", "text/plain"))])
+    response = await client.post(f"/chats/{chat_id}/files", files=[("files", ("menu.txt", b"Tea 15", "text/plain"))])
+
+    assert response.json()["documents"][0]["version"] == 2
+    assert vector_store.deleted == [f'chat_id == "{chat_id}" and source == "menu.txt"']
+    docs = (await client.get("/documents")).json()
+    assert [(d["version"], d["status"]) for d in docs] == [(2, "ready"), (1, "replaced")]
+
+
+async def test_pasted_texts_are_not_versions_of_each_other(client, chat_id, vector_store):
+    await client.post(f"/chats/{chat_id}/documents", json={"documents": [{"text": "one"}]})
+    await client.post(f"/chats/{chat_id}/documents", json={"documents": [{"text": "two"}]})
+    assert vector_store.deleted == []
+    assert [(d["version"], d["status"]) for d in (await client.get("/documents")).json()] == [(1, "ready"), (1, "ready")]
+
+
+async def test_documents_in_other_chats_are_not_duplicates(client, chat_id, vector_store):
+    other_chat = (await client.post("/chats", json={})).json()["id"]
+    await client.post(f"/chats/{chat_id}/files", files=[("files", ("a.txt", b"same", "text/plain"))])
+    response = await client.post(f"/chats/{other_chat}/files", files=[("files", ("a.txt", b"same", "text/plain"))])
+    assert response.json()["documents"][0] == {**response.json()["documents"][0], "version": 1, "status": "embedding"}
 
 
 async def test_documents_need_a_session(client):

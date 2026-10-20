@@ -1,7 +1,7 @@
 import os
 import uuid
 from datetime import datetime
-from typing import List, Optional
+from typing import List, Literal, Optional
 from pydantic import BaseModel, EmailStr
 
 DEFAULT_CHAT_MODEL = os.environ.get("DEFAULT_CHAT_MODEL", "llama3.2")
@@ -74,6 +74,37 @@ class ChatResponse(BaseModel):
 class MessageCreate(BaseModel):
     content: str
 
+class MessageFeedback(BaseModel):
+    # 1 = like, -1 = dislike, null clears it.
+    rating: Optional[Literal[1, -1]] = None
+
+class FeedbackItem(BaseModel):
+    message_id: uuid.UUID
+    chat_id: uuid.UUID
+    chat_title: str
+    model_id: str
+    user_name: str
+    question: Optional[str] = None
+    answer: str
+    rating: int
+    created_at: datetime
+
+class FeedbackModelStats(BaseModel):
+    model_id: str
+    answers: int
+    likes: int
+    dislikes: int
+
+class FeedbackDashboard(BaseModel):
+    # "everyone" for admins, "mine" otherwise.
+    scope: str
+    days: int
+    answers: int
+    likes: int
+    dislikes: int
+    by_model: List[FeedbackModelStats]
+    recent: List[FeedbackItem]
+
 class WebSource(BaseModel):
     title: str
     url: str
@@ -85,6 +116,7 @@ class MessageResponse(BaseModel):
     role: str
     content: str
     created_at: datetime
+    feedback: Optional[int] = None
     # Only on the answer POST /chats/{id}/messages returns; not stored.
     web_searched: bool = False
     web_sources: List[WebSource] = []
@@ -107,8 +139,20 @@ class ChatDocumentResponse(BaseModel):
     content_type: str
     size_bytes: int
     chunks: int
+    version: int = 1
+    status: str = "ready"
+    error: Optional[str] = None
     created_at: datetime
 
+class UploadedDocument(BaseModel):
+    id: uuid.UUID
+    filename: str
+    version: int
+    # embedding: stored, being embedded in the background (poll /documents); duplicate: the same
+    # content is already in this chat, nothing added (id is the existing document's).
+    status: str
+
 class DocumentIngestResponse(BaseModel):
+    # Documents accepted for embedding (duplicates not counted).
     documents_ingested: int
-    chunks_ingested: int
+    documents: List[UploadedDocument] = []

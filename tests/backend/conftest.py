@@ -55,8 +55,11 @@ else:
             self.reset()
 
         def reset(self):
-            self.added, self.searches, self.results = [], [], []
+            self.added, self.searches, self.results, self.deleted = [], [], [], []
             self.add_error = self.search_error = None
+
+        def delete(self, ids=None, expr=None):
+            self.deleted.append(expr)
 
         async def aadd_documents(self, documents):
             if self.add_error:
@@ -102,6 +105,8 @@ else:
                 yield session
 
         main.app.dependency_overrides[db_stub.get_db] = get_test_db
+        # Background tasks (document embedding) open their own session.
+        db_stub.AsyncSessionLocal = session_maker
         transport = httpx.ASGITransport(app=main.app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as c:
             yield c
