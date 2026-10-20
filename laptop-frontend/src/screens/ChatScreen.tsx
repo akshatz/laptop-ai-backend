@@ -248,10 +248,10 @@ export default function ChatScreen({ user, notice, onSignOut, onSessionExpired }
     }
   }
 
-  // Clicking the selected thumb again clears the rating.
+  // The first rating is final (the backend refuses changes); Regenerate gives a new, unrated answer.
   async function rate(m: Shown, rating: 1 | -1) {
-    if (!chat || !m.id) return;
-    const next: Feedback = m.feedback === rating ? null : rating;
+    if (!chat || !m.id || m.feedback != null) return;
+    const next: Feedback = rating;
     setMessages(ms => ms.map(x => (x.id === m.id ? { ...x, feedback: next } : x)));
     try {
       await api.rate(chat.id, m.id, next);
@@ -401,10 +401,15 @@ export default function ChatScreen({ user, notice, onSignOut, onSessionExpired }
                       <div className="feedback">
                         <button type="button" className="copy" onClick={() => copyMessage(m, i)}
                           title="Copy answer (with sources)" aria-label="Copy answer">{copied === i ? '✓' : '⧉'}</button>
-                        <button type="button" title="Good answer" aria-label="Good answer" aria-pressed={m.feedback === 1}
-                          className={m.feedback === 1 ? 'selected' : ''} onClick={() => rate(m, 1)}>👍</button>
-                        <button type="button" title="Bad answer" aria-label="Bad answer" aria-pressed={m.feedback === -1}
-                          className={m.feedback === -1 ? 'selected' : ''} onClick={() => rate(m, -1)}>👎</button>
+                        {m.feedback == null ? (
+                          <>
+                            <button type="button" title="Good answer" aria-label="Good answer" onClick={() => rate(m, 1)}>👍</button>
+                            <button type="button" title="Bad answer" aria-label="Bad answer" onClick={() => rate(m, -1)}>👎</button>
+                          </>
+                        ) : (
+                          <span className="rated" title="Thanks for your feedback"
+                            aria-label={m.feedback === 1 ? 'Rated good' : 'Rated bad'}>{m.feedback === 1 ? '👍' : '👎'}</span>
+                        )}
                         {i === messages.length - 1 && (() => {
                           const used = m.regenerations ?? 0;
                           const left = maxRegenerations > 0 ? maxRegenerations - used : Infinity;

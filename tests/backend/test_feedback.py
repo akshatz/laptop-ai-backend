@@ -15,15 +15,21 @@ async def answered(client, signed_in, chain, vector_store, web):
     return chat_id, question, answer
 
 
-async def test_like_dislike_and_clear(client, answered):
+async def test_first_rating_is_final(client, answered):
     chat_id, _, answer = answered
     url = f"/chats/{chat_id}/messages/{answer['id']}/feedback"
     assert answer["feedback"] is None
 
     assert (await client.put(url, json={"rating": 1})).json()["feedback"] == 1
     assert (await client.get(f"/chats/{chat_id}/messages")).json()[1]["feedback"] == 1
-    assert (await client.put(url, json={"rating": -1})).json()["feedback"] == -1
-    assert (await client.put(url, json={"rating": None})).json()["feedback"] is None
+    assert (await client.put(url, json={"rating": -1})).status_code == 409
+    assert (await client.put(url, json={"rating": None})).status_code == 409
+    assert (await client.get(f"/chats/{chat_id}/messages")).json()[1]["feedback"] == 1
+
+
+async def test_a_rating_is_needed(client, answered):
+    chat_id, _, answer = answered
+    assert (await client.put(f"/chats/{chat_id}/messages/{answer['id']}/feedback", json={"rating": None})).status_code == 400
 
 
 async def test_only_ratings_1_and_minus_1(client, answered):
@@ -84,8 +90,6 @@ async def test_dislike_with_a_comment(client, answered):
     assert saved["feedback"] == -1 and saved["feedback_comment"] == "Wrong price, it's 250"
     assert (await client.get("/feedback")).json()["recent"][0]["comment"] == "Wrong price, it's 250"
 
-    # Clearing the rating drops the comment too.
-    assert (await client.put(url, json={"rating": None, "comment": "ignored"})).json()["feedback_comment"] is None
     assert (await client.put(url, json={"rating": -1, "comment": "x" * 1001})).status_code == 422
 
 
