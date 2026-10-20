@@ -89,7 +89,7 @@ def test_sources_show_their_publish_date():
     assert "[2] Nifty (https://b) — publish date unknown" in context
 
 
-async def test_search_tries_the_last_day_first(monkeypatch):
+async def test_search_tries_the_last_day_first(monkeypatch, web):
     calls = []
 
     async def fake_searxng(params):
@@ -103,6 +103,7 @@ async def test_search_tries_the_last_day_first(monkeypatch):
     monkeypatch.setattr(web_search, "_searxng", fake_searxng)
     monkeypatch.setattr(web_search, "search_query", fake_query)
     monkeypatch.setattr(web_search, "FETCH_PAGES", 0)
-    results = await web_search.search("Sensex today")
+    # conftest's `web` stubs web_search.search for every test; this one needs the real one.
+    results = await web.real_search("Sensex today")
     assert [c.get("time_range") for c in calls] == ["day", "month"]
     assert results[0]["published"] == "2026-10-19"
