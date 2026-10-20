@@ -73,6 +73,9 @@ class ChatResponse(BaseModel):
 
 class MessageCreate(BaseModel):
     content: str
+    # The model picker in the message box: switch the chat to this installed model (one of
+    # /models) for this question and later ones, Regenerate included.
+    model: Optional[str] = None
 
 class MessageFeedback(BaseModel):
     # 1 = like, -1 = dislike, null clears it.

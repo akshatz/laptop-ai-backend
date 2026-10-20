@@ -148,7 +148,9 @@ export const api = {
   },
   adminSessions: () => request<SignedInSession[]>('/admin/sessions'),
   documents: (all = false) => request<ChatDocument[]>(all ? '/documents?all=true' : '/documents'),
-  send: (chatId: string, content: string) => request<Message>(`/chats/${chatId}/messages`, { content }),
+  // `model`: the chat switches to it (laptop-backend checks it's installed).
+  send: (chatId: string, content: string, model?: string) =>
+    request<Message>(`/chats/${chatId}/messages`, model ? { content, model } : { content }),
   feedback: (days: number) => request<FeedbackDashboard>(`/feedback?days=${days}`),
   regenerate: (chatId: string, messageId: string) =>
     request<Message>(`/chats/${chatId}/messages/${messageId}/regenerate`, undefined, 'POST'),

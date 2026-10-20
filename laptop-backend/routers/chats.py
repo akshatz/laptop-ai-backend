@@ -404,6 +404,14 @@ async def send_message(chat_id: uuid.UUID, payload: MessageCreate, user: UserMod
     assistant reply.
     """
     chat = await _own_chat(chat_id, user, db)
+    if payload.model and chat_service._with_tag(payload.model) != chat_service._with_tag(chat.model_id):
+        try:
+            installed = await chat_service.list_chat_models()
+        except Exception as exc:
+            raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=f"Ollama unavailable: {exc}")
+        if chat_service._with_tag(payload.model) not in installed:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Unknown model '{payload.model}'.")
+        chat.model_id = chat_service._with_tag(payload.model)
 
     query = await db.execute(
         select(MessageModel).where(MessageModel.chat_id == chat_id).order_by(MessageModel.created_at)

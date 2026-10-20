@@ -296,3 +296,19 @@ async def test_only_the_latest_answer_of_your_own_chat(client, chat_id, chain, v
     async with await make_client() as other:
         await sign_in(other, "meera@example.com", "Meera")
         assert (await other.post(f"/chats/{chat_id}/messages/{answer['id']}/regenerate")).status_code == 404
+
+
+async def test_switching_the_model_in_a_chat(client, chat_id, chain, vector_store, monkeypatch):
+    def handler(request):
+        return chat_service.httpx.Response(200, json={"models": [{"name": "llama3.2:latest"}, {"name": "gemma3:4b"}]})
+
+    _fake_ollama(monkeypatch, handler)
+    monkeypatch.setattr(chat_service, "CHAT_MODELS", "llama3.2,gemma3:4b")
+    await client.post(f"/chats/{chat_id}/messages", json={"content": "Hi"})
+    response = await client.post(f"/chats/{chat_id}/messages", json={"content": "Again", "model": "gemma3:4b"})
+
+    assert response.status_code == 201 and chain.models == ["llama3.2", "gemma3:4b"]
+    assert (await client.get("/chats")).json()[0]["model_id"] == "gemma3:4b"
+    # The same model again needs no check; an unknown one is refused before anything is stored.
+    assert (await client.post(f"/chats/{chat_id}/messages", json={"content": "x", "model": "gpt-9"})).status_code == 400
+    assert len(chain.calls) == 2

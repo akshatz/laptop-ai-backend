@@ -18,6 +18,8 @@ Full-width, like other chat apps: a sidebar with **New chat**, **Add documents**
 
 **Reloading keeps your place**: the open screen and chat are in the URL hash (`#/chat/<id>`, `#/documents`, `#/library`, `#/feedback`, `#/sessions`; none = Home), so a reload reopens them, Back/Forward move between them, and a copied link opens that chat for its owner (someone else's chat id, or a deleted one, falls back to Home).
 
+**Model picker** (small dropdown before ➤ in the message box, the installed `CHAT_MODELS` from `/models`): for a new chat it picks the chat's model; in an open chat it shows the chat's model, and choosing another one switches the chat from the next question on (`model` in `POST /chats/{id}/messages`, refused with 400 unless installed); Regenerate then uses it too.
+
 **Home** (sidebar link 🏠 Home, `href="/"`, so it also opens in a new tab; same as New chat): the start page greets you and shows six suggested questions (news, Sensex, weather, your documents, a recipe, a leave application; `SUGGESTIONS` in `ChatScreen.tsx`); one click asks it in a new chat.
 
 **Regenerate** (↻ under the latest answer, with a counter such as 1/3): asks the model again for the same question and replaces the answer in place, clearing its 👍/👎 (`POST /chats/{id}/messages/{id}/regenerate`). laptop-backend's `MAX_REGENERATIONS` (default 2, so 3 answers in all like Open WebUI's Regenerate Limit; 0 = no limit, reported by `/models`) caps it with 409; `messages.regenerations` counts them (migration `e5a1c8d3f962`).
