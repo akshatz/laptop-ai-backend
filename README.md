@@ -18,6 +18,7 @@ flowchart TB
 
     subgraph app["Applications"]
         webui["open-webui :8082<br/>+ Functions"]
+        frontend["custom-frontend :8012<br/>React chat UI"]
         backend["custom-backend :8011<br/>FastAPI · auth, chats"]
         opencode["opencode<br/>(one container per person)"]
         attu["attu :3002<br/>Milvus web UI"]
@@ -58,6 +59,7 @@ flowchart TB
     searxng --> internet
     opencode --> ollama & searxng
     attu --> milvus
+    frontend -- "/api" --> backend
     backend --> ollama & milvus & postgres
     backend -- AppRole --> openbao
     authentik --> postgres
@@ -68,7 +70,7 @@ flowchart TB
     shippers -. OTLP .-> openobserve
 ```
 
-All services share the `ai-network` Docker bridge network, orchestrated via [devops/docker-compose.yml](devops/docker-compose.yml). Not drawn: the optional `lgtm` service, the one-shot setup jobs (`milvus-init-auth`, `authentik-db-init`, `open-webui-fn-migrate`, `caddy-ca-export`), and the host's systemd timers (opencode provisioning and idle stop, daily Milvus web search cleanup). Direct plain-HTTP ports (`:8082`, `:8011`, `:3002`) are for this laptop; LAN devices use the HTTPS ports.
+All services share the `ai-network` Docker bridge network, orchestrated via [devops/docker-compose.yml](devops/docker-compose.yml). Not drawn: the optional `lgtm` service, the one-shot setup jobs (`milvus-init-auth`, `authentik-db-init`, `open-webui-fn-migrate`, `caddy-ca-export`), and the host's systemd timers (opencode provisioning and idle stop, daily Milvus web search cleanup). Direct plain-HTTP ports (`:8082`, `:8011`, `:8012`, `:3002`) are for this laptop; LAN devices use the HTTPS ports.
 
 ## Stack
 
@@ -88,6 +90,7 @@ All services share the `ai-network` Docker bridge network, orchestrated via [dev
 | `passbolt-db` | MariaDB for Passbolt (dedicated, separate from postgres-db), opt-in with it | (internal) |
 | `passbolt` | Password manager, opt-in (`--profile passbolt`) | 8443 → 443 |
 | `custom-backend` | FastAPI app: auth, chats, RAG document ingestion | 8011 → 8000 |
+| `custom-frontend` | React (Vite + TypeScript) chat UI for custom-backend, a separate app in [custom-frontend/](custom-frontend/): sign up, sign in (with optional email MFA), chats, documents; nginx forwards `/api/*` to custom-backend (see [docs/custom-frontend.md](docs/custom-frontend.md)) | 8012 → 80 |
 | `openobserve` | O2 observability platform: logs and audit trails (see [Logs in OpenObserve](docs/observability.md#logs-in-openobserve)) | 5080 |
 | `openwebui-audit-shipper` | OpenTelemetry Collector shipping Open WebUI's audit log (who did what) and query log to O2 | (internal) |
 | `ollama-log-shipper` | OpenTelemetry Collector shipping Ollama's request log (read from its Docker log file) to O2 | (internal) |
@@ -126,6 +129,7 @@ docker compose -f devops/docker-compose.yml up -d   # start everything else
 - OpenObserve: http://localhost:5080 (root login from `.env`)
 - Attu (Milvus): http://localhost:3002 on this laptop, or https://`OPEN_WEBUI_HOST`:3443 from the LAN (authentik sign-in as `akadmin`); connect to `milvus:19530` as `root` with `MILVUS_ROOT_PASSWORD`
 - Custom backend API: http://localhost:8011
+- Custom frontend (React chat UI for the custom backend): http://localhost:8012
 - OpenBao UI: http://localhost:8200/ui (sign in as `bao-admin`/`bao-readonly`, or through authentik with method OIDC; the root token in `openbao/keys.json` is for emergencies)
 - Passbolt (opt-in: `docker compose -f devops/docker-compose.yml --profile passbolt up -d passbolt`): https://localhost:8443 (self-signed cert; see [PASSBOLT.md](PASSBOLT.md) for one-time admin registration)
 - Postgres: `localhost:5433` (credentials from `.env`)
@@ -141,6 +145,7 @@ Note: OpenBao starts **sealed** after every container restart or host reboot —
 - [docs/web-search-and-rag.md](docs/web-search-and-rag.md) — embeddings, web search, answer feedback, KPI dashboard
 - [docs/observability.md](docs/observability.md) — logs, audit trails and email alerts in OpenObserve
 - [docs/custom-backend.md](docs/custom-backend.md) — the FastAPI backend and its database migrations
+- [docs/custom-frontend.md](docs/custom-frontend.md) — the React chat UI for the backend: running it, developing it
 - [docs/opencode.md](docs/opencode.md) — the opencode coding agent
 - [docs/tests.md](docs/tests.md) — the test suite, how to run it, known gaps
 - [openbao/README.md](openbao/README.md) — OpenBao setup, unsealing, logins and backups
