@@ -1,5 +1,6 @@
 import os
 import re
+import httpx
 from langchain_core.documents import Document
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_milvus import Milvus
@@ -24,6 +25,23 @@ RAG_PROMPT = ChatPromptTemplate.from_messages([
 def build_rag_chat_chain(model: str):
     llm = ChatOllama(base_url=OLLAMA_BASE_URL, model=model, temperature=CHAT_TEMPERATURE)
     return RAG_PROMPT | llm
+
+# Models offered in /ui's dropdown, comma-separated; a name without a tag means `:latest`.
+# Only chat models that fit in RAM: not embedding models, photo-ai (pictures; /ui sends text
+# only), codegemma (code) or gemma3:12b/smart-ai (~8 GB, don't fit next to the stack).
+CHAT_MODELS = os.environ.get("CHAT_MODELS", "llama3.2,fast-ai,gemma3:4b")
+
+def _with_tag(name: str) -> str:
+    return name if ":" in name else name + ":latest"
+
+async def list_chat_models() -> list[str]:
+    """The CHAT_MODELS that are pulled into Ollama, in CHAT_MODELS order."""
+    async with httpx.AsyncClient(base_url=OLLAMA_BASE_URL, timeout=5) as client:
+        response = await client.get("/api/tags")
+        response.raise_for_status()
+    installed = {m["name"] for m in response.json().get("models", [])}
+    wanted = [_with_tag(n.strip()) for n in CHAT_MODELS.split(",") if n.strip()]
+    return [n for n in wanted if n in installed]
 
 # 🧬 Milvus vector store for chat document retrieval (RAG), same instance
 # Open WebUI uses for its own document uploads, but a separate collection so

@@ -15,6 +15,15 @@ from schemas import (
 
 router = APIRouter()
 
+@router.get("/models")
+async def list_models():
+    """Chat models available in Ollama, for the /ui model dropdown."""
+    try:
+        models = await chat_service.list_chat_models()
+    except Exception as exc:
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=f"Ollama unavailable: {exc}")
+    return {"default": chat_service.DEFAULT_CHAT_MODEL, "models": models}
+
 @router.post("/chats", response_model=ChatResponse, status_code=status.HTTP_201_CREATED)
 async def create_chat(payload: ChatCreate, db: AsyncSession = Depends(get_db)):
     query = await db.execute(select(UserModel).where(UserModel.id == payload.user_id))
