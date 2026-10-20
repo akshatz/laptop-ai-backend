@@ -37,7 +37,7 @@ class UserModel(Base):
     password_reset_otp_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 class UserSessionModel(Base):
-    """One sign-in to custom-frontend (its id is in the session cookie), so admins can see who is
+    """One sign-in to laptop-frontend (its id is in the session cookie), so admins can see who is
     signed in. Ended on sign-out; a session past SESSION_MAX_AGE is over too."""
     __tablename__ = "user_sessions"
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)

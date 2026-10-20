@@ -28,7 +28,7 @@ const STATUS: Record<ChatDocument['status'], string> = {
 };
 
 // Every document the viewer may see, as cards: their own, or everyone's for admins
-// (custom-backend's GET /documents?all=true, users.role == "admin").
+// (laptop-backend's GET /documents?all=true, users.role == "admin").
 export default function LibraryView({ user, onError, onOpenChat, reloadKey }: Props) {
   const isAdmin = user.role === 'admin';
   const [everyone, setEveryone] = useState(isAdmin);

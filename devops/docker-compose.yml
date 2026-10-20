@@ -262,7 +262,7 @@ services:
       # "external" engine at it. Saved DB setting (rag.reranking_model) overrides this once saved.
       - RAG_RERANKING_MODEL=${RAG_RERANKING_MODEL:-cross-encoder/ms-marco-MiniLM-L6-v2}
       # embeddinggemma's task prefixes (env-only settings; prepended to the text since no prefix field
-      # is set). Keep in sync with custom-backend/chat_service.py.
+      # is set). Keep in sync with laptop-backend/chat_service.py.
       - "RAG_EMBEDDING_QUERY_PREFIX=task: search result | query: "
       - "RAG_EMBEDDING_CONTENT_PREFIX=title: none | text: "
       # Uploaded documents are converted to text by the docling service (OCR included). Saved DB
@@ -302,7 +302,7 @@ services:
       # Global default model params for every chat (Admin → Settings → Models → Default model
       # params). A model's own Advanced Params, and params an admin sets in a chat, override it.
       # Only seeds a fresh DB: the saved models.default_params row wins once it exists.
-      # custom-backend uses the same temperature (CHAT_TEMPERATURE, default 0.1).
+      # laptop-backend uses the same temperature (CHAT_TEMPERATURE, default 0.1).
       - 'DEFAULT_MODEL_PARAMS={"temperature": 0.1}'
       # Use Milvus as the vector store for RAG document embeddings
       - VECTOR_DB=milvus
@@ -778,10 +778,10 @@ services:
       - ai-network
 
   # ⚙️ CUSTOM BACKEND CONTAINER: Your private development sandbox
-  custom-backend:
+  laptop-backend:
     build:
       context: ..
-      dockerfile: custom-backend/Dockerfile
+      dockerfile: laptop-backend/Dockerfile
     container_name: local-dev-backend
     restart: unless-stopped
     ports:
@@ -794,7 +794,7 @@ services:
       - MILVUS_URI=http://milvus:19530
       # Same embedding model as open-webui's RAG_EMBEDDING_MODEL; picks collection custom_backend_docs_<model>
       - EMBEDDING_MODEL=embeddinggemma
-      # Sign-in through authentik for custom-frontend (routers/sso.py, authentik/blueprints/custom-frontend-sso.yaml).
+      # Sign-in through authentik for laptop-frontend (routers/sso.py, authentik/blueprints/custom-frontend-sso.yaml).
       - AUTHENTIK_PUBLIC_URL=https://${OPEN_WEBUI_HOST}:9443
       - AUTHENTIK_INTERNAL_URL=http://authentik-server:9000
       # The OIDC client id/secret and the session key come from OpenBao (apps/default/custom-backend).
@@ -809,11 +809,11 @@ services:
     networks:
       - ai-network
 
-  # 🖥️ CUSTOM FRONTEND: React chat UI for custom-backend, its own app (../custom-frontend).
-  # nginx serves the built app and forwards /api/* to custom-backend:8000.
-  custom-frontend:
+  # 🖥️ CUSTOM FRONTEND: React chat UI for laptop-backend, its own app (../laptop-frontend).
+  # nginx serves the built app and forwards /api/* to laptop-backend:8000.
+  laptop-frontend:
     build:
-      context: ../custom-frontend
+      context: ../laptop-frontend
     container_name: local-dev-frontend
     restart: unless-stopped
     mem_limit: 1g
@@ -821,7 +821,7 @@ services:
     ports:
       - "8012:80"
     depends_on:
-      - custom-backend
+      - laptop-backend
     networks:
       - ai-network
 

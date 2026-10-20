@@ -1,6 +1,6 @@
 # OpenBao secrets setup
 
-`custom-backend` fetches its Postgres credentials from OpenBao at startup via
+`laptop-backend` fetches its Postgres credentials from OpenBao at startup via
 AppRole auth, instead of reading `DATABASE_URL` directly from the environment.
 
 ## One-time setup
@@ -36,13 +36,13 @@ AppRole auth, instead of reading `DATABASE_URL` directly from the environment.
 4. Start the backend:
 
    ```bash
-   docker compose -f devops/docker-compose.yml up -d custom-backend
+   docker compose -f devops/docker-compose.yml up -d laptop-backend
    ```
 
 ## After a restart
 
 OpenBao starts **sealed** every time its container restarts (file storage
-backend, not dev mode). Unseal it before `custom-backend` can start successfully:
+backend, not dev mode). Unseal it before `laptop-backend` can start successfully:
 
 ```bash
 cd openbao && ./auto-unseal.sh
@@ -158,10 +158,10 @@ Secrets are grouped as `apps/<environment>/<app>` (the KV v2 engine is mounted a
 | `apps/default/searxng` | secret | people |
 | `apps/default/opencode` | server password, basic-auth header value, Open WebUI API key (only when `OPENWEBUI_API_KEY` is set) | people |
 
-Only `custom-backend` reads from OpenBao; the other services still take their
+Only `laptop-backend` reads from OpenBao; the other services still take their
 secrets from `.env`, so these are reference copies. After changing a value in
 `.env`, re-run `./bootstrap.sh` to update OpenBao. It stops on any empty or
-misspelled `.env` value instead of writing a blank secret. `custom-backend`'s
+misspelled `.env` value instead of writing a blank secret. `laptop-backend`'s
 path can be overridden with `OPENBAO_SECRET_PATH` (default
 `default/custom-backend`) and the mount with `OPENBAO_SECRET_MOUNT` (default `apps`).
 

@@ -1,7 +1,7 @@
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 
-// In `npm run dev`, /api/* goes to custom-backend (published on 8011), the same way nginx
+// In `npm run dev`, /api/* goes to laptop-backend (published on 8011), the same way nginx
 // forwards it in the container. BACKEND_URL overrides the target.
 export default defineConfig({
   plugins: [react()],

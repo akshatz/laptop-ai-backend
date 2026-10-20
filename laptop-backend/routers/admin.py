@@ -26,7 +26,7 @@ async def admin_user(user: UserModel = Depends(current_user)) -> UserModel:
 
 @router.get("/sessions", response_model=List[SignedInSession])
 async def signed_in_sessions(admin: UserModel = Depends(admin_user), db: AsyncSession = Depends(get_db)):
-    """Who is signed in to custom-frontend: every session not signed out and younger than
+    """Who is signed in to laptop-frontend: every session not signed out and younger than
     SESSION_MAX_AGE, most recently seen first. Sessions from before user_sessions existed aren't
     listed (their cookies carry no session id)."""
     now = datetime.now(timezone.utc)

@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, type FormEvent, type KeyboardEvent } from 'react';
+import { copyText } from '../copy';
 import DocumentsView from './DocumentsView';
 import FeedbackView from './FeedbackView';
 import LibraryView from './LibraryView';
@@ -41,7 +42,7 @@ const SUGGESTIONS = [
   { icon: '✉️', text: 'Help me write a polite leave application to my manager.' },
 ];
 
-// Same rule as custom-backend's send_message: a new chat is named after its first question.
+// Same rule as laptop-backend's send_message: a new chat is named after its first question.
 const titleFrom = (text: string) => (text.length > 60 ? text.slice(0, 57).trimEnd() + '…' : text);
 
 export default function ChatScreen({ user, notice, onSignOut, onSessionExpired }: Props) {
@@ -55,12 +56,14 @@ export default function ChatScreen({ user, notice, onSignOut, onSessionExpired }
   const [sending, setSending] = useState(false);
   const [view, setView] = useState<View>(() => readRoute().view);
   const [sidebarOpen, setSidebarOpen] = useState(false);
-  // From custom-backend's MAX_QUESTIONS_PER_CHAT (0 = no limit); it refuses more with a 409.
+  // From laptop-backend's MAX_QUESTIONS_PER_CHAT (0 = no limit); it refuses more with a 409.
   const [maxQuestions, setMaxQuestions] = useState(0);
-  // From custom-backend's MAX_REGENERATIONS (0 = no limit).
+  // From laptop-backend's MAX_REGENERATIONS (0 = no limit).
   const [maxRegenerations, setMaxRegenerations] = useState(2);
   // The answer being regenerated (shown dimmed until the new one replaces it).
   const [regenerating, setRegenerating] = useState<string | null>(null);
+  // Index of the message just copied, for a short "Copied" confirmation.
+  const [copied, setCopied] = useState<number | null>(null);
   const [uploads, setUploads] = useState<UploadItem[]>([]);
   // Bumped when an embedding finishes, so the Documents list reloads.
   const [docsVersion, setDocsVersion] = useState(0);
@@ -181,6 +184,19 @@ export default function ChatScreen({ user, notice, onSignOut, onSessionExpired }
       fail('Failed to send message: ', err);
     } finally {
       setSending(false);
+    }
+  }
+
+  // Questions copy as typed; answers with their web sources as a numbered list.
+  async function copyMessage(m: Shown, index: number) {
+    const sources = m.role === 'assistant' && m.web_sources?.length
+      ? '\n\nSources:\n' + m.web_sources.map((s, j) => `[${j + 1}] ${s.title ? s.title + ' – ' : ''}${s.url}`).join('\n')
+      : '';
+    if (await copyText(m.content + sources)) {
+      setCopied(index);
+      setTimeout(() => setCopied(c => (c === index ? null : c)), 1500);
+    } else {
+      setStatus('Could not copy to the clipboard.');
     }
   }
 
@@ -335,6 +351,12 @@ export default function ChatScreen({ user, notice, onSignOut, onSessionExpired }
                 {messages.map((m, i) => (
                   <div key={i} className={'msg ' + m.role + (m.id && m.id === regenerating ? ' regenerating' : '')}>
                     <div className="bubble">{m.content}</div>
+                    {m.role === 'user' && (
+                      <div className="msg-actions">
+                        <button type="button" className="copy" onClick={() => copyMessage(m, i)}
+                          title="Copy question" aria-label="Copy question">{copied === i ? '✓ Copied' : '⧉ Copy'}</button>
+                      </div>
+                    )}
                     {m.web_sources && m.web_sources.length > 0 && (
                       <div className="sources">
                         🔎 Web sources:{' '}
@@ -346,6 +368,8 @@ export default function ChatScreen({ user, notice, onSignOut, onSessionExpired }
                     {m.web_searched && !m.web_sources?.length && <div className="sources">🔎 Searched the web, nothing found.</div>}
                     {m.role === 'assistant' && m.id && (
                       <div className="feedback">
+                        <button type="button" className="copy" onClick={() => copyMessage(m, i)}
+                          title="Copy answer (with sources)" aria-label="Copy answer">{copied === i ? '✓' : '⧉'}</button>
                         <button type="button" title="Good answer" aria-label="Good answer" aria-pressed={m.feedback === 1}
                           className={m.feedback === 1 ? 'selected' : ''} onClick={() => rate(m, 1)}>👍</button>
                         <button type="button" title="Bad answer" aria-label="Bad answer" aria-pressed={m.feedback === -1}

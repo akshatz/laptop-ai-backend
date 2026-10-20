@@ -1,10 +1,10 @@
 """Both Alembic setups, run for real against an empty Postgres database.
 
-- database/alembic (custom-backend's tables): upgrade to head, then the database must match
+- database/alembic (laptop-backend's tables): upgrade to head, then the database must match
   database/init_db.py's models exactly (no drift), downgrade to base, and up again.
 - devops/open-webui/migrations (the Functions' fn_* tables in Open WebUI's database): same, using
   its own fn_alembic_version table and never Open WebUI's alembic_version.
-- custom-backend/models.py and database/init_db.py declare the same models by hand (CLAUDE.md,
+- laptop-backend/models.py and database/init_db.py declare the same models by hand (CLAUDE.md,
   "Known inconsistencies"); they must stay identical.
 
 Uses database `migrations_test` (dropped and recreated) on the server in TEST_DATABASE_URL.
@@ -48,7 +48,7 @@ os.environ.setdefault("INIT_DB_DATABASE_URL", "postgresql+asyncpg://unused@local
 init_db = load(ROOT / "database" / "init_db.py", "init_db_models")
 if not _had_url:
     del os.environ["INIT_DB_DATABASE_URL"]
-backend_models = load(ROOT / "custom-backend" / "models.py", "backend_models")
+backend_models = load(ROOT / "laptop-backend" / "models.py", "backend_models")
 
 
 @pytest.fixture
@@ -104,7 +104,7 @@ def single_head(ini: Path) -> None:
     assert len(heads) == 1, f"{ini}: {len(heads)} heads {heads} (merge them)"
 
 
-# ---- custom-backend (database/alembic) -----------------------------------------------------------
+# ---- laptop-backend (database/alembic) -----------------------------------------------------------
 
 BACKEND_INI = ROOT / "database" / "alembic.ini"
 

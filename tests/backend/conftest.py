@@ -1,6 +1,6 @@
-"""Test setup for custom-backend.
+"""Test setup for laptop-backend.
 
-custom-backend talks to OpenBao (db.py, at import) and Milvus (chat_service.py, at import), so the
+laptop-backend talks to OpenBao (db.py, at import) and Milvus (chat_service.py, at import), so the
 tests put stand-ins in sys.modules before importing it: a `db` module with fake secrets and a
 `get_db` the tests override, and a fake `langchain_milvus.Milvus`. Everything else is the real
 code, including chat_service's embeddings and text splitting, running against a real Postgres
@@ -20,13 +20,13 @@ from sqlalchemy.engine import make_url
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from sqlalchemy.pool import NullPool
 
-BACKEND_DIR = Path(__file__).resolve().parents[2] / "custom-backend"
+BACKEND_DIR = Path(__file__).resolve().parents[2] / "laptop-backend"
 TEST_DATABASE_URL = os.environ.get("TEST_DATABASE_URL")
 
 if not TEST_DATABASE_URL:
     # Locally without a database: skip these instead of failing. CI always sets it.
     collect_ignore_glob = ["test_*.py"]
-    print("TEST_DATABASE_URL not set: skipping custom-backend tests", file=sys.stderr)
+    print("TEST_DATABASE_URL not set: skipping laptop-backend tests", file=sys.stderr)
 else:
     if not (make_url(TEST_DATABASE_URL).database or "").endswith("_test"):
         raise RuntimeError("TEST_DATABASE_URL must name a database ending in _test (its tables are dropped)")

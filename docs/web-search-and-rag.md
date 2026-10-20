@@ -2,7 +2,7 @@
 
 ## RAG embeddings
 
-Documents are embedded with Ollama's **`embeddinggemma`** (Google, 768-dim, 2048-token context) in both Open WebUI and `custom-backend`. It replaced `nomic-embed-text` for better retrieval: in a quick test it separated the right chunk from the runner-up about 3× more clearly. Both apps send embeddinggemma's task prefixes (`task: search result | query: ` on questions, `title: none | text: ` on documents), which the model is trained with.
+Documents are embedded with Ollama's **`embeddinggemma`** (Google, 768-dim, 2048-token context) in both Open WebUI and `laptop-backend`. It replaced `nomic-embed-text` for better retrieval: in a quick test it separated the right chunk from the runner-up about 3× more clearly. Both apps send embeddinggemma's task prefixes (`task: search result | query: ` on questions, `title: none | text: ` on documents), which the model is trained with.
 
 - Open WebUI keeps its vectors in five shared Milvus collections (`ENABLE_MILVUS_MULTITENANCY_MODE=true`): `open_webui_web_search`, `_files`, `_knowledge`, `_memories` and `_hash_based`. Without it, every web search left a collection behind. Web search chunks are only needed while the answer is written, so `milvus/cleanup.py web-search --delete` empties that collection daily at 04:30. Install the timer once:
   ```bash
@@ -13,8 +13,8 @@ Documents are embedded with Ollama's **`embeddinggemma`** (Google, 768-dim, 2048
   Browse the collections with Attu (`http://localhost:3002`, or `https://<OPEN_WEBUI_HOST>:3443` for akadmin).
 - Pull the model before first use: `docker exec laptop-ollama ollama pull embeddinggemma`.
 - **Open WebUI** saves the embedding engine/model in its database the first time they're set, and the saved values override the compose file. Change them under **Admin → Settings → Documents**. After changing the model, click **Reindex Knowledge Base Vectors** there, since old vectors don't match the new model.
-- **custom-backend** keeps one Milvus collection per model (`custom_backend_docs_<model>`), so switching `EMBEDDING_MODEL` starts an empty collection. Re-upload documents to chats after a switch.
-- To change the model, update `RAG_EMBEDDING_MODEL` (open-webui) and `EMBEDDING_MODEL` (custom-backend) in compose together, plus the prefixes: the query/document prefixes in compose and `_PREFIXES` in [custom-backend/chat_service.py](../custom-backend/chat_service.py). Other models need different prefixes, or none.
+- **laptop-backend** keeps one Milvus collection per model (`custom_backend_docs_<model>`), so switching `EMBEDDING_MODEL` starts an empty collection. Re-upload documents to chats after a switch.
+- To change the model, update `RAG_EMBEDDING_MODEL` (open-webui) and `EMBEDDING_MODEL` (laptop-backend) in compose together, plus the prefixes: the query/document prefixes in compose and `_PREFIXES` in [laptop-backend/chat_service.py](../laptop-backend/chat_service.py). Other models need different prefixes, or none.
 
 ## Web search
 

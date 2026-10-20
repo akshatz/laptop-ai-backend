@@ -1,5 +1,5 @@
 """Sign-in through authentik (OIDC authorization code + PKCE, confidential client), for
-custom-frontend. The browser is sent to authentik's public URL; the code exchange and userinfo go
+laptop-frontend. The browser is sent to authentik's public URL; the code exchange and userinfo go
 to authentik directly over the Docker network. Users are matched by email (authentik confirms
 emails before activating accounts) and created on first sign-in."""
 
@@ -35,10 +35,10 @@ AUTHENTIK_INTERNAL_URL = os.environ.get("AUTHENTIK_INTERNAL_URL", "http://authen
 CLIENT_ID = db.secrets.get("custom_frontend_oidc_client_id") or os.environ.get("CUSTOM_FRONTEND_OIDC_CLIENT_ID", "")
 CLIENT_SECRET = (db.secrets.get("custom_frontend_oidc_client_secret")
                  or os.environ.get("CUSTOM_FRONTEND_OIDC_CLIENT_SECRET", ""))
-# Origins custom-frontend is served from; the callback must be one of them (and registered in
+# Origins laptop-frontend is served from; the callback must be one of them (and registered in
 # authentik/blueprints/custom-frontend-sso.yaml).
 FRONTEND_ORIGINS = {o.strip().rstrip("/") for o in os.environ.get("FRONTEND_ORIGINS", "").split(",") if o.strip()}
-# custom-frontend's nginx strips /api before forwarding here.
+# laptop-frontend's nginx strips /api before forwarding here.
 CALLBACK_PATH = "/api/auth/callback"
 
 

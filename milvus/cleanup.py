@@ -3,7 +3,7 @@
 
   legacy      Drop the per-resource collections Open WebUI made before
               ENABLE_MILVUS_MULTITENANCY_MODE (open_webui_web_search_*, open_webui_file_*,
-              open_webui_<knowledge id>, open_webui_knowledge_bases) and custom-backend's
+              open_webui_<knowledge id>, open_webui_knowledge_bases) and laptop-backend's
               unused nomic-era custom_backend_docs. One-off, after the switch and after
               reindexing knowledge (Admin → Settings → Documents).
   web-search  Delete all rows of the shared open_webui_web_search collection. Web search
@@ -13,7 +13,7 @@
               at a quiet hour (milvus/systemd/milvus-web-search-cleanup.timer).
 
 Never touches the other shared collections (open_webui_files, _knowledge, _memories,
-_hash_based) or custom-backend's current custom_backend_docs_<model> collections.
+_hash_based) or laptop-backend's current custom_backend_docs_<model> collections.
 
 Runs pymilvus inside the laptop-open-webui container (the host needs only Python 3);
 MILVUS_ROOT_PASSWORD comes from the repo's .env.

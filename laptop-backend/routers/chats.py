@@ -415,7 +415,7 @@ async def send_message(chat_id: uuid.UUID, payload: MessageCreate, user: UserMod
         )
 
     # Like other chat apps, a chat still called "New Chat" is named after its first question
-    # (custom-frontend's titleFrom shows the same right away).
+    # (laptop-frontend's titleFrom shows the same right away).
     if not history and chat.title == "New Chat":
         question = " ".join(payload.content.split())
         chat.title = question if len(question) <= 60 else question[:57].rstrip() + "…"

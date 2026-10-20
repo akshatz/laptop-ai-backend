@@ -27,7 +27,7 @@ function device(ua: string | null | undefined) {
 
 const stamp = (iso: string) => new Date(iso).toLocaleString();
 
-// Admins only (custom-backend's GET /admin/sessions): who is signed in to custom-frontend now.
+// Admins only (laptop-backend's GET /admin/sessions): who is signed in to laptop-frontend now.
 export default function AdminSessionsView({ onError }: Props) {
   const [sessions, setSessions] = useState<SignedInSession[] | null>(null);
   const [loadedAt, setLoadedAt] = useState(Date.now());

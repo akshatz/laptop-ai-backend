@@ -1,5 +1,5 @@
 // Every backend call goes through /api, which nginx (container) or Vite (dev) forwards to
-// custom-backend with the prefix stripped. The session is an HttpOnly cookie set by the backend
+// laptop-backend with the prefix stripped. The session is an HttpOnly cookie set by the backend
 // after authentik sign-in; same-origin fetches send it automatically.
 const BASE = '/api';
 
