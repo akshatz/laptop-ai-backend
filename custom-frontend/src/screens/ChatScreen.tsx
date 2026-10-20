@@ -1,5 +1,8 @@
 import { useEffect, useRef, useState, type FormEvent, type KeyboardEvent } from 'react';
-import { api, HttpError, SIGN_IN_URL, type Chat, type Message, type User } from '../api';
+import DocumentsView from './DocumentsView';
+import FeedbackView from './FeedbackView';
+import UploadSnackbar, { type UploadItem } from './UploadSnackbar';
+import { api, HttpError, SIGN_IN_URL, type Chat, type Feedback, type Message, type User } from '../api';
 
 interface Props {
   // null: signed out; the same layout asks the person to sign in.
@@ -11,10 +14,8 @@ interface Props {
 
 const initials = (name: string) => name.split(/\s+/).filter(Boolean).slice(0, 2).map(w => w[0].toUpperCase()).join('') || '?';
 
-const MAX_DOCS = 5;
-
-type View = 'chat' | 'documents';
-type Shown = Pick<Message, 'role' | 'content' | 'web_searched' | 'web_sources'>;
+type View = 'chat' | 'documents' | 'feedback';
+type Shown = Pick<Message, 'role' | 'content' | 'web_searched' | 'web_sources'> & Partial<Pick<Message, 'id' | 'feedback'>>;
 
 // Same rule as custom-backend's send_message: a new chat is named after its first question.
 const titleFrom = (text: string) => (text.length > 60 ? text.slice(0, 57).trimEnd() + '…' : text);
@@ -25,12 +26,16 @@ export default function ChatScreen({ user, notice, onSignOut, onSessionExpired }
   const [model, setModel] = useState('llama3.2');
   const [chats, setChats] = useState<Chat[]>([]);
   const [chat, setChat] = useState<Chat | null>(null);
-  const [docs, setDocs] = useState<string[]>(Array(MAX_DOCS).fill(''));
   const [messages, setMessages] = useState<Shown[]>([]);
   const [input, setInput] = useState('');
   const [sending, setSending] = useState(false);
   const [view, setView] = useState<View>('chat');
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  // From custom-backend's MAX_QUESTIONS_PER_CHAT (0 = no limit); it refuses more with a 409.
+  const [maxQuestions, setMaxQuestions] = useState(1);
+  const [uploads, setUploads] = useState<UploadItem[]>([]);
+  // Bumped when an embedding finishes, so the Documents list reloads.
+  const [docsVersion, setDocsVersion] = useState(0);
   const endRef = useRef<HTMLDivElement>(null);
 
   function fail(prefix: string, err: unknown) {
@@ -41,7 +46,8 @@ export default function ChatScreen({ user, notice, onSignOut, onSessionExpired }
   useEffect(() => {
     if (!user) return;
     // Fill the model list from Ollama; on failure llama3.2 stays.
-    api.models().then(({ default: def, models }) => {
+    api.models().then(({ default: def, models, max_questions_per_chat }) => {
+      if (max_questions_per_chat !== undefined) setMaxQuestions(max_questions_per_chat);
       if (!models.length) return;
       const wanted = def.includes(':') ? def : def + ':latest';
       setModels(models);
@@ -87,25 +93,10 @@ export default function ChatScreen({ user, notice, onSignOut, onSessionExpired }
     }
   }
 
-  async function ingest() {
-    const texts = docs.map(d => d.trim()).filter(Boolean);
-    if (!texts.length) { setStatus('Paste some text first.'); return; }
-    setStatus('');
-    const target = await ensureChat();
-    if (!target) return;
-    try {
-      const r = await api.ingest(target.id, texts);
-      setDocs(Array(MAX_DOCS).fill(''));
-      setStatus(`Added ${r.documents_ingested} document(s) (${r.chunks_ingested} chunks) to this chat.`);
-    } catch (err) {
-      fail('Failed to add documents: ', err);
-    }
-  }
-
   async function send(e?: FormEvent) {
     e?.preventDefault();
     const content = input.trim();
-    if (!content || sending) return;
+    if (!content || sending || chatFull) return;
     setStatus('');
     setSending(true);
     const target = await ensureChat();
@@ -128,6 +119,22 @@ export default function ChatScreen({ user, notice, onSignOut, onSessionExpired }
     }
   }
 
+  // Clicking the selected thumb again clears the rating.
+  async function rate(m: Shown, rating: 1 | -1) {
+    if (!chat || !m.id) return;
+    const next: Feedback = m.feedback === rating ? null : rating;
+    setMessages(ms => ms.map(x => (x.id === m.id ? { ...x, feedback: next } : x)));
+    try {
+      await api.rate(chat.id, m.id, next);
+    } catch (err) {
+      setMessages(ms => ms.map(x => (x.id === m.id ? { ...x, feedback: m.feedback } : x)));
+      fail('Failed to save feedback: ', err);
+    }
+  }
+
+  const asked = messages.filter(m => m.role === 'user').length;
+  const chatFull = maxQuestions > 0 && asked >= maxQuestions && !sending;
+
   // Enter sends, Shift+Enter adds a line.
   function onComposerKey(e: KeyboardEvent<HTMLTextAreaElement>) {
     if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); }
@@ -140,7 +147,11 @@ export default function ChatScreen({ user, notice, onSignOut, onSessionExpired }
         <button type="button" className="side-action" onClick={newChat} disabled={!user}>＋ New chat</button>
         <button type="button" className={'side-action' + (view === 'documents' ? ' active' : '')} disabled={!user}
           onClick={() => { setView('documents'); setSidebarOpen(false); }}>
-          📄 Add documents
+          📄 Documents
+        </button>
+        <button type="button" className={'side-action' + (view === 'feedback' ? ' active' : '')} disabled={!user}
+          onClick={() => { setView('feedback'); setSidebarOpen(false); }}>
+          📊 Feedback
         </button>
 
         <div className="side-heading">Recent chats</div>
@@ -175,7 +186,7 @@ export default function ChatScreen({ user, notice, onSignOut, onSessionExpired }
       <main className="content">
         <header className="topbar">
           <button type="button" className="menu-toggle" aria-label="Menu" onClick={() => setSidebarOpen(o => !o)}>☰</button>
-          <span className="title">{view === 'documents' ? 'Add documents' : chat ? chat.title : 'New chat'}</span>
+          <span className="title">{view === 'documents' ? 'Documents' : view === 'feedback' ? 'Feedback' : chat ? chat.title : 'New chat'}</span>
           <label className="model"><span>Model</span>
             <select value={chat ? chat.model_id : model} disabled={!!chat || !user} onChange={e => setModel(e.target.value)}
               title={chat ? 'A chat keeps the model it was started with' : undefined}>
@@ -196,20 +207,13 @@ export default function ChatScreen({ user, notice, onSignOut, onSessionExpired }
             </div>
           </section>
         ) : view === 'documents' ? (
-          <section className="documents">
-            <p>
-              Texts added here are used as context for answers in{' '}
-              {chat ? <strong>{chat.title}</strong> : 'a new chat (started when you add them)'}, up to {MAX_DOCS} at a time.
-              Paste text; file upload isn't supported yet.
-            </p>
-            {docs.map((d, i) => (
-              <label key={i}>Text {i + 1}
-                <textarea value={d} onChange={e => setDocs(ds => ds.map((x, j) => (j === i ? e.target.value : x)))} />
-              </label>
-            ))}
-            <button type="button" onClick={ingest}>Add to chat</button>
-            {chat && <button type="button" onClick={() => setView('chat')}>Back to chat</button>}
-          </section>
+          <DocumentsView chat={chat} ensureChat={ensureChat} onError={fail}
+            setUploads={setUploads} reloadKey={docsVersion}
+            onOpenChat={id => { const c = chats.find(x => x.id === id); if (c) openChat(c); }}
+            onBack={() => setView('chat')} />
+        ) : view === 'feedback' ? (
+          <FeedbackView onError={fail}
+            onOpenChat={id => { const c = chats.find(x => x.id === id); if (c) openChat(c); }} />
         ) : (
           <>
             <section className="messages">
@@ -232,22 +236,42 @@ export default function ChatScreen({ user, notice, onSignOut, onSessionExpired }
                       </div>
                     )}
                     {m.web_searched && !m.web_sources?.length && <div className="sources">🔎 Searched the web, nothing found.</div>}
+                    {m.role === 'assistant' && m.id && (
+                      <div className="feedback">
+                        <button type="button" title="Good answer" aria-label="Good answer" aria-pressed={m.feedback === 1}
+                          className={m.feedback === 1 ? 'selected' : ''} onClick={() => rate(m, 1)}>👍</button>
+                        <button type="button" title="Bad answer" aria-label="Bad answer" aria-pressed={m.feedback === -1}
+                          className={m.feedback === -1 ? 'selected' : ''} onClick={() => rate(m, -1)}>👎</button>
+                      </div>
+                    )}
                   </div>
                 ))}
                 {sending && <div className="msg assistant"><div className="bubble typing">Thinking…</div></div>}
                 <div ref={endRef} />
               </div>
             </section>
+            {chatFull ? (
+              <div className="composer chat-full">
+                <p className="muted">
+                  {maxQuestions === 1 ? 'Each chat answers one question.' : `Each chat answers up to ${maxQuestions} questions.`}{' '}
+                  Ask your next one in a new chat.
+                </p>
+                <button type="button" className="primary" onClick={newChat}>＋ New chat</button>
+              </div>
+            ) : (
             <form onSubmit={send} className="composer">
               <div className="composer-box">
-                <textarea rows={1} placeholder="Send a message (Shift+Enter for a new line)" value={input}
+                <textarea rows={1} value={input} disabled={sending} aria-busy={sending}
+                  placeholder={sending ? 'Waiting for the answer…' : 'Send a message (Shift+Enter for a new line)'}
                   onChange={e => setInput(e.target.value)} onKeyDown={onComposerKey} autoFocus />
                 <button type="submit" disabled={sending || !input.trim()} aria-label="Send">➤</button>
               </div>
             </form>
+            )}
           </>
         )}
       </main>
+      <UploadSnackbar items={uploads} setItems={setUploads} onDone={() => setDocsVersion(v => v + 1)} />
     </div>
   );
 }

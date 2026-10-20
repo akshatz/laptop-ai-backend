@@ -5,6 +5,7 @@ from langchain_core.documents import Document
 from langchain_core.messages import AIMessage, HumanMessage
 
 import chat_service
+import routers.chats
 
 
 @pytest.fixture
@@ -82,7 +83,17 @@ async def test_send_message_stores_question_and_answer(client, chat_id, chain, v
     ]
 
 
-async def test_earlier_messages_are_sent_as_history(client, chat_id, chain, vector_store):
+async def test_one_question_per_chat_by_default(client, chat_id, chain, vector_store):
+    assert (await client.post(f"/chats/{chat_id}/messages", json={"content": "First question"})).status_code == 201
+    second = await client.post(f"/chats/{chat_id}/messages", json={"content": "Second question"})
+
+    assert second.status_code == 409 and "new chat" in second.json()["detail"]
+    assert len(chain.calls) == 1
+    assert [m["content"] for m in (await client.get(f"/chats/{chat_id}/messages")).json()] == ["First question", "Test reply"]
+
+
+async def test_earlier_messages_are_sent_as_history(client, chat_id, chain, vector_store, monkeypatch):
+    monkeypatch.setattr(routers.chats, "MAX_QUESTIONS_PER_CHAT", 0)
     await client.post(f"/chats/{chat_id}/messages", json={"content": "First question"})
     await client.post(f"/chats/{chat_id}/messages", json={"content": "Second question"})
 
@@ -120,7 +131,7 @@ async def test_ingest_splits_documents_and_tags_them_with_the_chat(client, chat_
 
     assert response.status_code == 201
     body = response.json()
-    assert body["documents_ingested"] == 2 and body["chunks_ingested"] == len(vector_store.added) > 2
+    assert body["documents_ingested"] == 2 and len(vector_store.added) > 2
     assert {d.metadata["chat_id"] for d in vector_store.added} == {chat_id}
     assert vector_store.added[0].metadata["source"] == "notes.txt"
 
@@ -137,10 +148,12 @@ async def test_ingest_limits(client, chat_id, vector_store):
     assert vector_store.added == []
 
 
-async def test_ingest_milvus_failure_is_a_502(client, chat_id, vector_store):
+async def test_ingest_milvus_failure_marks_the_document_failed(client, chat_id, vector_store):
+    # Embedding runs after the response, so a Milvus failure shows up as the document's status.
     vector_store.add_error = RuntimeError("milvus down")
     response = await client.post(f"/chats/{chat_id}/documents", json={"documents": [{"text": "x"}]})
-    assert response.status_code == 502
+    assert response.status_code == 201
+    assert (await client.get("/documents")).json()[0]["status"] == "failed"
 
 
 def test_embeddinggemma_task_prefixes(monkeypatch):
@@ -181,7 +194,8 @@ async def test_models_lists_only_installed_chat_models(client, monkeypatch):
     monkeypatch.setattr(chat_service, "CHAT_MODELS", "fast-ai, llama3.2,gemma3:4b")
     response = await client.get("/models")
     assert response.status_code == 200
-    assert response.json() == {"default": chat_service.DEFAULT_CHAT_MODEL, "models": ["fast-ai:latest", "llama3.2:latest"]}
+    assert response.json() == {"default": chat_service.DEFAULT_CHAT_MODEL, "models": ["fast-ai:latest", "llama3.2:latest"],
+                               "max_questions_per_chat": 1}
 
 
 async def test_models_ollama_down_is_a_502(client, monkeypatch):
@@ -237,7 +251,8 @@ async def test_decision_and_search_fail_safe(monkeypatch, web):
     assert await web.real_search("news") == []
 
 
-async def test_first_question_names_the_chat(client, chat_id, chain, vector_store):
+async def test_first_question_names_the_chat(client, chat_id, chain, vector_store, monkeypatch):
+    monkeypatch.setattr(routers.chats, "MAX_QUESTIONS_PER_CHAT", 0)
     await client.post(f"/chats/{chat_id}/messages", json={"content": "What  is the\ncapital of Gujarat?"})
     await client.post(f"/chats/{chat_id}/messages", json={"content": "And its population?"})
     chats = (await client.get("/chats")).json()

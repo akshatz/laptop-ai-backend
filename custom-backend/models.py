@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime
 from typing import Optional
-from sqlalchemy import Boolean, ForeignKey, String, Text, DateTime
+from sqlalchemy import Boolean, ForeignKey, Integer, LargeBinary, String, Text, DateTime
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 # 👥 SQLALCHEMY ORM MODELS
@@ -49,4 +49,27 @@ class MessageModel(Base):
     user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     role: Mapped[str] = mapped_column(String(20), nullable=False)
     content: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
+    # Answers only: 1 = like, -1 = dislike, NULL = not rated.
+    feedback: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+
+class ChatDocumentModel(Base):
+    """A file (or pasted text) added to a chat as context, kept so its owner can see and open it."""
+    __tablename__ = "chat_documents"
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    chat_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("user_chats.id", ondelete="CASCADE"), nullable=False)
+    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    filename: Mapped[str] = mapped_column(String(255), nullable=False)
+    content_type: Mapped[str] = mapped_column(String(100), nullable=False)
+    size_bytes: Mapped[int] = mapped_column(Integer, nullable=False)
+    chunks: Mapped[int] = mapped_column(Integer, nullable=False)
+    data: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
+    # sha256 of `data`: the same content again in the same chat is a duplicate, not re-embedded.
+    sha256: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    # Per chat and filename; a changed file with the same name is the next version and replaces
+    # the previous one's chunks in Milvus.
+    version: Mapped[int] = mapped_column(Integer, nullable=False, default=1, server_default="1")
+    # embedding → ready | failed; an older version becomes replaced.
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="ready", server_default="ready")
+    error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
