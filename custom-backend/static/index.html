@@ -20,6 +20,30 @@
 <h1>Laptop Dev Backend — Chat</h1>
 <p id="status"></p>
 
+<details>
+  <summary>New here? Sign up</summary>
+  <fieldset>
+    <legend>Sign up</legend>
+    <label>Name
+      <input id="signupName" autocomplete="name">
+    </label>
+    <label>Email
+      <input id="signupEmail" type="email" autocomplete="email">
+    </label>
+    <label>Password
+      <input id="signupPassword" type="password" autocomplete="new-password">
+    </label>
+    <label>Repeat password
+      <input id="signupPassword2" type="password" autocomplete="new-password">
+    </label>
+    <button onclick="signUp()">Create account</button>
+    <label>Verification token (sent by email after sign-up)
+      <input id="verifyToken" autocomplete="off">
+    </label>
+    <button onclick="verifyEmail()">Verify email</button>
+  </fieldset>
+</details>
+
 <fieldset>
   <legend>0. Sign in</legend>
   <label>Email
@@ -153,6 +177,40 @@ async function signIn() {
     }
   } catch (err) {
     setStatus('Sign-in failed: ' + err.message);
+  }
+}
+
+async function signUp() {
+  setStatus('');
+  const name = document.getElementById('signupName').value.trim();
+  const email = document.getElementById('signupEmail').value.trim();
+  const password = document.getElementById('signupPassword').value;
+  if (!name || !email || !password) { setStatus('Fill in name, email and password.'); return; }
+  if (password !== document.getElementById('signupPassword2').value) {
+    setStatus('The two passwords differ.'); return;
+  }
+  try {
+    await postJson('/users', { name, email, password });
+    document.getElementById('loginEmail').value = email;
+    setStatus('Account created. Check your email for the verification token, paste it below and press Verify email.');
+  } catch (err) {
+    setStatus('Sign-up failed: ' + err.message);
+  }
+}
+
+async function verifyEmail() {
+  setStatus('');
+  const token = document.getElementById('verifyToken').value.trim();
+  if (!token) { setStatus('Paste the token from the email first.'); return; }
+  try {
+    const user = await postJson('/users/verify', { token });
+    document.getElementById('loginEmail').value = user.email;
+    document.getElementById('verifyToken').value = '';
+    document.getElementById('signupPassword').value = '';
+    document.getElementById('signupPassword2').value = '';
+    setStatus('Email verified. You can sign in now.');
+  } catch (err) {
+    setStatus('Verification failed: ' + err.message);
   }
 }
 
