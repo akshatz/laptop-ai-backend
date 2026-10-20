@@ -115,6 +115,11 @@ class WebSource(BaseModel):
     title: str
     url: str
 
+class AnswerVersion(BaseModel):
+    content: str
+    feedback: Optional[int] = None
+    created_at: datetime
+
 class MessageResponse(BaseModel):
     id: uuid.UUID
     chat_id: uuid.UUID
@@ -125,6 +130,7 @@ class MessageResponse(BaseModel):
     feedback: Optional[int] = None
     feedback_comment: Optional[str] = None
     regenerations: int = 0
+    earlier_versions: Optional[List[AnswerVersion]] = None
     # Only on the answer POST /chats/{id}/messages returns; not stored.
     web_searched: bool = False
     web_sources: List[WebSource] = []

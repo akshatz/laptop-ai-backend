@@ -791,6 +791,11 @@ services:
       - OPENBAO_ROLE_ID=${OPENBAO_ROLE_ID}
       - OPENBAO_SECRET_ID=${OPENBAO_SECRET_ID}
       - OLLAMA_BASE_URL=http://ollama:11434
+      # Answers: gemma3:4b followed the sources' dates and gave exact figures where llama3.2 didn't
+      # (2026-10-20, Sensex on the Dussehra holiday). The quick WEB/NO decision and the search
+      # query stay on llama3.2 (short prompts, fast and right there).
+      - DEFAULT_CHAT_MODEL=gemma3:4b
+      - WEB_SEARCH_DECISION_MODEL=llama3.2
       - MILVUS_URI=http://milvus:19530
       # Same embedding model as open-webui's RAG_EMBEDDING_MODEL; picks collection custom_backend_docs_<model>
       - EMBEDDING_MODEL=embeddinggemma

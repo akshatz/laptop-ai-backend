@@ -275,6 +275,9 @@ async def test_regenerate_replaces_the_latest_answer(client, chat_id, chain, vec
     body = response.json()
     assert body["id"] == answer["id"] and body["content"] == "Gandhinagar"
     assert body["regenerations"] == 1 and body["feedback"] is None
+    # The replaced answer stays readable, with its rating.
+    [earlier] = body["earlier_versions"]
+    assert earlier["content"] == answer["content"] and earlier["feedback"] == -1
     assert chain.calls[1]["input"] == "Capital of Gujarat?" and chain.calls[1]["history"] == []
     stored = (await client.get(f"/chats/{chat_id}/messages")).json()
     assert [m["content"] for m in stored] == ["Capital of Gujarat?", "Gandhinagar"]

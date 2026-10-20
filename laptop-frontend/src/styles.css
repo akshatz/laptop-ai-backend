@@ -77,6 +77,12 @@ button { padding: 0.45rem 1rem; cursor: pointer; font: inherit; }
 .feedback button { border: 1px solid transparent; background: none; border-radius: 8px; padding: 0.15rem 0.4rem; font-size: 0.9rem; cursor: pointer; opacity: 0.45; filter: grayscale(1); }
 .feedback button:hover { opacity: 0.9; }
 .feedback .regen { filter: none; opacity: 0.7; }
+.feedback .versions { display: inline-flex; align-items: center; gap: 0.1rem; margin-right: 0.2rem; }
+.feedback .versions button { filter: none; opacity: 0.75; padding: 0.15rem 0.35rem; }
+.feedback .versions button:disabled { opacity: 0.25; cursor: default; }
+.feedback .versions small { font-size: 0.75rem; color: var(--muted); min-width: 2.2rem; text-align: center; }
+.feedback .earlier-label { font-size: 0.78rem; color: var(--muted); align-self: center; }
+.msg.earlier .bubble { opacity: 0.8; }
 .feedback .copy { filter: none; opacity: 0.7; }
 .msg-actions { display: flex; justify-content: flex-end; margin-top: 0.2rem; }
 .msg-actions .copy { border: none; background: none; color: var(--muted); font: inherit; font-size: 0.78rem; padding: 0.1rem 0.4rem; border-radius: 6px; cursor: pointer; opacity: 0.8; }
