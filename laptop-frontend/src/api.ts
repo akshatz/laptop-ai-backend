@@ -35,6 +35,8 @@ export interface Message {
   feedback?: Feedback;
   // Answers only: how often this answer was regenerated.
   regenerations?: number;
+  // Answers only: the versions Regenerate replaced, oldest first.
+  earlier_versions?: { content: string; feedback?: Feedback; created_at: string }[] | null;
   created_at?: string;
 }
 

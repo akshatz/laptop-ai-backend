@@ -99,16 +99,20 @@ async def _searxng(params: dict) -> list[dict]:
 
 
 async def search(question: str) -> list[dict]:
-    """Top results as {title, url, content}; empty on any error. Recent news first (last month),
-    general web results when there is no news."""
+    """Top results as {title, url, content, published}; empty on any error. The freshest news
+    first (last day, then last month), general web results when there is no news; `published` is
+    the day a source came out (YYYY-MM-DD) or None."""
     query = await search_query(question)
-    raw = await _searxng({"q": query, "categories": "news", "time_range": "month"})
-    if not raw:
-        raw = await _searxng({"q": query})
+    raw = []
+    for params in ({"categories": "news", "time_range": "day"}, {"categories": "news", "time_range": "month"}, {}):
+        raw = await _searxng({"q": query, **params})
+        if raw:
+            break
     results = []
     for r in raw:
         if r.get("url") and (r.get("content") or r.get("title")):
-            results.append({"title": r.get("title", ""), "url": r["url"], "content": r.get("content", "")})
+            results.append({"title": r.get("title", ""), "url": r["url"], "content": r.get("content", ""),
+                            "published": _day(r.get("publishedDate"))})
         if len(results) >= MAX_RESULTS:
             break
     return await with_pages(results)
@@ -119,12 +123,23 @@ class _TextExtractor(HTMLParser):
     SKIP = {"script", "style", "noscript", "nav", "header", "footer", "form", "svg", "aside", "template"}
     BLOCK = {"p", "div", "br", "li", "h1", "h2", "h3", "h4", "h5", "h6", "tr", "section", "article", "table"}
 
+    # Where pages put their publish date (Open Graph, schema.org, common meta names).
+    DATE_META = {"article:published_time", "og:published_time", "datepublished", "date", "pubdate",
+                 "publish-date", "dc.date", "dc.date.issued"}
+
     def __init__(self):
         super().__init__(convert_charrefs=True)
         self.parts: list[str] = []
         self.skipping = 0
+        self.published: str | None = None
 
     def handle_starttag(self, tag, attrs):
+        if self.published is None and tag in ("meta", "time"):
+            a = dict(attrs)
+            key = (a.get("property") or a.get("name") or a.get("itemprop") or "").lower()
+            value = a.get("content") if tag == "meta" else a.get("datetime")
+            if value and (tag == "time" and a.get("itemprop", "").lower() == "datepublished" or key in self.DATE_META):
+                self.published = value
         if tag in self.SKIP:
             self.skipping += 1
         elif tag in self.BLOCK:
@@ -141,42 +156,74 @@ class _TextExtractor(HTMLParser):
             self.parts.append(data)
 
 
-def page_text(html: str) -> str:
+def parse_page(html: str) -> tuple[str, str | None]:
+    """(visible text, publish date YYYY-MM-DD or None) of a page."""
     parser = _TextExtractor()
     try:
         parser.feed(html)
     except Exception:
-        return ""
+        return "", None
+    # JSON-LD ("datePublished": "...") sits in a <script>, which the text skips.
+    published = parser.published
+    if not published:
+        found = re.search(r'"datePublished"\s*:\s*"([^"]+)"', html)
+        published = found.group(1) if found else None
+    return _page_text_from(parser), _day(published)
+
+
+def _day(value: str | None) -> str | None:
+    """YYYY-MM-DD from an ISO-ish date (SearXNG's publishedDate, meta tags), else None."""
+    found = re.match(r"\s*(\d{4}-\d{2}-\d{2})", value or "")
+    return found.group(1) if found else None
+
+
+def page_text(html: str) -> str:
+    return parse_page(html)[0]
+
+
+def _page_text_from(parser: "_TextExtractor") -> str:
     lines = (re.sub(r"[ \t\xa0]+", " ", line).strip() for line in "".join(parser.parts).splitlines())
     # Very short lines are mostly menus and buttons.
     return "\n".join(line for line in lines if len(line) > 25)
 
 
-async def _fetch_page(client: httpx.AsyncClient, url: str) -> str:
+async def _fetch_page(client: httpx.AsyncClient, url: str) -> tuple[str, str | None]:
+    """(page text, publish date) or ("", None)."""
     try:
         response = await client.get(url)
         if response.status_code != 200 or "html" not in response.headers.get("content-type", ""):
-            return ""
-        return page_text(response.text)[:PAGE_CHARS]
+            return "", None
+        text, published = parse_page(response.text)
+        return text[:PAGE_CHARS], published
     except (httpx.HTTPError, UnicodeDecodeError):
-        return ""
+        return "", None
 
 
 async def with_pages(results: list[dict]) -> list[dict]:
     """The first FETCH_PAGES results with `content` replaced by their page text (when longer than
-    the snippet); a page that fails or is empty keeps its snippet."""
+    the snippet) and `published` filled from the page when SearXNG had no date; a page that fails
+    or is empty keeps its snippet."""
     if not FETCH_PAGES or not results:
         return results
     headers = {"User-Agent": "Mozilla/5.0 (X11; Linux x86_64) laptop-backend/1.0", "Accept-Language": "en-IN,en;q=0.9"}
     async with httpx.AsyncClient(timeout=PAGE_TIMEOUT, follow_redirects=True, headers=headers) as client:
-        texts = await asyncio.gather(*(_fetch_page(client, r["url"]) for r in results[:FETCH_PAGES]))
-    return [
-        {**r, "content": texts[i]} if i < len(texts) and len(texts[i]) > len(r["content"]) else r
-        for i, r in enumerate(results)
-    ]
+        pages = await asyncio.gather(*(_fetch_page(client, r["url"]) for r in results[:FETCH_PAGES]))
+    out = []
+    for i, r in enumerate(results):
+        if i < len(pages):
+            text, published = pages[i]
+            r = {**r, "published": r.get("published") or published}
+            if len(text) > len(r["content"]):
+                r["content"] = text
+        out.append(r)
+    return out
 
 
 def as_context(results: list[dict]) -> str:
+    """Numbered sources, each with its publish date so the model can tell old figures from today's."""
     return "\n\n".join(
-        f"[{i}] {r['title']} ({r['url']})\n{r['content']}" for i, r in enumerate(results, start=1)
+        f"[{i}] {r['title']} ({r['url']}) — "
+        + (f"published {r['published']}" if r.get("published") else "publish date unknown")
+        + f"\n{r['content']}"
+        for i, r in enumerate(results, start=1)
     )

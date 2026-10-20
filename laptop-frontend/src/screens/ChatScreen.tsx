@@ -18,7 +18,7 @@ interface Props {
 const initials = (name: string) => name.split(/\s+/).filter(Boolean).slice(0, 2).map(w => w[0].toUpperCase()).join('') || '?';
 
 type View = 'chat' | 'documents' | 'library' | 'feedback' | 'sessions';
-type Shown = Pick<Message, 'role' | 'content' | 'web_searched' | 'web_sources'> & Partial<Pick<Message, 'id' | 'feedback' | 'regenerations' | 'created_at'>>;
+type Shown = Pick<Message, 'role' | 'content' | 'web_searched' | 'web_sources'> & Partial<Pick<Message, 'id' | 'feedback' | 'regenerations' | 'created_at' | 'earlier_versions'>>;
 
 // The open screen and chat live in the URL hash (#/chat/<id>, #/documents, #/library,
 // #/feedback, #/sessions; empty = Home), so a reload, Back/Forward or a copied link keeps them.
@@ -80,6 +80,9 @@ export default function ChatScreen({ user, notice, onSignOut, onSessionExpired }
   const busy = sending || waiting;
   // Index of the message just copied, for a short "Copied" confirmation.
   const [copied, setCopied] = useState<number | null>(null);
+  // Which version of a regenerated answer is shown (index into earlier versions + the latest);
+  // missing = the latest.
+  const [versionShown, setVersionShown] = useState<Record<string, number>>({});
   const [uploads, setUploads] = useState<UploadItem[]>([]);
   // Bumped when an embedding finishes, so the Documents list reloads.
   const [docsVersion, setDocsVersion] = useState(0);
@@ -284,6 +287,7 @@ export default function ChatScreen({ user, notice, onSignOut, onSessionExpired }
     try {
       const reply = await api.regenerate(chat.id, m.id);
       setMessages(ms => ms.map(x => (x.id === m.id ? reply : x)));
+      setVersionShown(v => { const { [m.id!]: _, ...rest } = v; return rest; });
     } catch (err) {
       fail('Could not regenerate the answer: ', err);
     } finally {
@@ -416,16 +420,26 @@ export default function ChatScreen({ user, notice, onSignOut, onSessionExpired }
                     </div>
                   </div>
                 )}
-                {messages.map((m, i) => (
-                  <div key={i} data-index={i} className={'msg ' + m.role + (m.id && m.id === regenerating ? ' regenerating' : '')}>
-                    <div className="bubble">{m.content}</div>
+                {messages.map((m, i) => {
+                  // A regenerated answer keeps its earlier versions; ‹ › flips between them, and only
+                  // the latest can be rated or regenerated (earlier ones have no stored sources).
+                  const versions = m.role === 'assistant'
+                    ? [...(m.earlier_versions ?? []), { content: m.content, feedback: m.feedback, created_at: m.created_at ?? '' }]
+                    : [];
+                  const shownIndex = m.id && versionShown[m.id] !== undefined ? versionShown[m.id] : versions.length - 1;
+                  const latest = versions.length === 0 || shownIndex === versions.length - 1;
+                  const shown: Shown = latest ? m : { ...m, content: versions[shownIndex].content, web_sources: undefined, web_searched: false };
+                  const flip = (to: number) => m.id && setVersionShown(v => ({ ...v, [m.id!]: to }));
+                  return (
+                  <div key={i} data-index={i} className={'msg ' + m.role + (m.id && m.id === regenerating ? ' regenerating' : '') + (latest ? '' : ' earlier')}>
+                    <div className="bubble">{shown.content}</div>
                     {m.role === 'user' && (
                       <div className="msg-actions">
                         <button type="button" className="copy" onClick={() => copyMessage(m, i)}
                           title="Copy question" aria-label="Copy question">{copied === i ? '✓ Copied' : '⧉ Copy'}</button>
                       </div>
                     )}
-                    {m.web_sources && m.web_sources.length > 0 && (
+                    {latest && m.web_sources && m.web_sources.length > 0 && (
                       <div className="sources">
                         🔎 Web sources:{' '}
                         {m.web_sources.map((s, j) => (
@@ -433,12 +447,25 @@ export default function ChatScreen({ user, notice, onSignOut, onSessionExpired }
                         ))}
                       </div>
                     )}
-                    {m.web_searched && !m.web_sources?.length && <div className="sources">🔎 Searched the web, nothing found.</div>}
+                    {latest && m.web_searched && !m.web_sources?.length && <div className="sources">🔎 Searched the web, nothing found.</div>}
                     {m.role === 'assistant' && m.id && (
                       <div className="feedback">
-                        <button type="button" className="copy" onClick={() => copyMessage(m, i)}
+                        {versions.length > 1 && (
+                          <span className="versions" aria-label="Answer versions">
+                            <button type="button" onClick={() => flip(shownIndex - 1)} disabled={shownIndex === 0}
+                              aria-label="Previous answer" title="Previous answer">‹</button>
+                            <small>{shownIndex + 1}/{versions.length}</small>
+                            <button type="button" onClick={() => flip(shownIndex + 1)} disabled={latest}
+                              aria-label="Next answer" title="Next answer">›</button>
+                          </span>
+                        )}
+                        <button type="button" className="copy" onClick={() => copyMessage(shown, i)}
                           title="Copy answer (with sources)" aria-label="Copy answer">{copied === i ? '✓' : '⧉'}</button>
-                        {m.feedback == null ? (
+                        {!latest ? (
+                          <span className="earlier-label">
+                            Earlier answer{versions[shownIndex].feedback ? ` · rated ${versions[shownIndex].feedback === 1 ? '👍' : '👎'}` : ''}
+                          </span>
+                        ) : m.feedback == null ? (
                           <>
                             <button type="button" title="Good answer" aria-label="Good answer" onClick={() => rate(m, 1)}>👍</button>
                             <button type="button" title="Bad answer" aria-label="Bad answer" onClick={() => rate(m, -1)}>👎</button>
@@ -447,7 +474,7 @@ export default function ChatScreen({ user, notice, onSignOut, onSessionExpired }
                           <span className="rated" title="Thanks for your feedback"
                             aria-label={m.feedback === 1 ? 'Rated good' : 'Rated bad'}>{m.feedback === 1 ? '👍' : '👎'}</span>
                         )}
-                        {i === messages.length - 1 && (() => {
+                        {latest && i === messages.length - 1 && (() => {
                           const used = m.regenerations ?? 0;
                           const left = maxRegenerations > 0 ? maxRegenerations - used : Infinity;
                           return (
@@ -461,7 +488,8 @@ export default function ChatScreen({ user, notice, onSignOut, onSessionExpired }
                       </div>
                     )}
                   </div>
-                ))}
+                  );
+                })}
                 {busy && !regenerating && <div className="msg assistant"><div className="bubble typing">{waiting ? 'Still answering…' : 'Thinking…'}</div></div>}
                 <div ref={endRef} />
                 {anchor !== null && <div aria-hidden="true" style={{ height: spacer }} />}

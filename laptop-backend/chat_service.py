@@ -33,8 +33,17 @@ SOURCES_ONLY_PROMPT = ChatPromptTemplate.from_messages([
     ("system", "You are a helpful assistant. Today is {today}. Answer ONLY with information found in the "
                "context below, which comes from the user's uploaded documents and a web search. Do not "
                "use your own knowledge, and never guess or invent facts, numbers, names or dates. If the "
-               "context doesn't contain the answer, reply exactly: \"I couldn't find this in your "
-               "documents or on the web.\" When you use a numbered web result, cite it like [1].\n\n"
+               "context answers the question only in part, or shows why there is no answer (for example "
+               "a market holiday, an event not happened yet, or only an earlier day's figures), say what "
+               "it does show and give the latest figures it has with their date, e.g. \"The markets are "
+               "closed today for <reason>. On <date> the Sensex <figure> and the Nifty <figure> [n].\" A figure "
+               "can be a change or a limit (\"fell 876 points\", \"ended below 22,900\"): report it in the "
+               "source's words rather than calling it unknown. "
+               "Only when nothing in the context is relevant, reply exactly: \"I couldn't "
+               "find this in your documents or on the web.\" For every figure (prices, indices, rates, scores) say the "
+               "date it is from, using the source's publish date or a date in its text; if neither "
+               "shows one, say the date is unknown and it may not be current. Never present a figure "
+               "from an earlier day as today's. When you use a numbered web result, cite it like [1].\n\n"
                "Context:\n{context}"),
     MessagesPlaceholder("history"),
     ("human", "{input}"),

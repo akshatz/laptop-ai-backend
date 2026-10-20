@@ -3,7 +3,7 @@ import os
 from datetime import datetime
 import uuid
 from typing import Optional
-from sqlalchemy import ForeignKey, String, Text, Boolean, Integer, LargeBinary, DateTime, text
+from sqlalchemy import JSON, ForeignKey, String, Text, Boolean, Integer, LargeBinary, DateTime, text
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
@@ -73,6 +73,9 @@ class MessageModel(Base):
     feedback_comment: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     # Answers only: how often this answer was regenerated (replaced in place).
     regenerations: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+    # Answers only: the versions Regenerate replaced, oldest first ({content, feedback, created_at}),
+    # so they can still be read.
+    earlier_versions: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)
 
 class ChatDocumentModel(Base):
     """A file (or pasted text) added to a chat as context, kept so its owner can see and open it."""

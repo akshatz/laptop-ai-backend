@@ -489,7 +489,12 @@ async def regenerate_answer(chat_id: uuid.UUID, message_id: uuid.UUID, user: Use
     rejected = (answer.content, answer.feedback_comment) if answer.feedback == -1 else None
     content, web_searched, web_results = await _generate(chat, messages[question_index].content, history, rejected)
 
+    # Keep the replaced version readable (the ‹ › pager under the answer).
+    answer.earlier_versions = [*(answer.earlier_versions or []), {
+        "content": answer.content, "feedback": answer.feedback, "created_at": answer.created_at.isoformat(),
+    }]
     answer.content = content
+    answer.created_at = datetime.now(timezone.utc)
     answer.feedback = None
     answer.feedback_comment = None
     answer.regenerations += 1
