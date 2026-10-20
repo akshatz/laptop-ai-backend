@@ -42,6 +42,12 @@ function awaitingAnswer(list: Shown[]) {
     Date.now() - new Date(last.created_at).getTime() < PENDING_WINDOW_MS;
 }
 
+// Open WebUI, the stack's other chat app (same authentik account): through Caddy's HTTPS on the
+// LAN, or its own port on this laptop (Caddy's certificate is for the LAN host, not localhost).
+const OPEN_WEBUI_URL = ['localhost', '127.0.0.1'].includes(location.hostname)
+  ? `http://${location.hostname}:8082/`
+  : `https://${location.hostname}:8444/`;
+
 // Ollama names without a tag mean :latest (laptop-backend's chat_service._with_tag).
 const withTag = (name: string) => (name.includes(':') ? name : name + ':latest');
 
@@ -344,6 +350,9 @@ export default function ChatScreen({ user, notice, onSignOut, onSessionExpired }
             🛡️ Signed-in users
           </button>
         )}
+
+        <a className="side-action" href={OPEN_WEBUI_URL} target="_blank" rel="noopener noreferrer"
+          title="Open WebUI, in a new tab">💬 Open WebUI ↗</a>
 
         <div className="side-heading">Recent chats</div>
         <nav className="history">
