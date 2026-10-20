@@ -4,9 +4,9 @@ A React chat UI for [custom-backend](custom-backend.md), kept as its own app in 
 
 ## Sign-in
 
-Without a session the app shows its normal layout with a **Sign in** button at the bottom of the sidebar and a sign-in prompt in the main area. Sign-in uses the same account, password and TOTP as Open WebUI, so there's no separate sign-up here (new people use authentik's sign-up or an invitation, see [sso.md](sso.md)).
+Opening the app without a session goes straight to authentik (like Open WebUI's auto-redirect). If you're already signed in to authentik, for example through Open WebUI, there's no login page: you land on the chat page (one sign-in lasts 7 days, see [One sign-in for all apps](sso.md#one-sign-in-for-all-apps)). The app doesn't redirect after a sign-in error (`?signin=`), or a second time within 30 seconds (`sessionStorage` `signin.autoRedirectAt`), so a sign-in that keeps failing doesn't loop. Instead it shows its normal layout with a **Sign in** button at the bottom of the sidebar and a sign-in prompt in the main area. Sign-in uses the same account, password and TOTP as Open WebUI, so there's no separate sign-up here (new people use authentik's sign-up or an invitation, see [sso.md](sso.md)).
 
-1. The button opens `/api/auth/login`. custom-backend sends the browser to authentik (`https://<OPEN_WEBUI_HOST>:9443`) with PKCE and a state value kept in a short-lived signed cookie.
+1. The redirect (or the button) opens `/api/auth/login`. custom-backend sends the browser to authentik (`https://<OPEN_WEBUI_HOST>:9443`) with PKCE and a state value kept in a short-lived signed cookie.
 2. authentik sends the browser back to `/api/auth/callback`. custom-backend exchanges the code with authentik over the Docker network, reads the user's email and name, finds the `users` row with that email or creates one, and sets its session cookie (HttpOnly, signed, 7 days).
 3. Every chat endpoint takes the user from that cookie; the request body can't name another user, and other people's chats answer 404.
 

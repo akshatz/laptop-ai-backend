@@ -81,7 +81,7 @@ All services share the `ai-network` Docker bridge network, orchestrated via [dev
 | `ollama` | Local LLM inference engine (chat models and the `embeddinggemma` embedding model) | (internal) |
 | `open-webui` | Chat UI: Ollama models, web search, RAG on Milvus, sign-in through authentik, extended by the Functions in [devops/open-webui/functions/](devops/open-webui/functions/) | 8082 → 8080 |
 | `open-webui-proxy` | Caddy HTTPS front for devices on the LAN (cert from Caddy's local CA): Open WebUI on 8444, authentik on 9443, opencode on 4443 and Attu on 3443 (both behind authentik sign-in) | 8444 → 443, 9443, 4443, 3443 |
-| `authentik-server` + `authentik-worker` | SSO with TOTP (Google Authenticator) for Open WebUI, OpenBao and custom-frontend; sign-up, invitations, password reset (see [Open WebUI SSO + MFA](docs/sso.md#open-webui-sso--mfa-authentik)) | (through `open-webui-proxy`, 9443) |
+| `authentik-server` + `authentik-worker` | SSO with TOTP (Google Authenticator) for Open WebUI, OpenBao and custom-frontend: one sign-in lasts 7 days and covers every app ([One sign-in for all apps](docs/sso.md#one-sign-in-for-all-apps)); sign-up, invitations, password reset (see [Open WebUI SSO + MFA](docs/sso.md#open-webui-sso--mfa-authentik)) | (through `open-webui-proxy`, 9443) |
 | `opencode` | Coding agent with a web UI (the admin's; everyone else gets their own `opencode-u<pk>` container from `provision.py`); stopped when idle (see [opencode](docs/opencode.md#opencode)) | 127.0.0.1:4096; LAN through `open-webui-proxy`, 4443 |
 | `docling` | Text extraction with OCR for documents uploaded to Open WebUI (scanned PDFs, images, tables) | (internal, 5001) |
 | `searxng` | Self-hosted metasearch engine for Open WebUI's web search | (internal, 8080) |
