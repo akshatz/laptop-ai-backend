@@ -20,10 +20,54 @@
 <h1>Laptop Dev Backend — Chat</h1>
 <p id="status"></p>
 
+<details>
+  <summary>New here? Sign up</summary>
+  <fieldset>
+    <legend>Sign up</legend>
+    <label>Name
+      <input id="signupName" autocomplete="name">
+    </label>
+    <label>Email
+      <input id="signupEmail" type="email" autocomplete="email">
+    </label>
+    <label>Password
+      <input id="signupPassword" type="password" autocomplete="new-password">
+    </label>
+    <label>Repeat password
+      <input id="signupPassword2" type="password" autocomplete="new-password">
+    </label>
+    <button onclick="signUp()">Create account</button>
+    <label>Verification token (sent by email after sign-up)
+      <input id="verifyToken" autocomplete="off">
+    </label>
+    <button onclick="verifyEmail()">Verify email</button>
+  </fieldset>
+</details>
+
+<fieldset>
+  <legend>0. Sign in</legend>
+  <label>Email
+    <input id="loginEmail" type="email" autocomplete="username">
+  </label>
+  <label>Password
+    <input id="loginPassword" type="password" autocomplete="current-password">
+  </label>
+  <label id="otpLabel" hidden>One-time code (sent by email)
+    <input id="loginOtp" inputmode="numeric" autocomplete="one-time-code">
+  </label>
+  <button onclick="signIn()">Sign in</button>
+  <button onclick="signOut()">Sign out</button>
+  <div>Signed in as: <span id="signedInAs">(nobody)</span></div>
+  <div id="mfaRow" hidden>
+    Email code at sign-in (MFA): <strong id="mfaState"></strong>
+    <button id="mfaToggle" onclick="toggleMfa()"></button>
+  </div>
+</fieldset>
+
 <fieldset>
   <legend>1. Create a chat</legend>
-  <label>User ID (UUID)
-    <input id="userId" placeholder="an existing user's id from /users">
+  <label>User ID (UUID, filled in by signing in)
+    <input id="userId" placeholder="sign in above, or paste an id from /users">
   </label>
   <label>Model
     <select id="modelId"><option value="llama3.2">llama3.2</option></select>
@@ -53,6 +97,8 @@
 
 <script>
 let chatId = null;
+let otpPending = false;
+let currentUser = null;
 
 function setStatus(text) {
   document.getElementById('status').textContent = text || '';
@@ -74,11 +120,136 @@ async function loadModels() {
 }
 loadModels();
 
+// Remembered for this tab only; there's no session token, the id just pre-fills the form.
+function setSignedIn(user) {
+  document.getElementById('userId').value = user ? user.id : '';
+  document.getElementById('signedInAs').textContent = user ? `${user.name} <${user.email}>` : '(nobody)';
+  document.getElementById('mfaRow').hidden = !user;
+  if (user) {
+    document.getElementById('loginEmail').value = user.email;
+    document.getElementById('mfaState').textContent = user.mfa_enabled ? 'on' : 'off';
+    document.getElementById('mfaToggle').textContent = user.mfa_enabled ? 'Turn off' : 'Turn on';
+  }
+  currentUser = user;
+  try {
+    if (user) sessionStorage.setItem('signedInUser', JSON.stringify(user));
+    else sessionStorage.removeItem('signedInUser');
+  } catch (_) {}
+}
+
+async function postJson(url, body) {
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    const text = await res.text();
+    let detail = text;
+    try { detail = JSON.parse(text).detail || text; } catch (_) {}
+    throw new Error(typeof detail === 'string' ? detail : JSON.stringify(detail));
+  }
+  return res.json();
+}
+
+async function signIn() {
+  setStatus('');
+  const email = document.getElementById('loginEmail').value.trim();
+  const password = document.getElementById('loginPassword').value;
+  try {
+    if (otpPending) {
+      const otp_code = document.getElementById('loginOtp').value.trim();
+      const user = await postJson('/mfa/verify-otp', { email, otp_code });
+      otpPending = false;
+      document.getElementById('otpLabel').hidden = true;
+      setSignedIn(user);
+      return;
+    }
+    const result = await postJson('/login', { email, password });
+    if (result.password_reset_required) {
+      setStatus('Your password has expired; a reset code was emailed. Reset it via /password/reset, then sign in again.');
+    } else if (result.mfa_required) {
+      otpPending = true;
+      document.getElementById('otpLabel').hidden = false;
+      setStatus('A one-time code was emailed to you. Enter it and press Sign in again.');
+    } else {
+      setSignedIn(result.user);
+    }
+  } catch (err) {
+    setStatus('Sign-in failed: ' + err.message);
+  }
+}
+
+async function signUp() {
+  setStatus('');
+  const name = document.getElementById('signupName').value.trim();
+  const email = document.getElementById('signupEmail').value.trim();
+  const password = document.getElementById('signupPassword').value;
+  if (!name || !email || !password) { setStatus('Fill in name, email and password.'); return; }
+  if (password !== document.getElementById('signupPassword2').value) {
+    setStatus('The two passwords differ.'); return;
+  }
+  try {
+    await postJson('/users', { name, email, password });
+    document.getElementById('loginEmail').value = email;
+    setStatus('Account created. Check your email for the verification token, paste it below and press Verify email.');
+  } catch (err) {
+    setStatus('Sign-up failed: ' + err.message);
+  }
+}
+
+async function verifyEmail() {
+  setStatus('');
+  const token = document.getElementById('verifyToken').value.trim();
+  if (!token) { setStatus('Paste the token from the email first.'); return; }
+  try {
+    const user = await postJson('/users/verify', { token });
+    document.getElementById('loginEmail').value = user.email;
+    document.getElementById('verifyToken').value = '';
+    document.getElementById('signupPassword').value = '';
+    document.getElementById('signupPassword2').value = '';
+    setStatus('Email verified. You can sign in now.');
+  } catch (err) {
+    setStatus('Verification failed: ' + err.message);
+  }
+}
+
+// /mfa/enable and /mfa/disable check the password again, so it must still be in the field.
+async function toggleMfa() {
+  setStatus('');
+  if (!currentUser) return;
+  const password = document.getElementById('loginPassword').value;
+  if (!password) { setStatus('Enter your password above to change MFA.'); return; }
+  const url = currentUser.mfa_enabled ? '/mfa/disable' : '/mfa/enable';
+  try {
+    const user = await postJson(url, { email: currentUser.email, password });
+    setSignedIn(user);
+    setStatus(user.mfa_enabled
+      ? 'MFA is on: from now on, signing in also asks for a code sent by email.'
+      : 'MFA is off: signing in needs only your password.');
+  } catch (err) {
+    setStatus('Changing MFA failed: ' + err.message);
+  }
+}
+
+function signOut() {
+  otpPending = false;
+  document.getElementById('otpLabel').hidden = true;
+  document.getElementById('loginPassword').value = '';
+  document.getElementById('loginOtp').value = '';
+  setSignedIn(null);
+}
+
+try {
+  const saved = JSON.parse(sessionStorage.getItem('signedInUser') || 'null');
+  if (saved) setSignedIn(saved);
+} catch (_) {}
+
 async function createChat() {
   setStatus('');
   const userId = document.getElementById('userId').value.trim();
   const modelId = document.getElementById('modelId').value.trim() || 'llama3.2';
-  if (!userId) { setStatus('Enter a user ID first.'); return; }
+  if (!userId) { setStatus('Sign in (or enter a user ID) first.'); return; }
 
   try {
     const res = await fetch('/chats', {

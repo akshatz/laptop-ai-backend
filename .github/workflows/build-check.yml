@@ -38,6 +38,16 @@ jobs:
       - name: Build custom-backend image
         run: docker build -f custom-backend/Dockerfile .
 
+  # Type-checks and builds the React app inside its image (npm ci + tsc + vite build).
+  frontend-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.branch || github.ref }}
+      - name: Build custom-frontend image
+        run: docker build custom-frontend
+
   # Caddyfile and OpenTelemetry Collector configs, validated in the images compose runs them in.
   config-check:
     runs-on: ubuntu-latest

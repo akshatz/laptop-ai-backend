@@ -801,6 +801,22 @@ services:
     networks:
       - ai-network
 
+  # 🖥️ CUSTOM FRONTEND: React chat UI for custom-backend, its own app (../custom-frontend).
+  # nginx serves the built app and forwards /api/* to custom-backend:8000.
+  custom-frontend:
+    build:
+      context: ../custom-frontend
+    container_name: local-dev-frontend
+    restart: unless-stopped
+    mem_limit: 1g
+    cpus: 0.5
+    ports:
+      - "8012:80"
+    depends_on:
+      - custom-backend
+    networks:
+      - ai-network
+
 volumes:
   pg-data:
   opencode-data:
