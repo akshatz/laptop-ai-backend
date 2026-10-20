@@ -7,10 +7,11 @@ import base64
 import hashlib
 import os
 import secrets
+import time
 from urllib.parse import urlencode
 
 import httpx
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from fastapi.responses import ORJSONResponse, RedirectResponse
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -40,6 +41,56 @@ CLIENT_SECRET = (db.secrets.get("custom_frontend_oidc_client_secret")
 FRONTEND_ORIGINS = {o.strip().rstrip("/") for o in os.environ.get("FRONTEND_ORIGINS", "").split(",") if o.strip()}
 # laptop-frontend's nginx strips /api before forwarding here.
 CALLBACK_PATH = "/api/auth/callback"
+
+# Follow Open WebUI's session: Open WebUI's sign-in cookie (`token`, not HTTPS-only, SameSite=Lax)
+# reaches this app too on the same host (cookies ignore the port). When it belongs to a signed-in
+# Open WebUI user other than this app's, /auth/me switches this app to that person (matched by
+# email, like the authentik callback). Open WebUI checks the token; nothing here trusts it alone.
+FOLLOW_OPEN_WEBUI_SESSION = os.environ.get("FOLLOW_OPEN_WEBUI_SESSION", "true").lower() not in ("false", "0", "no")
+OPEN_WEBUI_INTERNAL_URL = os.environ.get("OPEN_WEBUI_INTERNAL_URL", "http://open-webui:8080").rstrip("/")
+OPEN_WEBUI_COOKIE = "token"
+_owui_cache: dict[str, tuple[float, dict | None]] = {}
+OWUI_CACHE_SECONDS = 60
+
+
+async def _open_webui_user(token: str | None) -> dict | None:
+    """{"email", "name"} of the active Open WebUI user the token belongs to, else None (no token,
+    expired, pending account, Open WebUI unreachable). Answers are cached for a minute per token."""
+    if not FOLLOW_OPEN_WEBUI_SESSION or not token:
+        return None
+    key = hashlib.sha256(token.encode()).hexdigest()
+    cached = _owui_cache.get(key)
+    if cached and cached[0] > time.monotonic():
+        return cached[1]
+    found = None
+    try:
+        async with httpx.AsyncClient(timeout=5) as client:
+            response = await client.get(f"{OPEN_WEBUI_INTERNAL_URL}/api/v1/auths/",
+                                        headers={"Authorization": f"Bearer {token}"})
+        if response.status_code == 200:
+            data = response.json()
+            email = (data.get("email") or "").strip().lower()
+            if email and data.get("role") in ("user", "admin"):
+                found = {"email": email, "name": (data.get("name") or email.split("@")[0])[:100]}
+    except (httpx.HTTPError, ValueError):
+        return None
+    if len(_owui_cache) > 500:
+        _owui_cache.clear()
+    _owui_cache[key] = (time.monotonic() + OWUI_CACHE_SECONDS, found)
+    return found
+
+
+async def _user_for_email(db: AsyncSession, email: str, name: str) -> UserModel:
+    """The users row for this email, created (no usable password) when it doesn't exist yet."""
+    user = (await db.execute(select(UserModel).where(func.lower(UserModel.email) == email))).scalar_one_or_none()
+    if user is None:
+        # No usable password: this account signs in only through authentik / Open WebUI's session.
+        user = UserModel(email=email, name=name, is_verified=True,
+                         password_hash=pwd_context.hash(secrets.token_urlsafe(32)))
+        db.add(user)
+        await db.commit()
+        await db.refresh(user)
+    return user
 
 
 def _origin(request: Request) -> str:
@@ -121,15 +172,8 @@ async def callback(request: Request, code: str = "", state: str = "", error: str
         return RedirectResponse(f"{origin}/?signin=failed", status_code=302)
     name = (info.get("name") or info.get("preferred_username") or email.split("@")[0])[:100]
 
-    user = (await db.execute(select(UserModel).where(func.lower(UserModel.email) == email))).scalar_one_or_none()
-    if user is None:
-        # No usable password: this account signs in only through authentik.
-        user = UserModel(email=email, name=name, is_verified=True,
-                         password_hash=pwd_context.hash(secrets.token_urlsafe(32)))
-        db.add(user)
-        await db.commit()
-        await db.refresh(user)
-    elif not user.is_active:
+    user = await _user_for_email(db, email, name)
+    if not user.is_active:
         return RedirectResponse(f"{origin}/?signin=deactivated", status_code=302)
 
     response = RedirectResponse(f"{origin}/", status_code=302)
@@ -140,7 +184,24 @@ async def callback(request: Request, code: str = "", state: str = "", error: str
 
 
 @router.get("/me", response_model=UserResponse)
-async def me(user: UserModel = Depends(current_user)):
+async def me(request: Request, response: Response, db: AsyncSession = Depends(get_db)):
+    """The signed-in user. Follows Open WebUI's session (see FOLLOW_OPEN_WEBUI_SESSION): when the
+    browser is signed in to Open WebUI as someone else, or this app has no session, this app's
+    session switches to that person. Without an Open WebUI sign-in, this app's own session counts."""
+    try:
+        user = await current_user(request, db)
+    except HTTPException:
+        user = None
+    owui = await _open_webui_user(request.cookies.get(OPEN_WEBUI_COOKIE))
+    if owui and (user is None or user.email.lower() != owui["email"]):
+        followed = await _user_for_email(db, owui["email"], owui["name"])
+        if followed.is_active:
+            await end_session(db, request.cookies.get(SESSION_COOKIE))
+            cookie = await start_session(db, followed.id, request.headers.get("user-agent"))
+            _set_cookie(response, request, SESSION_COOKIE, cookie, SESSION_MAX_AGE)
+            return followed
+    if user is None:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not signed in.")
     return user
 
 
