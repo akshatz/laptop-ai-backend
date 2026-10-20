@@ -25,8 +25,9 @@
 //
 // 6. "My usage" and "My feedback" links in the sidebar, under Search, to the KPI Dashboard's
 //    ?view=me page and Feedback Review's ?mine=1 page; then "opencode" (the person's own opencode,
-//    https://<host>:4443) and "Security (TOTP)" (authentik's user settings, where the authenticator
-//    app is set up or removed), both in a new tab.
+//    https://<host>:4443), "Security (TOTP)" (authentik's user settings, where the authenticator
+//    app is set up or removed) and "Laptop Dev Chat" (laptop-frontend, http://<host>:8012, which links
+//    back here), all in a new tab.
 (() => {
 	// ---- 1. early SSO redirect ----------------------------------------------------------------
 	const params = new URLSearchParams(location.search);
@@ -365,6 +366,14 @@
 			label: 'Security (TOTP)',
 			external: true,
 			icon: svg('M12 3l7 3v6c0 4.5-3 7.5-7 9-4-1.5-7-4.5-7-9V6l7-3z')
+		},
+		{
+			// laptop-frontend, the other chat app on this stack (same authentik account, signs in by itself).
+			id: 'sidebar-laptop-chat',
+			href: `http://${location.hostname}:8012/`,
+			label: 'Laptop Dev Chat',
+			external: true,
+			icon: svg('M4 6h16v10H4zM2 20h20')
 		}
 	];
 
