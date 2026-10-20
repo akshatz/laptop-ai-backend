@@ -1,0 +1,31 @@
+# Sign in once, every app lets you in (Open WebUI, custom-frontend, OpenBao, opencode, Attu).
+# All their providers use implicit consent, so an authentik session is all they need; the login
+# stage defaulted to session_duration seconds=0 (a browser-session cookie), so closing the browser
+# made every app ask for the password again. Applies to all users.
+#
+# Open WebUI's loader.js idle sign-out (3 h, non-admins) still ends the authentik session through
+# the invalidation flow; MFA validation still asks for TOTP again after last_auth_threshold (3 h,
+# open-webui-sso.yaml) whenever the password is entered.
+version: 1
+metadata:
+  name: Seamless sign-in
+entries:
+  # authentik's default blueprint declares this stage without attrs, so re-applies don't reset it.
+  - model: authentik_stages_user_login.userloginstage
+    identifiers:
+      name: default-authentication-login
+    attrs:
+      session_duration: days=7
+
+  # A name matching no account (e.g. the username without "@gmail.com") got a password page that
+  # always said "Invalid password". Sign-up already reveals registered emails, and the recovery
+  # flow runs with this off too. user_fields repeated because validation rejects the stage
+  # without it (see self-enrollment.yaml / password-recovery.yaml).
+  - model: authentik_stages_identification.identificationstage
+    identifiers:
+      name: default-authentication-identification
+    attrs:
+      user_fields:
+        - email
+        - username
+      pretend_user_exists: false
