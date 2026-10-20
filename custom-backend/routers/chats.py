@@ -1,17 +1,18 @@
 import uuid
-from datetime import datetime
+from datetime import date, datetime
 from typing import List
 from fastapi import APIRouter, Depends, HTTPException, status
 from langchain_core.messages import AIMessage, HumanMessage
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 import chat_service
+import web_search
 from db import get_db
 from models import MessageModel, UserChatModel, UserModel
 from sessions import current_user
 from schemas import (
     MAX_DOCUMENTS_PER_INGEST, ChatCreate, ChatResponse, DocumentIngest, DocumentIngestResponse,
-    MessageCreate, MessageResponse,
+    MessageCreate, MessageResponse, WebSource,
 )
 
 router = APIRouter()
@@ -39,7 +40,7 @@ async def _own_chat(chat_id: uuid.UUID, user: UserModel, db: AsyncSession) -> Us
 @router.get("/chats", response_model=List[ChatResponse])
 async def list_chats(user: UserModel = Depends(current_user), db: AsyncSession = Depends(get_db)):
     query = await db.execute(
-        select(UserChatModel).where(UserChatModel.user_id == user.id).order_by(UserChatModel.created_at.desc())
+        select(UserChatModel).where(UserChatModel.user_id == user.id).order_by(UserChatModel.updated_at.desc())
     )
     return query.scalars().all()
 
@@ -115,6 +116,12 @@ async def send_message(chat_id: uuid.UUID, payload: MessageCreate, user: UserMod
         for m in query.scalars().all()
     ]
 
+    # Like other chat apps, a chat still called "New Chat" is named after its first question
+    # (custom-frontend's titleFrom shows the same right away).
+    if not history and chat.title == "New Chat":
+        question = " ".join(payload.content.split())
+        chat.title = question if len(question) <= 60 else question[:57].rstrip() + "…"
+
     user_message = MessageModel(
         chat_id=chat_id,
         user_id=chat.user_id,
@@ -130,11 +137,22 @@ async def send_message(chat_id: uuid.UUID, payload: MessageCreate, user: UserMod
         )
     except Exception:
         retrieved_docs = []
-    context = "\n\n".join(doc.page_content for doc in retrieved_docs) or "No relevant context found."
+    context_parts = []
+    if retrieved_docs:
+        context_parts.append("From the chat's documents:\n" + "\n\n".join(doc.page_content for doc in retrieved_docs))
+
+    # Web search only when the question needs it (web_search.needs_web_search).
+    web_searched = await web_search.needs_web_search(payload.content)
+    web_results = await web_search.search(payload.content) if web_searched else []
+    if web_results:
+        context_parts.append("Web search results:\n" + web_search.as_context(web_results))
+    context = "\n\n".join(context_parts) or "No relevant context found."
 
     chain = chat_service.build_rag_chat_chain(chat.model_id)
     try:
-        ai_reply = await chain.ainvoke({"history": history, "input": payload.content, "context": context})
+        ai_reply = await chain.ainvoke({
+            "history": history, "input": payload.content, "context": context, "today": date.today().isoformat(),
+        })
     except Exception as exc:
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
@@ -152,4 +170,7 @@ async def send_message(chat_id: uuid.UUID, payload: MessageCreate, user: UserMod
     await db.commit()
     await db.refresh(assistant_message)
 
-    return assistant_message
+    return MessageResponse.model_validate(assistant_message).model_copy(update={
+        "web_searched": web_searched,
+        "web_sources": [WebSource(title=r["title"], url=r["url"]) for r in web_results],
+    })

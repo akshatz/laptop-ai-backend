@@ -83,6 +83,7 @@ else:
     import main  # noqa: E402
     import models  # noqa: E402
     import sessions  # noqa: E402
+    import web_search  # noqa: E402
     from routers import auth  # noqa: E402
 
     @pytest.fixture
@@ -143,6 +144,25 @@ else:
             lambda to_address, subject, body: sent.append({"to": to_address, "subject": subject, "body": body}),
         )
         return sent
+
+    @pytest.fixture(autouse=True)
+    def web(monkeypatch):
+        """The web search decision and SearXNG, without Ollama or the network. By default no
+        question needs the web; tests set `needed` / `results` / `queries`."""
+        state = SimpleNamespace(needed=False, results=[], decisions=[], queries=[],
+                                real_needs=web_search.needs_web_search, real_search=web_search.search)
+
+        async def needs(question):
+            state.decisions.append(question)
+            return state.needed
+
+        async def search(query):
+            state.queries.append(query)
+            return state.results
+
+        monkeypatch.setattr(web_search, "needs_web_search", needs)
+        monkeypatch.setattr(web_search, "search", search)
+        return state
 
     @pytest.fixture
     def vector_store():

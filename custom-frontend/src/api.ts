@@ -18,10 +18,17 @@ export interface Chat {
   created_at: string;
 }
 
+export interface WebSource {
+  title: string;
+  url: string;
+}
+
 export interface Message {
   id: string;
   role: string;
   content: string;
+  web_searched?: boolean;
+  web_sources?: WebSource[];
 }
 
 export class HttpError extends Error {

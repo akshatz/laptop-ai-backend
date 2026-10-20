@@ -4,7 +4,7 @@ A React chat UI for [custom-backend](custom-backend.md), kept as its own app in 
 
 ## Sign-in
 
-Opening the app without a session goes straight to authentik (a person already signed in there, e.g. to Open WebUI, comes right back signed in without typing anything); after a failed attempt it shows a **Sign in** button instead, so it can't loop. Sign-in uses the same account, password and TOTP as Open WebUI, so there's no separate sign-up here (new people use authentik's sign-up or an invitation, see [sso.md](sso.md)).
+Without a session the app shows its normal layout with a **Sign in** button at the bottom of the sidebar and a sign-in prompt in the main area. Sign-in uses the same account, password and TOTP as Open WebUI, so there's no separate sign-up here (new people use authentik's sign-up or an invitation, see [sso.md](sso.md)).
 
 1. The button opens `/api/auth/login`. custom-backend sends the browser to authentik (`https://<OPEN_WEBUI_HOST>:9443`) with PKCE and a state value kept in a short-lived signed cookie.
 2. authentik sends the browser back to `/api/auth/callback`. custom-backend exchanges the code with authentik over the Docker network, reads the user's email and name, finds the `users` row with that email or creates one, and sets its session cookie (HttpOnly, signed, 7 days).
@@ -12,9 +12,13 @@ Opening the app without a session goes straight to authentik (a person already s
 
 **Sign out** ends the app's session and then authentik's (its invalidation flow), otherwise the next Sign in would go straight through.
 
-## Chat screen
+## Dashboard
 
-Pick a model, start a **New chat** or reopen one of **Your chats**. A menu switches between two views: **Chat** (the conversation) and **Documents** (up to 5 pasted texts at a time added as context for the selected chat; pasted text, not file upload).
+Full-width, like other chat apps: a sidebar with **New chat**, **Add documents** and **Recent chats** (most recently used first; each chat is named after its first question), and the account at the bottom (initials, name, Sign out; or Sign in when signed out; on phones the sidebar opens from ☰). The conversation is a centred column with a message box at the bottom (Enter sends, Shift+Enter adds a line); the model is picked in the top bar for a new chat and stays fixed for an existing one. New chat only clears the screen: the chat is created with the first message or the first documents, so empty chats don't pile up.
+
+**Add documents**: up to 5 pasted texts at a time, added as context for the open chat (or a new one). Pasted text only, not file upload.
+
+**Web search** happens only when the question needs it: custom-backend asks the model WEB or NO first (`web_search.py`, ~1 s), and only WEB searches SearXNG. The answer then shows its web sources as links under it.
 
 ## Running it
 
