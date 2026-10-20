@@ -76,9 +76,9 @@ put "$APPS/custom-backend" \
   postgres_password="$POSTGRES_PASSWORD" \
   postgres_db="$POSTGRES_DB" \
   webui_secret_key="$WEBUI_SECRET_KEY" \
-  smtp_user="$PASSBOLT_SMTP_USER" \
-  smtp_password="$PASSBOLT_SMTP_PASSWORD" \
-  smtp_from="$PASSBOLT_SMTP_FROM" \
+  smtp_user="$SMTP_USER" \
+  smtp_password="$SMTP_PASSWORD" \
+  smtp_from="$SMTP_FROM" \
   milvus_root_password="$MILVUS_ROOT_PASSWORD"
 
 # The other services still read these from .env; these are copies kept in one place for the
@@ -103,9 +103,9 @@ put "$APPS/authentik" \
   open_webui_api_token="$OPEN_WEBUI_AUTHENTIK_API_TOKEN" \
   mfa_required="${AUTHENTIK_MFA_REQUIRED:-true}"
 put "$APPS/passbolt" \
-  smtp_from="$PASSBOLT_SMTP_FROM" \
-  smtp_user="$PASSBOLT_SMTP_USER" \
-  smtp_password="$PASSBOLT_SMTP_PASSWORD" \
+  smtp_from="$SMTP_FROM" \
+  smtp_user="$SMTP_USER" \
+  smtp_password="$SMTP_PASSWORD" \
   db_password="$PASSBOLT_DB_PASSWORD"
 put "$APPS/openobserve" \
   root_user_email="$OPENOBSERVE_ROOT_USER_EMAIL" \

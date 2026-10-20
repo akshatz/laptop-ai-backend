@@ -85,8 +85,8 @@ All services share the `ai-network` Docker bridge network, orchestrated via [dev
 | `milvus` + `milvus-etcd` + `milvus-minio` | Vector store for RAG document embeddings; Open WebUI uses five shared collections (multitenancy mode), and web search rows are emptied daily by `milvus/cleanup.py` (see [docs/web-search-and-rag.md](docs/web-search-and-rag.md)) | (internal, 19530) |
 | `attu` | Web UI for browsing Milvus (Attu v2.4.12, Apache-2.0; asks for Milvus's root password) | 127.0.0.1:3002; LAN through `open-webui-proxy`, 3443 (akadmin only) |
 | `openbao` | Secrets storage (Postgres creds, AppRole broker) | 8200 |
-| `passbolt-db` | MariaDB for Passbolt (dedicated, separate from postgres-db) | (internal) |
-| `passbolt` | Password manager (stores OpenBao/AppRole tokens) | 8443 → 443 |
+| `passbolt-db` | MariaDB for Passbolt (dedicated, separate from postgres-db), opt-in with it | (internal) |
+| `passbolt` | Password manager, opt-in (`--profile passbolt`) | 8443 → 443 |
 | `custom-backend` | FastAPI app: auth, chats, RAG document ingestion | 8011 → 8000 |
 | `openobserve` | O2 observability platform: logs and audit trails (see [Logs in OpenObserve](docs/observability.md#logs-in-openobserve)) | 5080 |
 | `openwebui-audit-shipper` | OpenTelemetry Collector shipping Open WebUI's audit log (who did what) and query log to O2 | (internal) |
@@ -127,7 +127,7 @@ docker compose -f devops/docker-compose.yml up -d   # start everything else
 - Attu (Milvus): http://localhost:3002 on this laptop, or https://`OPEN_WEBUI_HOST`:3443 from the LAN (authentik sign-in as `akadmin`); connect to `milvus:19530` as `root` with `MILVUS_ROOT_PASSWORD`
 - Custom backend API: http://localhost:8011
 - OpenBao UI: http://localhost:8200/ui (sign in as `bao-admin`/`bao-readonly`, or through authentik with method OIDC; the root token in `openbao/keys.json` is for emergencies)
-- Passbolt: https://localhost:8443 (self-signed cert; see [PASSBOLT.md](PASSBOLT.md) for one-time admin registration)
+- Passbolt (opt-in: `docker compose -f devops/docker-compose.yml --profile passbolt up -d passbolt`): https://localhost:8443 (self-signed cert; see [PASSBOLT.md](PASSBOLT.md) for one-time admin registration)
 - Postgres: `localhost:5433` (credentials from `.env`)
 - Grafana: http://localhost:3001, only while the optional `lgtm` service is running
 

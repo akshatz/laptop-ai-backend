@@ -104,9 +104,9 @@ services:
       - ZO_SMTP_HOST=smtp.gmail.com
       - ZO_SMTP_PORT=587
       - ZO_SMTP_ENCRYPTION=starttls
-      - ZO_SMTP_USER_NAME=${PASSBOLT_SMTP_USER}
-      - ZO_SMTP_PASSWORD=${PASSBOLT_SMTP_PASSWORD}
-      - ZO_SMTP_FROM_EMAIL=${PASSBOLT_SMTP_USER}
+      - ZO_SMTP_USER_NAME=${SMTP_USER}
+      - ZO_SMTP_PASSWORD=${SMTP_PASSWORD}
+      - ZO_SMTP_FROM_EMAIL=${SMTP_USER}
     volumes:
       - openobserve-data:/data
     networks:
@@ -356,8 +356,8 @@ services:
       # used while Admin → Settings → Authentication has no saved overlay text of its own.
       - PENDING_USER_OVERLAY_TITLE=Check your email
       - "PENDING_USER_OVERLAY_CONTENT=We sent a verification link to the email address you signed up with. Click it to activate your account, then refresh this page. Link expired or no email? [Send a new link](/api/v1/auths/verify-email/resend) (check your spam folder too)."
-      - SMTP_USER=${PASSBOLT_SMTP_USER}
-      - SMTP_PASSWORD=${PASSBOLT_SMTP_PASSWORD}
+      - SMTP_USER=${SMTP_USER}
+      - SMTP_PASSWORD=${SMTP_PASSWORD}
       # 🔐 SSO + MFA: sign-in goes through authentik (authentik/blueprints/open-webui-sso.yaml),
       # which requires a TOTP code (Google Authenticator etc.). The discovery URL is the Caddy
       # front, reached via the host so issuer/endpoint URLs match what browsers see.
@@ -543,9 +543,9 @@ services:
       AUTHENTIK_EMAIL__HOST: smtp.gmail.com
       AUTHENTIK_EMAIL__PORT: "587"
       AUTHENTIK_EMAIL__USE_TLS: "true"
-      AUTHENTIK_EMAIL__USERNAME: ${PASSBOLT_SMTP_USER}
-      AUTHENTIK_EMAIL__PASSWORD: ${PASSBOLT_SMTP_PASSWORD}
-      AUTHENTIK_EMAIL__FROM: ${PASSBOLT_SMTP_USER}
+      AUTHENTIK_EMAIL__USERNAME: ${SMTP_USER}
+      AUTHENTIK_EMAIL__PASSWORD: ${SMTP_PASSWORD}
+      AUTHENTIK_EMAIL__FROM: ${SMTP_USER}
       # Read by authentik/blueprints/open-webui-sso.yaml (!Env).
       OPEN_WEBUI_HOST: ${OPEN_WEBUI_HOST}
       OPEN_WEBUI_OIDC_CLIENT_ID: ${OPEN_WEBUI_OIDC_CLIENT_ID}
@@ -717,6 +717,7 @@ services:
   # 🔑 PASSBOLT-DB: Dedicated MariaDB instance for Passbolt (its officially
   # tested/supported database — kept separate from the app's postgres-db)
   passbolt-db:
+    profiles: ["passbolt"]
     image: mariadb:11.8.9@sha256:79d59758afc91b89b120b0a8904d637f5a3b3e1c4900f29b740d6d46c72fef68
     container_name: laptop-passbolt-db
     restart: unless-stopped
@@ -735,9 +736,12 @@ services:
     networks:
       - ai-network
 
-  # 🔑 PASSBOLT: Self-hosted password manager, for storing OpenBao root token,
-  # unseal key, and AppRole credentials somewhere more usable than raw files
+  # 🔑 PASSBOLT: Self-hosted password manager. Opt-in (compose profile `passbolt`,
+  # like lgtm): a plain `up` doesn't start it; `--profile passbolt up -d passbolt`
+  # brings it back with its volumes. OpenBao's unseal key and root token are kept
+  # in KeePassXC instead.
   passbolt:
+    profiles: ["passbolt"]
     image: passbolt/passbolt:5.16.0-1-ce@sha256:1768916a04b10a3ade0d2162b00febe602fd7d32cda3808391529600787c67bd
     container_name: laptop-passbolt
     restart: unless-stopped
@@ -750,11 +754,11 @@ services:
       - DATASOURCES_DEFAULT_USERNAME=passbolt
       - DATASOURCES_DEFAULT_PASSWORD=${PASSBOLT_DB_PASSWORD}
       - DATASOURCES_DEFAULT_DATABASE=passbolt
-      - EMAIL_DEFAULT_FROM=${PASSBOLT_SMTP_FROM}
+      - EMAIL_DEFAULT_FROM=${SMTP_FROM}
       - EMAIL_TRANSPORT_DEFAULT_HOST=smtp.gmail.com
       - EMAIL_TRANSPORT_DEFAULT_PORT=587
-      - EMAIL_TRANSPORT_DEFAULT_USERNAME=${PASSBOLT_SMTP_USER}
-      - EMAIL_TRANSPORT_DEFAULT_PASSWORD=${PASSBOLT_SMTP_PASSWORD}
+      - EMAIL_TRANSPORT_DEFAULT_USERNAME=${SMTP_USER}
+      - EMAIL_TRANSPORT_DEFAULT_PASSWORD=${SMTP_PASSWORD}
       - EMAIL_TRANSPORT_DEFAULT_TLS=true
     volumes:
       - passbolt-gpg:/etc/passbolt/gpg

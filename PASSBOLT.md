@@ -4,10 +4,16 @@ Self-hosted password manager for storing the OpenBao root token, unseal key,
 and AppRole credentials somewhere more usable than raw files on disk. See
 `openbao/README.md` for what those values are and where they otherwise live.
 
+Passbolt is opt-in: it's in the compose profile `passbolt`, so a plain
+`docker compose up` doesn't start it. Start it with
+`docker compose -f devops/docker-compose.yml --profile passbolt up -d passbolt`
+(its data stays in the `passbolt-*` volumes while it's off). OpenBao's unseal
+key and root token are kept in KeePassXC, not here.
+
 ## One-time setup
 
-1. Fill in `.env`: `PASSBOLT_SMTP_USER` (your Gmail address) and
-   `PASSBOLT_SMTP_PASSWORD` (a Gmail **App Password**, not your normal
+1. Fill in `.env`: `SMTP_USER` (your Gmail address) and
+   `SMTP_PASSWORD` (a Gmail **App Password**, not your normal
    password — requires 2FA enabled on the account:
    https://myaccount.google.com/apppasswords).
 
