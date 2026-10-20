@@ -4,7 +4,7 @@ import hvac
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, AsyncSession
 
 # 🔐 FETCH SECRETS FROM OPENBAO
-# custom-backend authenticates via AppRole (role/secret id only, no long-lived
+# laptop-backend authenticates via AppRole (role/secret id only, no long-lived
 # token) and reads the KV v2 secret written by openbao/bootstrap.sh, at
 # apps/default/custom-backend (apps/<environment>/<app> layout: the KV v2
 # engine is mounted at apps/, and default is the environment).

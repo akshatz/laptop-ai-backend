@@ -1,11 +1,11 @@
 # Applied automatically by authentik-worker (mounted into /blueprints/custom), and re-applied
 # whenever this file changes. Values in !Env come from the worker's environment (devops/.env).
 #
-# Registers custom-frontend (the React chat UI for custom-backend) as an OIDC application, so its
-# users sign in with the same authentik account (password + TOTP) as Open WebUI. custom-backend is
+# Registers laptop-frontend (the React chat UI for laptop-backend) as an OIDC application, so its
+# users sign in with the same authentik account (password + TOTP) as Open WebUI. laptop-backend is
 # the confidential client: it sends the browser to authentik and receives the callback through
-# custom-frontend's nginx (/api/auth/callback). Keep the redirect URIs in sync with
-# FRONTEND_ORIGINS on custom-backend.
+# laptop-frontend's nginx (/api/auth/callback). Keep the redirect URIs in sync with
+# FRONTEND_ORIGINS on laptop-backend.
 version: 1
 metadata:
   name: laptop-ai-backend - custom-frontend SSO

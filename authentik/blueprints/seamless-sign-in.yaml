@@ -1,4 +1,4 @@
-# Sign in once, every app lets you in (Open WebUI, custom-frontend, OpenBao, opencode, Attu).
+# Sign in once, every app lets you in (Open WebUI, laptop-frontend, OpenBao, opencode, Attu).
 # All their providers use implicit consent, so an authentik session is all they need; the login
 # stage defaulted to session_duration seconds=0 (a browser-session cookie), so closing the browser
 # made every app ask for the password again. Applies to all users.

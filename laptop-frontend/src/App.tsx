@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { api, HttpError, SIGN_IN_URL, type User } from './api';
 import ChatScreen from './screens/ChatScreen';
 
-// Set by custom-backend's /auth/callback when sign-in didn't complete.
+// Set by laptop-backend's /auth/callback when sign-in didn't complete.
 const SIGNIN_ERRORS: Record<string, string> = {
   failed: 'Sign-in did not complete. Please try again.',
   deactivated: 'This account has been deactivated.',

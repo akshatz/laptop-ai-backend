@@ -29,10 +29,10 @@ log = logging.getLogger(__name__)
 # Questions allowed per chat; 0 (default) = no limit. 1 makes every question a new chat, so small
 # models can't mix in earlier topics, at the cost of follow-up questions.
 MAX_QUESTIONS_PER_CHAT = int(os.environ.get("MAX_QUESTIONS_PER_CHAT", "0"))
-# Answers only from the chat's documents and web results: questions the documents don't cover
-# are always searched on the web, and with nothing found the model isn't asked at all
-# (NO_SOURCES_REPLY). false = the earlier behaviour (web search only when the model asks for it,
-# answers may draw on the model's own knowledge).
+# Factual questions (the WEB/NO decision says WEB) are answered only from the chat's documents and
+# web results, and with nothing found the model isn't asked at all (NO_SOURCES_REPLY). Requests
+# that need no facts from the web (recipes, writing, translation, maths, greetings) still use the
+# model's own knowledge. false = factual answers may draw on the model's knowledge too.
 ANSWER_FROM_SOURCES_ONLY = os.environ.get("ANSWER_FROM_SOURCES_ONLY", "true").lower() not in ("false", "0", "no")
 NO_SOURCES_REPLY = "I couldn't find this in your documents or on the web."
 # Regenerations allowed per answer (2: first answer + 2 more, like Open WebUI's Regenerate Limit
@@ -92,7 +92,8 @@ async def list_messages(chat_id: uuid.UUID, user: UserModel = Depends(current_us
 @router.put("/chats/{chat_id}/messages/{message_id}/feedback", response_model=MessageResponse)
 async def rate_message(chat_id: uuid.UUID, message_id: uuid.UUID, payload: MessageFeedback,
                        user: UserModel = Depends(current_user), db: AsyncSession = Depends(get_db)):
-    """Like/dislike an answer in one of the user's own chats (questions can't be rated)."""
+    """Like/dislike an answer in one of the user's own chats (questions can't be rated). The first
+    rating is final: changing or clearing it is a 409 (Regenerate gives a new, unrated answer)."""
     await _own_chat(chat_id, user, db)
     query = await db.execute(
         select(MessageModel).where(MessageModel.id == message_id, MessageModel.chat_id == chat_id,
@@ -101,9 +102,12 @@ async def rate_message(chat_id: uuid.UUID, message_id: uuid.UUID, payload: Messa
     message = query.scalar_one_or_none()
     if not message:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Answer not found.")
+    if message.feedback is not None:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="This answer is already rated.")
+    if payload.rating is None:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Choose 👍 or 👎.")
     message.feedback = payload.rating
-    comment = (payload.comment or "").strip()
-    message.feedback_comment = (comment or None) if payload.rating is not None else None
+    message.feedback_comment = (payload.comment or "").strip() or None
     await db.commit()
     await db.refresh(message)
     return message
@@ -341,9 +345,9 @@ async def open_document(document_id: uuid.UUID, user: UserModel = Depends(curren
 
 async def _generate(chat: UserChatModel, question: str, history: list,
                     rejected: tuple[str, str | None] | None = None) -> tuple[str, bool, list[dict]]:
-    """One answer to `question`: the chat's document chunks from Milvus, web results (always when
-    the documents have nothing and ANSWER_FROM_SOURCES_ONLY is on, else when the question needs
-    them), then the chat's model with `history`.
+    """One answer to `question`: the chat's document chunks from Milvus, web results when the
+    question needs them (web_search.needs_web_search), then the chat's model with `history`
+    (sources-only prompt for those factual questions when ANSWER_FROM_SOURCES_ONLY).
     `rejected` = (previous answer, the user's comment) when regenerating an answer rated 👎: both go
     into the context so the new answer doesn't repeat it.
     Returns (answer, web_searched, web_results); 502 when Ollama can't be reached."""
@@ -357,16 +361,16 @@ async def _generate(chat: UserChatModel, question: str, history: list,
     if retrieved_docs:
         context_parts.append("From the chat's documents:\n" + "\n\n".join(doc.page_content for doc in retrieved_docs))
 
-    # Sources only: the web whenever the documents have nothing; otherwise only when the question
-    # needs it (web_search.needs_web_search).
-    if ANSWER_FROM_SOURCES_ONLY and not retrieved_docs:
-        web_searched = True
-    else:
-        web_searched = await web_search.needs_web_search(question)
+    # The WEB/NO decision (web_search.needs_web_search) says whether the question is about facts
+    # that need the web. With ANSWER_FROM_SOURCES_ONLY, a WEB question is answered only from the
+    # sources (nothing found → NO_SOURCES_REPLY without asking the model); a NO request (recipes,
+    # writing, translation, maths, greetings) may use the model's own knowledge.
+    web_searched = await web_search.needs_web_search(question)
     web_results = await web_search.search(question) if web_searched else []
     if web_results:
         context_parts.append("Web search results:\n" + web_search.as_context(web_results))
-    if ANSWER_FROM_SOURCES_ONLY and not context_parts:
+    strict = ANSWER_FROM_SOURCES_ONLY and web_searched
+    if strict and not context_parts:
         return NO_SOURCES_REPLY, web_searched, []
     context = "\n\n".join(context_parts) or "No relevant context found."
     if rejected:
@@ -377,7 +381,7 @@ async def _generate(chat: UserChatModel, question: str, history: list,
             + ". Don't repeat its mistakes; check the sources above again.\nEarlier answer:\n" + previous
         )
 
-    chain = chat_service.build_rag_chat_chain(chat.model_id, sources_only=ANSWER_FROM_SOURCES_ONLY)
+    chain = chat_service.build_rag_chat_chain(chat.model_id, sources_only=strict)
     try:
         ai_reply = await chain.ainvoke({
             "history": history, "input": question, "context": context, "today": date.today().isoformat(),
@@ -400,6 +404,14 @@ async def send_message(chat_id: uuid.UUID, payload: MessageCreate, user: UserMod
     assistant reply.
     """
     chat = await _own_chat(chat_id, user, db)
+    if payload.model and chat_service._with_tag(payload.model) != chat_service._with_tag(chat.model_id):
+        try:
+            installed = await chat_service.list_chat_models()
+        except Exception as exc:
+            raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=f"Ollama unavailable: {exc}")
+        if chat_service._with_tag(payload.model) not in installed:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Unknown model '{payload.model}'.")
+        chat.model_id = chat_service._with_tag(payload.model)
 
     query = await db.execute(
         select(MessageModel).where(MessageModel.chat_id == chat_id).order_by(MessageModel.created_at)
@@ -415,7 +427,7 @@ async def send_message(chat_id: uuid.UUID, payload: MessageCreate, user: UserMod
         )
 
     # Like other chat apps, a chat still called "New Chat" is named after its first question
-    # (custom-frontend's titleFrom shows the same right away).
+    # (laptop-frontend's titleFrom shows the same right away).
     if not history and chat.title == "New Chat":
         question = " ".join(payload.content.split())
         chat.title = question if len(question) <= 60 else question[:57].rstrip() + "…"

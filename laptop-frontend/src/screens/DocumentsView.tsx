@@ -15,7 +15,7 @@ interface Props {
 
 const MAX_FILES = 5;
 const MAX_BYTES = 10 * 1024 * 1024;
-// Keep in sync with custom-backend/file_text.py.
+// Keep in sync with laptop-backend/file_text.py.
 const ACCEPT = '.pdf,.docx,.txt,.md,.markdown,.csv,.tsv,.json,.html,.htm,.xml,.log,.yaml,.yml';
 
 const size = (n: number) => (n < 1024 ? `${n} B` : n < 1024 * 1024 ? `${(n / 1024).toFixed(0)} KB` : `${(n / 1024 / 1024).toFixed(1)} MB`);

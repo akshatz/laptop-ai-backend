@@ -1,4 +1,4 @@
-"""user_sessions: custom-frontend sign-ins, for the admin's signed-in users view
+"""user_sessions: laptop-frontend sign-ins, for the admin's signed-in users view
 
 Revision ID: f7b3d9e2a184
 Revises: e5a1c8d3f962

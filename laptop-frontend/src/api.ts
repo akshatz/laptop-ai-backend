@@ -1,5 +1,5 @@
 // Every backend call goes through /api, which nginx (container) or Vite (dev) forwards to
-// custom-backend with the prefix stripped. The session is an HttpOnly cookie set by the backend
+// laptop-backend with the prefix stripped. The session is an HttpOnly cookie set by the backend
 // after authentik sign-in; same-origin fetches send it automatically.
 const BASE = '/api';
 
@@ -35,6 +35,7 @@ export interface Message {
   feedback?: Feedback;
   // Answers only: how often this answer was regenerated.
   regenerations?: number;
+  created_at?: string;
 }
 
 export type Feedback = 1 | -1 | null;
@@ -147,7 +148,9 @@ export const api = {
   },
   adminSessions: () => request<SignedInSession[]>('/admin/sessions'),
   documents: (all = false) => request<ChatDocument[]>(all ? '/documents?all=true' : '/documents'),
-  send: (chatId: string, content: string) => request<Message>(`/chats/${chatId}/messages`, { content }),
+  // `model`: the chat switches to it (laptop-backend checks it's installed).
+  send: (chatId: string, content: string, model?: string) =>
+    request<Message>(`/chats/${chatId}/messages`, model ? { content, model } : { content }),
   feedback: (days: number) => request<FeedbackDashboard>(`/feedback?days=${days}`),
   regenerate: (chatId: string, messageId: string) =>
     request<Message>(`/chats/${chatId}/messages/${messageId}/regenerate`, undefined, 'POST'),
