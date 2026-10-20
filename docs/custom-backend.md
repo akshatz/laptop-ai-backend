@@ -9,7 +9,7 @@ Layout: `main.py` (app setup), `db.py` (OpenBao-backed engine), `models.py`, `sc
 Endpoints:
 - `GET /health` — health check
 - `/ui` — minimal static chat page for exercising the chat/RAG endpoints by hand
-- `GET /models` — chat models pulled into Ollama (embedding models left out) plus the default, for the `/ui` model dropdown; 502 when Ollama is down
+- `GET /models` — the `CHAT_MODELS` (default `llama3.2,fast-ai,gemma3:4b`) that are pulled into Ollama, plus the default, for the `/ui` model dropdown; 502 when Ollama is down
 - Users & auth (`routers/auth.py`): `POST /users` (register), `GET /users`, `POST /users/verify`, `POST /users/deactivate`, `POST /users/reactivate`, `POST /login`, `POST /mfa/enable`, `POST /mfa/disable`, `POST /mfa/verify-otp`, `POST /password/change`, `POST /password/forgot`, `POST /password/reset`
 - Chats & RAG (`routers/chats.py`): `POST /chats`, `GET /chats/{chat_id}/messages`, `POST /chats/{chat_id}/messages`, `POST /chats/{chat_id}/documents` (ingest up to 5 documents per request into Milvus)
 

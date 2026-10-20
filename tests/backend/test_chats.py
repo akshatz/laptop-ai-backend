@@ -148,13 +148,14 @@ def _fake_ollama(monkeypatch, handler):
     )
 
 
-async def test_models_lists_chat_models_without_embedding_models(client, monkeypatch):
+async def test_models_lists_only_installed_chat_models(client, monkeypatch):
     def handler(request):
         assert request.url.path == "/api/tags"
-        names = ["llama3.2:latest", "embeddinggemma:latest", "fast-ai:latest", "nomic-embed-text:latest"]
+        names = ["llama3.2:latest", "embeddinggemma:latest", "fast-ai:latest", "gemma3:12b", "photo-ai:latest"]
         return chat_service.httpx.Response(200, json={"models": [{"name": n} for n in names]})
 
     _fake_ollama(monkeypatch, handler)
+    monkeypatch.setattr(chat_service, "CHAT_MODELS", "fast-ai, llama3.2,gemma3:4b")
     response = await client.get("/models")
     assert response.status_code == 200
     assert response.json() == {"default": chat_service.DEFAULT_CHAT_MODEL, "models": ["fast-ai:latest", "llama3.2:latest"]}
