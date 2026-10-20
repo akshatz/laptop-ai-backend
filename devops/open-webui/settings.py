@@ -83,7 +83,7 @@ CONFIG_KEYS = [
     "user.permissions",
 ]
 MODEL_META_KEYS = ["description", "capabilities", "knowledge", "filterIds", "defaultFeatureIds",
-                   "suggestion_prompts", "tags"]
+                   "suggestion_prompts", "tags", "hidden"]
 SECRET_WORDS = ("password", "secret", "api_key", "apikey")
 REDACTED = "REDACTED (kept in the DB)"
 MISSING = object()  # not set in the DB
