@@ -7,7 +7,7 @@
   body { font-family: system-ui, sans-serif; max-width: 720px; margin: 2rem auto; padding: 0 1rem; }
   fieldset { margin-bottom: 1rem; }
   label { display: block; margin-top: 0.5rem; font-size: 0.9rem; }
-  input, textarea { width: 100%; box-sizing: border-box; padding: 0.4rem; margin-top: 0.2rem; }
+  input, textarea, select { width: 100%; box-sizing: border-box; padding: 0.4rem; margin-top: 0.2rem; }
   textarea { min-height: 4rem; }
   button { margin-top: 0.6rem; padding: 0.4rem 1rem; cursor: pointer; }
   #messages { border: 1px solid #ccc; border-radius: 6px; padding: 0.75rem; min-height: 8rem; margin-bottom: 0.5rem; }
@@ -26,7 +26,7 @@
     <input id="userId" placeholder="an existing user's id from /users">
   </label>
   <label>Model
-    <input id="modelId" value="llama3.2">
+    <select id="modelId"><option value="llama3.2">llama3.2</option></select>
   </label>
   <button onclick="createChat()">Create chat</button>
   <div>Chat ID: <code id="chatId">(none yet)</code></div>
@@ -57,6 +57,22 @@ let chatId = null;
 function setStatus(text) {
   document.getElementById('status').textContent = text || '';
 }
+
+// Fill the model dropdown from Ollama; on failure the llama3.2 option stays.
+async function loadModels() {
+  try {
+    const res = await fetch('/models');
+    if (!res.ok) throw new Error(await res.text());
+    const { default: def, models } = await res.json();
+    if (!models.length) return;
+    const wanted = def.includes(':') ? def : def + ':latest';
+    const select = document.getElementById('modelId');
+    select.replaceChildren(...models.map(name => new Option(name, name, false, name === wanted)));
+  } catch (err) {
+    setStatus('Could not load the model list: ' + err.message);
+  }
+}
+loadModels();
 
 async function createChat() {
   setStatus('');

@@ -1,5 +1,6 @@
 import os
 import re
+import httpx
 from langchain_core.documents import Document
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_milvus import Milvus
@@ -24,6 +25,14 @@ RAG_PROMPT = ChatPromptTemplate.from_messages([
 def build_rag_chat_chain(model: str):
     llm = ChatOllama(base_url=OLLAMA_BASE_URL, model=model, temperature=CHAT_TEMPERATURE)
     return RAG_PROMPT | llm
+
+async def list_chat_models() -> list[str]:
+    """Names of the models pulled into Ollama that can chat (embedding models left out)."""
+    async with httpx.AsyncClient(base_url=OLLAMA_BASE_URL, timeout=5) as client:
+        response = await client.get("/api/tags")
+        response.raise_for_status()
+    names = [m["name"] for m in response.json().get("models", [])]
+    return sorted(n for n in names if "embed" not in n.lower())
 
 # 🧬 Milvus vector store for chat document retrieval (RAG), same instance
 # Open WebUI uses for its own document uploads, but a separate collection so

@@ -138,3 +138,28 @@ def test_embeddinggemma_task_prefixes(monkeypatch):
 
 def test_collection_is_named_per_embedding_model():
     assert chat_service.MILVUS_COLLECTION == "custom_backend_docs_embeddinggemma"
+
+
+def _fake_ollama(monkeypatch, handler):
+    real_client = chat_service.httpx.AsyncClient
+    monkeypatch.setattr(
+        chat_service.httpx, "AsyncClient",
+        lambda **kwargs: real_client(transport=chat_service.httpx.MockTransport(handler), **kwargs),
+    )
+
+
+async def test_models_lists_chat_models_without_embedding_models(client, monkeypatch):
+    def handler(request):
+        assert request.url.path == "/api/tags"
+        names = ["llama3.2:latest", "embeddinggemma:latest", "fast-ai:latest", "nomic-embed-text:latest"]
+        return chat_service.httpx.Response(200, json={"models": [{"name": n} for n in names]})
+
+    _fake_ollama(monkeypatch, handler)
+    response = await client.get("/models")
+    assert response.status_code == 200
+    assert response.json() == {"default": chat_service.DEFAULT_CHAT_MODEL, "models": ["fast-ai:latest", "llama3.2:latest"]}
+
+
+async def test_models_ollama_down_is_a_502(client, monkeypatch):
+    _fake_ollama(monkeypatch, lambda request: chat_service.httpx.Response(500))
+    assert (await client.get("/models")).status_code == 502
