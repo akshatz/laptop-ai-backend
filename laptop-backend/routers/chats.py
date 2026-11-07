@@ -45,21 +45,29 @@ async def _optional_user(request: Request, db: AsyncSession = Depends(get_db)) -
     except HTTPException:
         return None
 
+# Who may use the paid cloud models: "admins" (default) or "all" signed-in users.
+CLOUD_MODELS_FOR = os.environ.get("CLOUD_MODELS_FOR", "admins").strip().lower()
+
+def _may_use_cloud(user: UserModel) -> bool:
+    return CLOUD_MODELS_FOR == "all" or user.role == "admin"
+
 def _check_model_allowed(model: str, user: UserModel) -> None:
-    """Cloud models spend paid credit: admins only, and only the ones offered (403 otherwise)."""
+    """Cloud models spend paid credit: only for CLOUD_MODELS_FOR, and only the ones offered (403
+    otherwise)."""
     if chat_service.is_cloud_model(model) and (
-        user.role != "admin" or model not in chat_service.list_cloud_models()
+        not _may_use_cloud(user) or model not in chat_service.list_cloud_models()
     ):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=f"Model '{model}' is not available to you.")
 
 @router.get("/models")
 async def list_models(user: UserModel | None = Depends(_optional_user)):
-    """Chat models available in Ollama, for the /ui model dropdown, plus the cloud models for admins."""
+    """Chat models available in Ollama, for the /ui model dropdown, plus the cloud models for
+    CLOUD_MODELS_FOR (admins by default)."""
     try:
         models = await chat_service.list_chat_models()
     except Exception as exc:
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=f"Ollama unavailable: {exc}")
-    if user and user.role == "admin":
+    if user and _may_use_cloud(user):
         models += chat_service.list_cloud_models()
     return {"default": chat_service.DEFAULT_CHAT_MODEL, "models": models,
             "max_questions_per_chat": MAX_QUESTIONS_PER_CHAT, "max_regenerations": MAX_REGENERATIONS}
