@@ -32,9 +32,9 @@ export $(grep -v '^#' .env | xargs)
 cd database && alembic upgrade head
 ```
 
-## Paid cloud models (admins only)
+## Paid cloud models (admins, or everyone)
 
-Besides the Ollama models in `CHAT_MODELS`, admins (`users.role = 'admin'`) can pick paid OpenRouter models in laptop-frontend's model dropdown, shown as "<name> (paid)". Their ids are `openrouter/<OpenRouter id>`; `CLOUD_MODELS` lists them (default `anthropic/claude-haiku-5.5,anthropic/claude-sonnet-5.5,openai/gpt-5.4-mini`; set `CLOUD_MODELS` in `.env` to change it, then `docker compose -f devops/docker-compose.yml up -d laptop-backend`). The key is `openrouter_api_key` in OpenBao's `apps/default/custom-backend` (`bootstrap.sh` writes it when `OPENROUTER_API_KEY` is set in `.env`; `OPENROUTER_API_KEY` in laptop-backend's environment is the fallback). Without a key no cloud model is offered. `/models` lists them only for admins, and sending or regenerating with one is a 403 for anyone else (also for a chat created with a cloud `model_id`). The WEB/NO web-search decision still runs on the local model. To add only the key without re-running all of `bootstrap.sh`:
+Besides the Ollama models in `CHAT_MODELS`, admins (`users.role = 'admin'`) can pick paid OpenRouter models in laptop-frontend's model dropdown, shown as "<name> (paid)". Their ids are `openrouter/<OpenRouter id>`; `CLOUD_MODELS` lists them (default `anthropic/claude-haiku-5.5,anthropic/claude-sonnet-5.5,openai/gpt-5.4-mini`; set `CLOUD_MODELS` in `.env` to change it, then `docker compose -f devops/docker-compose.yml up -d laptop-backend`). The key is `openrouter_api_key` in OpenBao's `apps/default/custom-backend` (`bootstrap.sh` writes it when `OPENROUTER_API_KEY` is set in `.env`; `OPENROUTER_API_KEY` in laptop-backend's environment is the fallback). Without a key no cloud model is offered. `CLOUD_MODELS_FOR=all` in `.env` offers them to every signed-in user instead (keep a credit limit on the key). `/models` lists them only for those users, and sending or regenerating with one is a 403 for anyone else (also for a chat created with a cloud `model_id`). The WEB/NO web-search decision still runs on the local model. To add only the key without re-running all of `bootstrap.sh`:
 
 ```bash
 bao kv patch apps/default/custom-backend openrouter_api_key="$OPENROUTER_API_KEY"

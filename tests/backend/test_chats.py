@@ -225,6 +225,16 @@ async def test_cloud_models_are_listed_only_for_admins(client, signed_in, sessio
     assert (await client.get("/models")).json()["models"] == ["llama3.2:latest", CLOUD]
 
 
+async def test_cloud_models_for_all_users(client, chat_id, chain, vector_store, web, cloud, monkeypatch):
+    monkeypatch.setattr(routers.chats, "CLOUD_MODELS_FOR", "all")
+    assert CLOUD in (await client.get("/models")).json()["models"]
+    response = await client.post(f"/chats/{chat_id}/messages", json={"content": "hi", "model": CLOUD})
+    assert response.status_code == 201 and chain.models == [CLOUD]
+    # Signed out still sees only the local models.
+    client.cookies.clear()
+    assert CLOUD not in (await client.get("/models")).json()["models"]
+
+
 async def test_no_cloud_models_without_a_key(client, signed_in, session_maker, cloud, monkeypatch):
     monkeypatch.setattr(chat_service, "OPENROUTER_API_KEY", "")
     await _make_admin(session_maker, signed_in)
