@@ -1,4 +1,4 @@
-"""devops/opencode/opencode.json: local models plus pinned OpenRouter/OpenAI ones, and every model it names exists."""
+"""devops/opencode/opencode.json: local models plus pinned OpenRouter ones, and every model it names exists."""
 
 import json
 import re
@@ -6,8 +6,7 @@ from pathlib import Path
 
 CONFIG = json.loads((Path(__file__).resolve().parents[2] / "devops" / "opencode" / "opencode.json").read_text())
 LOCAL_PROVIDERS = {"openwebui", "ollama"}
-PAID_PROVIDERS = {"openrouter", "openai"}
-PROVIDERS = LOCAL_PROVIDERS | PAID_PROVIDERS
+PROVIDERS = LOCAL_PROVIDERS | {"openrouter"}
 
 
 def listed_models():
@@ -20,14 +19,11 @@ def test_only_listed_providers_are_enabled():
     assert set(CONFIG["provider"]) <= PROVIDERS
 
 
-def test_paid_providers_are_opt_in():
+def test_openrouter_is_paid_opt_in():
     """The default and title models stay local, so nothing spends credit unless picked."""
-    assert CONFIG["provider"]["openrouter"]["options"] == {
-        "baseURL": "https://openrouter.ai/api/v1", "apiKey": "{env:OPENROUTER_API_KEY}"}
-    assert CONFIG["provider"]["openai"]["options"] == {
-        "baseURL": "https://api.openai.com/v1", "apiKey": "{env:OPENAI_API_KEY}"}
-    for model in (CONFIG["model"], CONFIG["small_model"]):
-        assert model.split("/", 1)[0] in LOCAL_PROVIDERS
+    openrouter = CONFIG["provider"]["openrouter"]
+    assert openrouter["options"] == {"baseURL": "https://openrouter.ai/api/v1", "apiKey": "{env:OPENROUTER_API_KEY}"}
+    assert not CONFIG["model"].startswith("openrouter/") and not CONFIG["small_model"].startswith("openrouter/")
 
 
 def test_providers_point_inside_the_docker_network():
@@ -45,7 +41,7 @@ def test_default_and_title_models_are_listed():
 def test_model_ids_look_like_ollama_names():
     """Ollama ids are name:tag; `photo-ai-latest` (a hyphen for the colon) gave "Model not found"."""
     for model in listed_models():
-        if model.split("/", 1)[0] in PAID_PROVIDERS:
+        if model.startswith("openrouter/"):
             continue
         assert re.fullmatch(r"[a-z0-9.-]+:[a-z0-9.-]+", model.split("/", 1)[1]), model
 

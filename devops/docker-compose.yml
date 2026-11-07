@@ -62,8 +62,6 @@ services:
       # OpenRouter key (paid credit) for the "openrouter" provider; admin container only, never
       # opencode-user.json. Empty leaves those models listed but failing.
       - OPENROUTER_API_KEY=${OPENROUTER_API_KEY:-}
-      # OpenAI key (paid credit) for the "openai" provider; same rules as OpenRouter's.
-      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
     volumes:
       - ./opencode/opencode.json:/root/.config/opencode/opencode.json:ro
       - opencode-data:/root/.local/share/opencode
