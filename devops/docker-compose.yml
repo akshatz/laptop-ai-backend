@@ -59,6 +59,9 @@ services:
       # Open WebUI API key (Settings → Account → API Keys) for the "openwebui" provider in
       # opencode.json; empty leaves only the direct "ollama" provider usable.
       - OPENWEBUI_API_KEY=${OPENWEBUI_API_KEY:-}
+      # OpenAI key (paid credit) for the "openai" provider; admin container only, never
+      # opencode-user.json. Empty leaves those models listed but failing.
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
     volumes:
       - ./opencode/opencode.json:/root/.config/opencode/opencode.json:ro
       - opencode-data:/root/.local/share/opencode
