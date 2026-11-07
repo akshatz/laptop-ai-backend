@@ -33,6 +33,18 @@
         "anthropic/claude-sonnet-5.5": { "name": "Claude Sonnet 5.5 (OpenRouter)" },
         "openai/gpt-5.4-mini": { "name": "GPT-5.4 mini (OpenRouter)" }
       }
+    },
+    "openai": {
+      "npm": "@ai-sdk/openai-compatible",
+      "name": "OpenAI (paid credit)",
+      "options": {
+        "baseURL": "https://api.openai.com/v1",
+        "apiKey": "{env:OPENAI_API_KEY}"
+      },
+      "models": {
+        "gpt-5.4-nano": { "name": "GPT-5.4 nano (OpenAI)" },
+        "gpt-5.4-mini": { "name": "GPT-5.4 mini (OpenAI)" }
+      }
     }
   },
   "mcp": {
@@ -46,7 +58,7 @@
       "enabled": true
     }
   },
-  "enabled_providers": ["openwebui", "ollama", "openrouter"],
+  "enabled_providers": ["openwebui", "ollama", "openrouter", "openai"],
   "model": "openwebui/llama3.2:latest",
   "small_model": "openwebui/llama3.2:latest",
   "autoupdate": false,
