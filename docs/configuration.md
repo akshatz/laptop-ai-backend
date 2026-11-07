@@ -38,6 +38,7 @@ cp .env.example .env
 | `OPENCODE_SERVER_PASSWORD` | `opencode` | opencode's own login (username `opencode`) |
 | `OPENCODE_BASIC_AUTH` | `provision.py` | base64 of `opencode:<OPENCODE_SERVER_PASSWORD>`: the admin's `laptop-opencode` login, which the provisioner puts in their authentik headers. Regenerate when the password changes: `printf 'opencode:%s' "$OPENCODE_SERVER_PASSWORD" \| base64 -w0` |
 | `OPENWEBUI_API_KEY` | `opencode` | Open WebUI API key (Settings → Account → API Keys) for opencode's `openwebui` provider |
+| `OPENROUTER_API_KEY` | `opencode` | Optional OpenRouter key (paid credit) for opencode's `openrouter` provider, admin's `laptop-opencode` only; see [cloud-models.md](cloud-models.md) |
 | `RAG_RERANKING_MODEL` | `open-webui` | Reranker for web and document search (default `cross-encoder/ms-marco-MiniLM-L6-v2`); a saved setting in Open WebUI overrides it |
 
 `laptop-backend` does not read `POSTGRES_PASSWORD` or a `DATABASE_URL` directly — it fetches its Postgres credentials from OpenBao (see below) at startup.
