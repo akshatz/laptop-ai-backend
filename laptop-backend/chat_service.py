@@ -5,6 +5,7 @@ from langchain_core.documents import Document
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_milvus import Milvus
 from langchain_ollama import ChatOllama, OllamaEmbeddings
+from langchain_openai import ChatOpenAI
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from db import secrets
 
@@ -49,8 +50,30 @@ SOURCES_ONLY_PROMPT = ChatPromptTemplate.from_messages([
     ("human", "{input}"),
 ])
 
+# ☁️ Paid cloud models through OpenRouter (prepaid credit), for admins only (routers/chats.py).
+# Ids are "openrouter/<OpenRouter model id>"; none are offered while no key is set. The key comes
+# from OpenBao (openrouter_api_key in apps/default/custom-backend), else OPENROUTER_API_KEY.
+CLOUD_PREFIX = "openrouter/"
+OPENROUTER_BASE_URL = os.environ.get("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1")
+OPENROUTER_API_KEY = secrets.get("openrouter_api_key") or os.environ.get("OPENROUTER_API_KEY", "")
+CLOUD_MODELS = os.environ.get(
+    "CLOUD_MODELS", "anthropic/claude-haiku-5.5,anthropic/claude-sonnet-5.5,openai/gpt-5.4-mini"
+)
+
+def is_cloud_model(name: str) -> bool:
+    return name.startswith(CLOUD_PREFIX)
+
+def list_cloud_models() -> list[str]:
+    if not OPENROUTER_API_KEY:
+        return []
+    return [CLOUD_PREFIX + n.strip() for n in CLOUD_MODELS.split(",") if n.strip()]
+
 def build_rag_chat_chain(model: str, sources_only: bool = False):
-    llm = ChatOllama(base_url=OLLAMA_BASE_URL, model=model, temperature=CHAT_TEMPERATURE)
+    if is_cloud_model(model):
+        llm = ChatOpenAI(base_url=OPENROUTER_BASE_URL, api_key=OPENROUTER_API_KEY,
+                         model=model.removeprefix(CLOUD_PREFIX), temperature=CHAT_TEMPERATURE)
+    else:
+        llm = ChatOllama(base_url=OLLAMA_BASE_URL, model=model, temperature=CHAT_TEMPERATURE)
     return (SOURCES_ONLY_PROMPT if sources_only else RAG_PROMPT) | llm
 
 # Models offered in /ui's dropdown, comma-separated; a name without a tag means `:latest`.
@@ -59,7 +82,7 @@ def build_rag_chat_chain(model: str, sources_only: bool = False):
 CHAT_MODELS = os.environ.get("CHAT_MODELS", "llama3.2,fast-ai,gemma3:4b")
 
 def _with_tag(name: str) -> str:
-    return name if ":" in name else name + ":latest"
+    return name if ":" in name or is_cloud_model(name) else name + ":latest"
 
 async def list_chat_models() -> list[str]:
     """The CHAT_MODELS that are pulled into Ollama, in CHAT_MODELS order."""

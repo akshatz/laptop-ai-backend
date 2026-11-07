@@ -524,7 +524,7 @@ export default function ChatScreen({ user, notice, onSignOut, onSessionExpired }
                 <select className="composer-model" value={model} onChange={e => setModel(e.target.value)} disabled={busy || !user}
                   aria-label="Model" title={chat ? 'Model for the next question in this chat' : 'Model for this chat'}>
                   {(models.includes(model) ? models : [model, ...models]).map(m => (
-                    <option key={m} value={m}>{m.replace(/:latest$/, '')}</option>
+                    <option key={m} value={m}>{m.startsWith('openrouter/') ? `${m.split('/').pop()} (paid)` : m.replace(/:latest$/, '')}</option>
                   ))}
                 </select>
                 <button type="submit" disabled={busy || !input.trim()} aria-label="Send">➤</button>
