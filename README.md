@@ -79,7 +79,7 @@ All services share the `ai-network` Docker bridge network, orchestrated via [dev
 |---|---|---|
 | `postgres-db` | PostgreSQL 16 (laptop-backend's database plus the `open_webui` and `authentik` databases) | 5433 → 5432 |
 | `ollama` | Local LLM inference engine (chat models and the `embeddinggemma` embedding model) | (internal) |
-| `open-webui` | Chat UI: Ollama models, web search, RAG on Milvus, sign-in through authentik, extended by the Functions in [devops/open-webui/functions/](devops/open-webui/functions/) | 8082 → 8080 |
+| `open-webui` | Chat UI: Ollama models (plus optional paid cloud models, admin-only, see [docs/cloud-models.md](docs/cloud-models.md)), web search, RAG on Milvus, sign-in through authentik, extended by the Functions in [devops/open-webui/functions/](devops/open-webui/functions/) | 8082 → 8080 |
 | `open-webui-proxy` | Caddy HTTPS front for devices on the LAN (cert from Caddy's local CA): Open WebUI on 8444, authentik on 9443, opencode on 4443 and Attu on 3443 (both behind authentik sign-in) | 8444 → 443, 9443, 4443, 3443 |
 | `authentik-server` + `authentik-worker` | SSO with TOTP (Google Authenticator) for Open WebUI, OpenBao and laptop-frontend: one sign-in lasts 7 days and covers every app ([One sign-in for all apps](docs/sso.md#one-sign-in-for-all-apps)); sign-up, invitations, password reset (see [Open WebUI SSO + MFA](docs/sso.md#open-webui-sso--mfa-authentik)) | (through `open-webui-proxy`, 9443) |
 | `opencode` | Coding agent with a web UI (the admin's; everyone else gets their own `opencode-u<pk>` container from `provision.py`); stopped when idle (see [opencode](docs/opencode.md#opencode)) | 127.0.0.1:4096; LAN through `open-webui-proxy`, 4443 |
@@ -148,6 +148,7 @@ Note: OpenBao starts **sealed** after every container restart or host reboot —
 - [docs/laptop-backend.md](docs/laptop-backend.md) — the FastAPI backend and its database migrations
 - [docs/laptop-frontend.md](docs/laptop-frontend.md) — the React chat UI for the backend: running it, developing it
 - [docs/opencode.md](docs/opencode.md) — the opencode coding agent
+- [docs/cloud-models.md](docs/cloud-models.md) — optional paid models (OpenRouter, OpenAI) in Open WebUI and opencode, and checking what they cost
 - [docs/tests.md](docs/tests.md) — the test suite, how to run it, known gaps
 - [openbao/README.md](openbao/README.md) — OpenBao setup, unsealing, logins and backups
 - [PASSBOLT.md](PASSBOLT.md) — Passbolt admin registration and use
