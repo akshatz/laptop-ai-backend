@@ -82,7 +82,8 @@ put "$APPS/custom-backend" \
   milvus_root_password="$MILVUS_ROOT_PASSWORD" \
   session_secret="$CUSTOM_BACKEND_SESSION_SECRET" \
   custom_frontend_oidc_client_id="$CUSTOM_FRONTEND_OIDC_CLIENT_ID" \
-  custom_frontend_oidc_client_secret="$CUSTOM_FRONTEND_OIDC_CLIENT_SECRET"
+  custom_frontend_oidc_client_secret="$CUSTOM_FRONTEND_OIDC_CLIENT_SECRET" \
+  ${OPENROUTER_API_KEY:+openrouter_api_key="$OPENROUTER_API_KEY"}
 
 # The other services still read these from .env; these are copies kept in one place for the
 # human logins (bao-admin / bao-readonly). Update .env and re-run this script when rotating.

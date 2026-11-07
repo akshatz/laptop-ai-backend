@@ -6,7 +6,7 @@ import uuid
 from datetime import date, datetime, timedelta, timezone
 from typing import List
 from urllib.parse import quote
-from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, Response, UploadFile, status
+from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, Request, Response, UploadFile, status
 from langchain_core.messages import AIMessage, HumanMessage
 from sqlalchemy import case, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -39,13 +39,28 @@ NO_SOURCES_REPLY = "I couldn't find this in your documents or on the web."
 # Function); 0 = no limit.
 MAX_REGENERATIONS = int(os.environ.get("MAX_REGENERATIONS", "2"))
 
+async def _optional_user(request: Request, db: AsyncSession = Depends(get_db)) -> UserModel | None:
+    try:
+        return await current_user(request, db)
+    except HTTPException:
+        return None
+
+def _check_model_allowed(model: str, user: UserModel) -> None:
+    """Cloud models spend paid credit: admins only, and only the ones offered (403 otherwise)."""
+    if chat_service.is_cloud_model(model) and (
+        user.role != "admin" or model not in chat_service.list_cloud_models()
+    ):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=f"Model '{model}' is not available to you.")
+
 @router.get("/models")
-async def list_models():
-    """Chat models available in Ollama, for the /ui model dropdown."""
+async def list_models(user: UserModel | None = Depends(_optional_user)):
+    """Chat models available in Ollama, for the /ui model dropdown, plus the cloud models for admins."""
     try:
         models = await chat_service.list_chat_models()
     except Exception as exc:
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=f"Ollama unavailable: {exc}")
+    if user and user.role == "admin":
+        models += chat_service.list_cloud_models()
     return {"default": chat_service.DEFAULT_CHAT_MODEL, "models": models,
             "max_questions_per_chat": MAX_QUESTIONS_PER_CHAT, "max_regenerations": MAX_REGENERATIONS}
 
@@ -389,7 +404,7 @@ async def _generate(chat: UserChatModel, question: str, history: list,
     except Exception as exc:
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=f"Failed to reach the Ollama model '{chat.model_id}': {exc}",
+            detail=f"Failed to reach the model '{chat.model_id}': {exc}",
         )
 
     return ai_reply.content, web_searched, web_results
@@ -405,13 +420,18 @@ async def send_message(chat_id: uuid.UUID, payload: MessageCreate, user: UserMod
     """
     chat = await _own_chat(chat_id, user, db)
     if payload.model and chat_service._with_tag(payload.model) != chat_service._with_tag(chat.model_id):
-        try:
-            installed = await chat_service.list_chat_models()
-        except Exception as exc:
-            raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=f"Ollama unavailable: {exc}")
-        if chat_service._with_tag(payload.model) not in installed:
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Unknown model '{payload.model}'.")
+        if chat_service.is_cloud_model(payload.model):
+            _check_model_allowed(payload.model, user)
+        else:
+            try:
+                installed = await chat_service.list_chat_models()
+            except Exception as exc:
+                raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=f"Ollama unavailable: {exc}")
+            if chat_service._with_tag(payload.model) not in installed:
+                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Unknown model '{payload.model}'.")
         chat.model_id = chat_service._with_tag(payload.model)
+    # Also covers a chat created with a cloud model_id, or an admin who is no longer one.
+    _check_model_allowed(chat.model_id, user)
 
     query = await db.execute(
         select(MessageModel).where(MessageModel.chat_id == chat_id).order_by(MessageModel.created_at)
@@ -466,6 +486,7 @@ async def regenerate_answer(chat_id: uuid.UUID, message_id: uuid.UUID, user: Use
     rating is cleared, `regenerations` counts up). Only the latest answer can be regenerated, at
     most MAX_REGENERATIONS times (409 after that)."""
     chat = await _own_chat(chat_id, user, db)
+    _check_model_allowed(chat.model_id, user)
     messages = (await db.execute(
         select(MessageModel).where(MessageModel.chat_id == chat_id).order_by(MessageModel.created_at)
     )).scalars().all()
