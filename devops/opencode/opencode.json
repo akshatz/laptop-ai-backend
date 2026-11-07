@@ -20,6 +20,19 @@
       "models": {
         "llama3.2:latest": { "name": "Llama 3.2 3B" }
       }
+    },
+    "openrouter": {
+      "npm": "@ai-sdk/openai-compatible",
+      "name": "OpenRouter (paid credit)",
+      "options": {
+        "baseURL": "https://openrouter.ai/api/v1",
+        "apiKey": "{env:OPENROUTER_API_KEY}"
+      },
+      "models": {
+        "anthropic/claude-haiku-5.5": { "name": "Claude Haiku 5.5 (OpenRouter)" },
+        "anthropic/claude-sonnet-5.5": { "name": "Claude Sonnet 5.5 (OpenRouter)" },
+        "openai/gpt-5.4-mini": { "name": "GPT-5.4 mini (OpenRouter)" }
+      }
     }
   },
   "mcp": {
@@ -33,7 +46,7 @@
       "enabled": true
     }
   },
-  "enabled_providers": ["openwebui", "ollama"],
+  "enabled_providers": ["openwebui", "ollama", "openrouter"],
   "model": "openwebui/llama3.2:latest",
   "small_model": "openwebui/llama3.2:latest",
   "autoupdate": false,
