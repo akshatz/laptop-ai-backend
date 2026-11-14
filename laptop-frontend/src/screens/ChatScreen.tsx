@@ -5,7 +5,16 @@ import FeedbackView from './FeedbackView';
 import LibraryView from './LibraryView';
 import AdminSessionsView from './AdminSessionsView';
 import UploadSnackbar, { fromUploaded, type UploadItem } from './UploadSnackbar';
-import { api, HttpError, SIGN_IN_URL, type Chat, type Feedback, type Message, type User } from '../api';
+import { api, documentUrl, HttpError, SIGN_IN_URL, type Chat, type ChatDocument, type Feedback, type Message, type User } from '../api';
+
+function fileIcon(name: string) {
+  const n = name.toLowerCase();
+  if (n.endsWith('.pdf')) return '📕';
+  if (n.endsWith('.docx')) return '📘';
+  if (/\.(png|jpe?g|gif|webp)$/.test(n)) return '🖼️';
+  if (/\.(csv|tsv)$/.test(n)) return '📊';
+  return '📄';
+}
 
 interface Props {
   // null: signed out; the same layout asks the person to sign in.
@@ -92,6 +101,15 @@ export default function ChatScreen({ user, notice, onSignOut, onSessionExpired }
   const [uploads, setUploads] = useState<UploadItem[]>([]);
   // Bumped when an embedding finishes, so the Documents list reloads.
   const [docsVersion, setDocsVersion] = useState(0);
+  // The open chat's documents, shown as chips above the message box (replaced versions left out).
+  const [chatDocs, setChatDocs] = useState<ChatDocument[]>([]);
+  useEffect(() => {
+    if (!chat || !user) { setChatDocs([]); return; }
+    const id = chat.id;
+    api.documents()
+      .then(all => setChatDocs(all.filter(d => d.chat_id === id && d.status !== 'replaced')))
+      .catch(() => setChatDocs([]));
+  }, [chat?.id, docsVersion, uploads]);
   const endRef = useRef<HTMLDivElement>(null);
   const scrollRef = useRef<HTMLElement>(null);
   const attachRef = useRef<HTMLInputElement>(null);
@@ -560,6 +578,26 @@ export default function ChatScreen({ user, notice, onSignOut, onSessionExpired }
               </div>
             ) : (
             <form onSubmit={send} className="composer">
+              {(chatDocs.length > 0 || uploads.some(u => u.status === 'uploading')) && (
+                <div className="attachments" aria-label="Documents in this chat">
+                  {chatDocs.map(d => (
+                    <a key={d.id} className={'attachment ' + d.status} href={documentUrl(d.id)} target="_blank" rel="noreferrer"
+                      title={d.status === 'failed' ? (d.error ?? 'Failed') : d.filename}>
+                      <span aria-hidden="true">{fileIcon(d.filename)}</span>
+                      <span className="attachment-name">{d.filename}</span>
+                      {d.status === 'embedding' && <span className="attachment-state">⏳</span>}
+                      {d.status === 'failed' && <span className="attachment-state">✕</span>}
+                    </a>
+                  ))}
+                  {uploads.filter(u => u.status === 'uploading').map(u => (
+                    <span key={u.key} className="attachment embedding">
+                      <span aria-hidden="true">{fileIcon(u.filename)}</span>
+                      <span className="attachment-name">{u.filename}</span>
+                      <span className="attachment-state">⏳</span>
+                    </span>
+                  ))}
+                </div>
+              )}
               <div className="composer-box">
                 <button type="button" className="composer-add" disabled={busy || !user}
                   onClick={() => attachRef.current?.click()}
