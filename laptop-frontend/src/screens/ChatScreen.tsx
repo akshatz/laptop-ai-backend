@@ -3,6 +3,7 @@ import { copyText } from '../copy';
 import DocumentsView, { MAX_BYTES, MAX_FILES } from './DocumentsView';
 import FeedbackView from './FeedbackView';
 import LibraryView from './LibraryView';
+import SidebarDocuments from './SidebarDocuments';
 import AdminSessionsView from './AdminSessionsView';
 import UploadSnackbar, { fromUploaded, type UploadItem } from './UploadSnackbar';
 import { api, documentUrl, HttpError, SIGN_IN_URL, type Chat, type ChatDocument, type Feedback, type Message, type User } from '../api';
@@ -452,6 +453,11 @@ export default function ChatScreen({ user, notice, onSignOut, onSessionExpired }
             </button>
           ))}
         </nav>
+
+        {user && (
+          <SidebarDocuments reloadKey={docsVersion}
+            onOpenChat={id => { const c = chats.find(x => x.id === id); if (c) openChat(c); }} />
+        )}
 
         <div className="account">
           {user ? (

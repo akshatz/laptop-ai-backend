@@ -276,3 +276,18 @@ button.link { background: none; border: none; padding: 0; color: var(--accent); 
 .history-title { display: flex; align-items: center; gap: 0.4rem; font-weight: 600; }
 .history-meta { font-size: 0.82rem; margin-top: 0.2rem; }
 .history-meta code { font-size: 0.78rem; }
+
+/* Sidebar Documents (SidebarDocuments.tsx): files once, expanding to their versions */
+.side-docs { flex: 0 1 auto; max-height: 35%; overflow-y: auto; min-height: 0; }
+.side-doc-file { display: flex; align-items: center; gap: 0.35rem; width: 100%; text-align: left; background: none; border: none; border-radius: 8px; padding: 0.35rem 0.5rem; font-size: 0.9rem; cursor: pointer; color: inherit; }
+.side-doc-file:hover { background: var(--hover); }
+.side-doc-caret { width: 0.8rem; color: var(--muted); font-size: 0.75rem; }
+.side-doc-name { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.side-doc-count { flex: none; font-size: 0.7rem; padding: 0 0.4rem; border-radius: 999px; background: var(--hover); color: var(--muted); }
+.side-doc-versions { list-style: none; margin: 0.1rem 0 0.4rem 1.2rem; padding: 0 0 0 0.6rem; border-left: 2px solid var(--border); }
+.side-doc-versions li { position: relative; padding: 0.2rem 0 0.35rem 0.3rem; font-size: 0.8rem; }
+.side-doc-versions li::before { content: ''; position: absolute; left: -1rem; top: 0.5rem; width: 0.55rem; height: 0.55rem; border-radius: 50%; background: var(--border); }
+.side-doc-versions li.latest::before { background: var(--accent); }
+.side-doc-versions a { font-weight: 600; text-decoration: none; }
+.side-doc-versions small { display: block; color: var(--muted); }
+.side-doc-chat { display: block; max-width: 100%; padding: 0; font-size: 0.78rem; text-align: left; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
