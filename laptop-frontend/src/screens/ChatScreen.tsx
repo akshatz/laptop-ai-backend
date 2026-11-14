@@ -578,42 +578,45 @@ export default function ChatScreen({ user, notice, onSignOut, onSessionExpired }
               </div>
             ) : (
             <form onSubmit={send} className="composer">
-              {(chatDocs.length > 0 || uploads.some(u => u.status === 'uploading')) && (
-                <div className="attachments" aria-label="Documents in this chat">
-                  {chatDocs.map(d => (
-                    <a key={d.id} className={'attachment ' + d.status} href={documentUrl(d.id)} target="_blank" rel="noreferrer"
-                      title={d.status === 'failed' ? (d.error ?? 'Failed') : d.filename}>
-                      <span aria-hidden="true">{fileIcon(d.filename)}</span>
-                      <span className="attachment-name">{d.filename}</span>
-                      {d.status === 'embedding' && <span className="attachment-state">⏳</span>}
-                      {d.status === 'failed' && <span className="attachment-state">✕</span>}
-                    </a>
-                  ))}
-                  {uploads.filter(u => u.status === 'uploading').map(u => (
-                    <span key={u.key} className="attachment embedding">
-                      <span aria-hidden="true">{fileIcon(u.filename)}</span>
-                      <span className="attachment-name">{u.filename}</span>
-                      <span className="attachment-state">⏳</span>
-                    </span>
-                  ))}
-                </div>
-              )}
               <div className="composer-box">
-                <button type="button" className="composer-add" disabled={busy || !user}
-                  onClick={() => attachRef.current?.click()}
-                  aria-label="Add documents" title={chat ? 'Add documents to this chat' : 'Add documents (starts a new chat)'}>＋</button>
-                <input ref={attachRef} type="file" multiple accept={ACCEPT} hidden
-                  onChange={e => attach(e.target.files)} />
+                {(chatDocs.length > 0 || uploads.some(u => u.status === 'uploading')) && (
+                  <div className="attachments" aria-label="Documents in this chat">
+                    {chatDocs.map(d => (
+                      <a key={d.id} className={'attachment ' + d.status} href={documentUrl(d.id)} target="_blank" rel="noreferrer"
+                        title={d.status === 'failed' ? (d.error ?? 'Failed') : d.filename}>
+                        <span aria-hidden="true">{fileIcon(d.filename)}</span>
+                        <span className="attachment-name">{d.filename}</span>
+                        {d.status === 'embedding' && <span className="attachment-state">⏳</span>}
+                        {d.status === 'failed' && <span className="attachment-state">✕</span>}
+                      </a>
+                    ))}
+                    {uploads.filter(u => u.status === 'uploading').map(u => (
+                      <span key={u.key} className="attachment embedding">
+                        <span aria-hidden="true">{fileIcon(u.filename)}</span>
+                        <span className="attachment-name">{u.filename}</span>
+                        <span className="attachment-state">⏳</span>
+                      </span>
+                    ))}
+                  </div>
+                )}
                 <textarea rows={1} value={input} disabled={busy} aria-busy={busy}
                   placeholder={busy ? 'Waiting for the answer…' : 'Send a message (Shift+Enter for a new line)'}
                   onChange={e => setInput(e.target.value)} onKeyDown={onComposerKey} autoFocus />
-                <select className="composer-model" value={model} onChange={e => setModel(e.target.value)} disabled={busy || !user}
-                  aria-label="Model" title={chat ? 'Model for the next question in this chat' : 'Model for this chat'}>
-                  {(models.includes(model) ? models : [model, ...models]).map(m => (
-                    <option key={m} value={m}>{m.startsWith('openrouter/') ? `${m.split('/').pop()} (paid)` : m.replace(/:latest$/, '')}</option>
-                  ))}
-                </select>
-                <button type="submit" disabled={busy || !input.trim()} aria-label="Send">➤</button>
+                <div className="composer-row">
+                  <button type="button" className="composer-add" disabled={busy || !user}
+                    onClick={() => attachRef.current?.click()}
+                    aria-label="Add documents" title={chat ? 'Add documents to this chat' : 'Add documents (starts a new chat)'}>＋</button>
+                  <input ref={attachRef} type="file" multiple accept={ACCEPT} hidden
+                    onChange={e => attach(e.target.files)} />
+                  <span className="composer-spacer" />
+                  <select className="composer-model" value={model} onChange={e => setModel(e.target.value)} disabled={busy || !user}
+                    aria-label="Model" title={chat ? 'Model for the next question in this chat' : 'Model for this chat'}>
+                    {(models.includes(model) ? models : [model, ...models]).map(m => (
+                      <option key={m} value={m}>{m.startsWith('openrouter/') ? `${m.split('/').pop()} (paid)` : m.replace(/:latest$/, '')}</option>
+                    ))}
+                  </select>
+                  <button type="submit" disabled={busy || !input.trim()} aria-label="Send">➤</button>
+                </div>
               </div>
             </form>
             )}
