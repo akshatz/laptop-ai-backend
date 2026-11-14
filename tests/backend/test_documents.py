@@ -279,28 +279,43 @@ async def test_delete_chat_with_its_messages_and_documents(client, chat_id, vect
     assert (await client.get(f"/chats/{chat_id}/messages")).status_code == 404
 
 
-async def test_pictures_are_read_with_ocr_first(client, chat_id, vector_store, monkeypatch):
+async def test_pictures_get_a_description_and_ocr_text(client, chat_id, vector_store, monkeypatch):
     import file_text
 
-    async def no_vision(name, data):
-        raise AssertionError("vision model not needed when OCR finds text")
-    monkeypatch.setattr(file_text, "ocr_image", lambda data: "Electricity bill total Rs 1,240 due 20 Nov")
-    monkeypatch.setattr(file_text, "describe_image", no_vision)
+    async def describe(name, data):
+        return "A screenshot of an electricity bill."
+    monkeypatch.setattr(file_text, "ocr_image", lambda data: "Total Rs 1,240 due 20 Nov")
+    monkeypatch.setattr(file_text, "describe_image", describe)
 
     response = await client.post(f"/chats/{chat_id}/files", files=[("files", ("bill.png", b"\x89PNG fake", "image/png"))])
     assert response.status_code == 201
     [doc] = (await client.get("/documents")).json()
     assert doc["status"] == "ready" and doc["filename"] == "bill.png"
-    assert [d.page_content for d in vector_store.added] == ["Electricity bill total Rs 1,240 due 20 Nov"]
+    assert [d.page_content for d in vector_store.added] == [
+        "Description of the picture bill.png: A screenshot of an electricity bill.\n\n"
+        "Text in the picture (OCR):\nTotal Rs 1,240 due 20 Nov"]
 
 
-async def test_pictures_without_text_are_described(client, chat_id, vector_store, monkeypatch):
+async def test_picture_keeps_ocr_text_when_the_vision_model_fails(client, chat_id, vector_store, monkeypatch):
     import file_text
 
-    async def describe(name, data):
-        return "A dog sitting on a red sofa."
+    async def down(name, data):
+        raise RuntimeError("ollama down")
+    monkeypatch.setattr(file_text, "ocr_image", lambda data: "Total Rs 1,240")
+    monkeypatch.setattr(file_text, "describe_image", down)
+
+    await client.post(f"/chats/{chat_id}/files", files=[("files", ("bill.png", b"\x89PNG fake", "image/png"))])
+    assert [d.page_content for d in vector_store.added] == ["Text in the picture (OCR):\nTotal Rs 1,240"]
+
+
+async def test_picture_fails_when_nothing_can_read_it(client, chat_id, vector_store, monkeypatch):
+    import file_text
+
+    async def down(name, data):
+        raise RuntimeError("ollama down")
     monkeypatch.setattr(file_text, "ocr_image", lambda data: "")
-    monkeypatch.setattr(file_text, "describe_image", describe)
+    monkeypatch.setattr(file_text, "describe_image", down)
 
     await client.post(f"/chats/{chat_id}/files", files=[("files", ("dog.jpg", b"\xff\xd8 fake", "image/jpeg"))])
-    assert [d.page_content for d in vector_store.added] == ["A dog sitting on a red sofa."]
+    [doc] = (await client.get("/documents")).json()
+    assert doc["status"] == "failed" and doc["error"] == "ollama down"

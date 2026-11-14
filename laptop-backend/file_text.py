@@ -2,9 +2,10 @@
 no OCR), Word .docx (python-docx, paragraphs and tables) and plain text (.txt, .md, .csv, .json,
 .html, …). Raises UnsupportedFile for anything else, and for files with no text (e.g. a scanned
 PDF without a text layer). Pictures (.png, .jpg, .webp, .gif) are read in the upload's background
-task by read_image: OCR with Tesseract first (exact text, a second or two), and only when that
-finds almost no text (a photo) a vision model in Ollama describes it (IMAGE_MODEL, default
-gemma3:4b; up to a minute or more on CPU)."""
+task by read_image, with both: a vision model in Ollama says what the picture shows (IMAGE_MODEL,
+default gemma3:4b; ~30 s for a screenshot on CPU), which OCR alone can't (on a screenshot of a chat
+app, OCR found "Fable 5.2 Medium" but nothing saying it was the model picker), and Tesseract OCR
+adds the exact text (~1 s), which the vision model may misread. Either one failing leaves the other."""
 
 import asyncio
 import base64
@@ -22,13 +23,12 @@ TEXT_SUFFIXES = {".txt", ".md", ".markdown", ".csv", ".tsv", ".json", ".html", "
 IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".webp", ".gif"}
 SUPPORTED = sorted(TEXT_SUFFIXES | IMAGE_SUFFIXES | {".pdf", ".docx"})
 
-# Below this many characters of OCR text the picture is treated as a photo and described instead.
-OCR_MIN_CHARS = 20
 IMAGE_MODEL = os.environ.get("IMAGE_MODEL", "gemma3:4b")
 OLLAMA_BASE_URL = os.environ.get("OLLAMA_BASE_URL", "http://ollama:11434")
 IMAGE_PROMPT = (
-    "Copy out all text visible in this image exactly, keeping numbers, names and dates as written. "
-    "Then describe briefly what the image shows. Plain text only."
+    "Describe what this picture shows. For a screenshot: which app or website, what is on screen, and "
+    "what each visible setting, menu, button or selector is for, with its current value (for example a "
+    "model name). For a document or photo: what it is and its key facts. Plain text, at most 150 words."
 )
 
 
@@ -94,8 +94,14 @@ def ocr_image(data: bytes) -> str:
 
 
 async def read_image(filename: str, data: bytes) -> str:
-    """OCR text when the picture has some, else the vision model's text and description."""
-    text = await asyncio.to_thread(ocr_image, data)
-    if len(text) >= OCR_MIN_CHARS:
-        return text
-    return await describe_image(filename, data)
+    """The vision model's description plus the OCR text; UnsupportedFile if neither gives anything."""
+    ocr = await asyncio.to_thread(ocr_image, data)
+    try:
+        description = await describe_image(filename, data)
+    except Exception:
+        if not ocr:
+            raise
+        description = ""
+    parts = [f"Description of the picture {filename}: {description}" if description else "",
+             f"Text in the picture (OCR):\n{ocr}" if ocr else ""]
+    return "\n\n".join(p for p in parts if p)
