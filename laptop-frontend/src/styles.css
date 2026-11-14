@@ -30,6 +30,7 @@ main:not(.content) { max-width: 720px; margin: 2rem auto; padding: 0 1rem; }
 a.button { display: inline-block; padding: 0.6rem 1.6rem; border-radius: 6px; background: var(--accent); color: #fff; text-decoration: none; }
 
 label { display: block; margin-top: 0.6rem; font-size: 0.9rem; }
+[hidden] { display: none !important; }
 input, textarea, select { display: block; width: 100%; padding: 0.5rem; margin-top: 0.2rem; font: inherit; }
 textarea { min-height: 5rem; }
 button { padding: 0.45rem 1rem; cursor: pointer; font: inherit; }
@@ -103,10 +104,11 @@ a.side-action { display: block; text-decoration: none; color: inherit; }
 .composer { padding: 0.5rem 1rem 1rem; }
 .chat-full { max-width: 820px; width: 100%; margin: 0 auto; display: flex; align-items: center; justify-content: center; gap: 0.75rem; flex-wrap: wrap; text-align: center; }
 .chat-full p { margin: 0; }
-.composer-box { max-width: 820px; margin: 0 auto; display: flex; align-items: flex-end; gap: 0.5rem; border: 1px solid var(--border); border-radius: 22px; padding: 0.4rem 0.4rem 0.4rem 1rem; }
+.composer-box { max-width: 820px; margin: 0 auto; display: flex; align-items: flex-end; gap: 0.5rem; border: 1px solid var(--border); border-radius: 22px; padding: 0.4rem; }
 .composer-box textarea { border: none; outline: none; background: none; resize: none; min-height: 0; max-height: 12rem; margin: 0; padding: 0.45rem 0; field-sizing: content; }
 .composer-box button { border: none; border-radius: 50%; width: 2.3rem; height: 2.3rem; padding: 0; background: var(--accent); color: #fff; }
 .composer-box button:disabled { opacity: 0.4; cursor: default; }
+.composer-box .composer-add { flex: none; background: var(--hover); color: inherit; font-size: 1.2rem; }
 .composer-box .composer-model { flex: none; width: auto; max-width: 9rem; margin: 0; align-self: center; border: none; background: var(--hover); color: inherit; border-radius: 999px; padding: 0.35rem 0.6rem; font-size: 0.8rem; cursor: pointer; text-overflow: ellipsis; }
 .composer-box .composer-model:disabled { opacity: 0.5; cursor: default; }
 @media (max-width: 760px) { .composer-box .composer-model { max-width: 6.5rem; } }
