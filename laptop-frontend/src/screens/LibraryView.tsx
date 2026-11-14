@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { api, documentUrl, type ChatDocument, type User } from '../api';
+import DocumentHistory from './DocumentHistory';
 
 interface Props {
   user: User;
@@ -35,6 +36,8 @@ export default function LibraryView({ user, onError, onOpenChat, reloadKey }: Pr
   const [docs, setDocs] = useState<ChatDocument[] | null>(null);
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
+  // Key (owner + file name) of the file whose history panel is open.
+  const [historyKey, setHistoryKey] = useState<string | null>(null);
 
   useEffect(() => {
     api.documents(isAdmin && everyone).then(setDocs).catch(err => onError('Could not load documents: ', err));
@@ -46,6 +49,20 @@ export default function LibraryView({ user, onError, onOpenChat, reloadKey }: Pr
       (statusFilter === 'all' || d.status === statusFilter) &&
       (!q || [d.filename, d.chat_title, d.owner_name ?? '', d.owner_email ?? ''].some(t => t.toLowerCase().includes(q))));
   }, [docs, search, statusFilter]);
+
+  // One card per file name and owner (across chats), showing the newest upload; the others are
+  // its versions, listed in the history panel. `docs` is newest first already.
+  const groupKey = (d: ChatDocument) => `${d.owner_email ?? ''}\u0000${d.filename}`;
+  const versionsOf = useMemo(() => {
+    const map = new Map<string, ChatDocument[]>();
+    for (const d of docs ?? []) map.set(groupKey(d), [...(map.get(groupKey(d)) ?? []), d]);
+    return map;
+  }, [docs]);
+  const cards = useMemo(() => {
+    const seen = new Set<string>();
+    return shown.filter(d => !seen.has(groupKey(d)) && seen.add(groupKey(d)));
+  }, [shown]);
+  const history = historyKey ? versionsOf.get(historyKey) : undefined;
 
   return (
     <section className="documents library">
@@ -75,10 +92,10 @@ export default function LibraryView({ user, onError, onOpenChat, reloadKey }: Pr
         <p className="muted">{docs.length === 0 ? 'No documents yet. Add some under 📄 Documents.' : 'No documents match.'}</p>
       ) : (
         <>
-          <p className="muted library-count">{shown.length} of {docs.length} document{docs.length === 1 ? '' : 's'}</p>
+          <p className="muted library-count">{cards.length} file{cards.length === 1 ? '' : 's'} · {shown.length} of {docs.length} upload{docs.length === 1 ? '' : 's'}</p>
           <div className="doc-cards">
-            {shown.map(d => (
-              <article key={d.id} className={'doc-card ' + d.status}>
+            {cards.map(d => (
+              <article key={d.id} className={'doc-card ' + d.status + (historyKey === groupKey(d) ? ' selected' : '')}>
                 <div className="doc-card-top">
                   <span className="doc-card-icon" aria-hidden="true">{icon(d)}</span>
                   <span className={'chip ' + d.status} title={d.error ?? undefined}>{STATUS[d.status] ?? d.status}</span>
@@ -87,6 +104,11 @@ export default function LibraryView({ user, onError, onOpenChat, reloadKey }: Pr
                   {d.filename}
                 </a>
                 {d.version > 1 && <span className="chip version">v{d.version}</span>}
+                {(versionsOf.get(groupKey(d))?.length ?? 0) > 1 && (
+                  <button type="button" className="link doc-card-versions" onClick={() => setHistoryKey(groupKey(d))}>
+                    🕘 {versionsOf.get(groupKey(d))!.length} versions
+                  </button>
+                )}
                 {d.status === 'failed' && d.error && <p className="doc-card-error">{d.error}</p>}
                 <dl className="doc-card-meta">
                   {isAdmin && everyone && <><dt>Owner</dt><dd title={d.owner_email ?? undefined}>{d.mine ? 'You' : d.owner_name}</dd></>}
@@ -101,6 +123,9 @@ export default function LibraryView({ user, onError, onOpenChat, reloadKey }: Pr
             ))}
           </div>
         </>
+      )}
+      {history && (
+        <DocumentHistory versions={history} onClose={() => setHistoryKey(null)} onOpenChat={onOpenChat} />
       )}
     </section>
   );

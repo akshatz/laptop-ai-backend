@@ -81,6 +81,7 @@ export interface ChatDocument {
   owner_email?: string | null;
   // False only in an admin's everyone list, for other people's documents.
   mine?: boolean;
+  sha256?: string | null;
 }
 
 export interface UploadedDocument {

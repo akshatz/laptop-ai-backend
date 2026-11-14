@@ -239,3 +239,18 @@ button.link { background: none; border: none; padding: 0; color: var(--accent); 
 .session-name { overflow-wrap: anywhere; }
 .session-email { font-size: 0.8rem; overflow-wrap: anywhere; }
 .sessions .doc-card-meta { grid-template-columns: 5.5rem 1fr; }
+
+/* Document history (LibraryView → DocumentHistory): one file's uploads, newest first */
+.doc-card.selected { outline: 2px solid var(--accent); }
+.doc-card-versions { align-self: flex-start; font-size: 0.85rem; padding: 0; }
+.history-panel { position: fixed; top: 0; right: 0; bottom: 0; width: min(360px, 100vw); z-index: 30; overflow-y: auto; background: var(--bg, #fff); border-left: 1px solid var(--border); box-shadow: -4px 0 16px #0002; padding: 1rem; }
+.history-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 0.5rem; }
+.history-head h3 { margin: 0; font-size: 1rem; word-break: break-all; }
+.history-head p { margin: 0.2rem 0 0; font-size: 0.85rem; }
+.history-log { list-style: none; margin: 1rem 0 0; padding: 0 0 0 0.6rem; border-left: 2px solid var(--border); }
+.history-log li { position: relative; padding: 0 0 1.1rem 1rem; }
+.history-dot { position: absolute; left: -0.45rem; top: 0.35rem; width: 0.75rem; height: 0.75rem; border-radius: 50%; background: var(--border); border: 2px solid var(--bg, #fff); }
+.history-log li.latest .history-dot { background: var(--accent); }
+.history-title { display: flex; align-items: center; gap: 0.4rem; font-weight: 600; }
+.history-meta { font-size: 0.82rem; margin-top: 0.2rem; }
+.history-meta code { font-size: 0.78rem; }
