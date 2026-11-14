@@ -518,6 +518,9 @@ export default function ChatScreen({ user, notice, onSignOut, onSessionExpired }
             ) : (
             <form onSubmit={send} className="composer">
               <div className="composer-box">
+                <button type="button" className="composer-add" disabled={busy || !user}
+                  onClick={() => setView('documents')}
+                  aria-label="Add documents" title={chat ? 'Add documents to this chat' : 'Add documents (starts a new chat)'}>📎</button>
                 <textarea rows={1} value={input} disabled={busy} aria-busy={busy}
                   placeholder={busy ? 'Waiting for the answer…' : 'Send a message (Shift+Enter for a new line)'}
                   onChange={e => setInput(e.target.value)} onKeyDown={onComposerKey} autoFocus />
