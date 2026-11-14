@@ -91,7 +91,11 @@ export default function LibraryView({ user, onError, onOpenChat, reloadKey }: Pr
             {shown.map(d => (
               <article key={d.id} className={'doc-card ' + d.status}>
                 <div className="doc-card-top">
-                  <span className="doc-card-icon" aria-hidden="true">{icon(d)}</span>
+                  {/\.(png|jpe?g|gif|webp)$/i.test(d.filename)
+                    ? <a href={documentUrl(d.id)} target="_blank" rel="noreferrer" tabIndex={-1} aria-hidden="true">
+                        <img className="doc-card-thumb" src={documentUrl(d.id)} alt="" loading="lazy" />
+                      </a>
+                    : <span className="doc-card-icon" aria-hidden="true">{icon(d)}</span>}
                   <span className={'chip ' + d.status} title={d.error ?? undefined}>{STATUS[d.status] ?? d.status}</span>
                   <button type="button" className="icon-button doc-card-delete" onClick={() => remove(d)}
                     disabled={d.status === 'embedding'} aria-label={`Delete ${d.filename}`}

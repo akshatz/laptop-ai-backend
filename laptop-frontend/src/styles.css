@@ -105,6 +105,7 @@ a.side-action { display: block; text-decoration: none; color: inherit; }
 .attachments { display: flex; flex-wrap: wrap; gap: 0.4rem; padding: 0.2rem 0.4rem 0; }
 .attachment { display: inline-flex; align-items: center; gap: 0.35rem; max-width: 16rem; padding: 0.3rem 0.6rem; border: 1px solid var(--border); border-radius: 10px; background: var(--hover); color: inherit; text-decoration: none; font-size: 0.85rem; }
 .attachment-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.attachment-thumb { width: 1.8rem; height: 1.8rem; object-fit: cover; border-radius: 6px; flex: none; }
 .attachment a { display: inline-flex; align-items: center; gap: 0.35rem; min-width: 0; color: inherit; text-decoration: none; }
 .composer-box .attachment-remove { flex: none; width: 1.3rem; height: 1.3rem; padding: 0; border: none; border-radius: 50%; background: none; color: var(--muted); font-size: 0.75rem; cursor: pointer; }
 .composer-box .attachment-remove:hover:not(:disabled) { background: var(--border); color: inherit; }
@@ -232,6 +233,7 @@ button.link { background: none; border: none; padding: 0; color: var(--accent); 
 .doc-card { border: 1px solid var(--border); border-radius: 12px; padding: 0.8rem 0.9rem; display: flex; flex-direction: column; gap: 0.35rem; min-width: 0; }
 .doc-card.replaced { opacity: 0.6; }
 .doc-card-top { display: flex; align-items: center; justify-content: space-between; }
+.doc-card-thumb { display: block; width: 4.5rem; height: 3.2rem; object-fit: cover; border-radius: 8px; border: 1px solid var(--border); }
 .doc-card-top .chip { margin-left: auto; }
 .doc-card-delete { margin-left: 0.4rem; padding: 0.1rem 0.4rem; font-size: 0.85rem; }
 .doc-card-delete:disabled { opacity: 0.4; cursor: default; }

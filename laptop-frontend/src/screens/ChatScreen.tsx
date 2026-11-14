@@ -7,6 +7,8 @@ import AdminSessionsView from './AdminSessionsView';
 import UploadSnackbar, { fromUploaded, type UploadItem } from './UploadSnackbar';
 import { api, documentUrl, HttpError, SIGN_IN_URL, type Chat, type ChatDocument, type Feedback, type Message, type User } from '../api';
 
+const isImage = (name: string) => /\.(png|jpe?g|gif|webp)$/i.test(name);
+
 function fileIcon(name: string) {
   const n = name.toLowerCase();
   if (n.endsWith('.pdf')) return '📕';
@@ -597,7 +599,9 @@ export default function ChatScreen({ user, notice, onSignOut, onSessionExpired }
                       <span key={d.id} className={'attachment ' + d.status}>
                         <a href={documentUrl(d.id)} target="_blank" rel="noreferrer"
                           title={d.status === 'failed' ? (d.error ?? 'Failed') : d.filename}>
-                          <span aria-hidden="true">{fileIcon(d.filename)}</span>
+                          {isImage(d.filename)
+                            ? <img className="attachment-thumb" src={documentUrl(d.id)} alt="" loading="lazy" />
+                            : <span aria-hidden="true">{fileIcon(d.filename)}</span>}
                           <span className="attachment-name">{d.filename}</span>
                           {d.status === 'embedding' && <span className="attachment-state">⏳</span>}
                           {d.status === 'failed' && <span className="attachment-state">⚠️</span>}
