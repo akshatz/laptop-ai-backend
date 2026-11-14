@@ -164,6 +164,29 @@ class ChatDocumentResponse(BaseModel):
     # Content hash, so the documents library can group copies and versions of a file across chats.
     sha256: Optional[str] = None
 
+class DeletedChat(BaseModel):
+    id: uuid.UUID
+    title: str
+    model_id: str
+    created_at: datetime
+    deleted_at: datetime
+    documents: int = 0
+
+class DeletedDocument(BaseModel):
+    id: uuid.UUID
+    chat_id: uuid.UUID
+    chat_title: str
+    filename: str
+    size_bytes: int
+    version: int = 1
+    created_at: datetime
+    deleted_at: datetime
+
+class TrashResponse(BaseModel):
+    purge_after_days: int
+    chats: List[DeletedChat]
+    documents: List[DeletedDocument]
+
 class UploadedDocument(BaseModel):
     id: uuid.UUID
     filename: str

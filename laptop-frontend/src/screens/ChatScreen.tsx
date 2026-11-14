@@ -3,6 +3,7 @@ import { copyText } from '../copy';
 import DocumentsView, { MAX_BYTES, MAX_FILES } from './DocumentsView';
 import FeedbackView from './FeedbackView';
 import LibraryView from './LibraryView';
+import TrashView from './TrashView';
 import AdminSessionsView from './AdminSessionsView';
 import UploadSnackbar, { fromUploaded, type UploadItem } from './UploadSnackbar';
 import { api, documentUrl, HttpError, SIGN_IN_URL, type Chat, type ChatDocument, type Feedback, type Message, type User } from '../api';
@@ -28,12 +29,12 @@ interface Props {
 
 const initials = (name: string) => name.split(/\s+/).filter(Boolean).slice(0, 2).map(w => w[0].toUpperCase()).join('') || '?';
 
-type View = 'chat' | 'documents' | 'library' | 'feedback' | 'sessions';
+type View = 'chat' | 'documents' | 'library' | 'feedback' | 'sessions' | 'trash';
 type Shown = Pick<Message, 'role' | 'content' | 'web_searched' | 'web_sources'> & Partial<Pick<Message, 'id' | 'feedback' | 'regenerations' | 'created_at' | 'earlier_versions'>>;
 
 // The open screen and chat live in the URL hash (#/chat/<id>, #/documents, #/library,
 // #/feedback, #/sessions; empty = Home), so a reload, Back/Forward or a copied link keeps them.
-const VIEWS: View[] = ['documents', 'library', 'feedback', 'sessions'];
+const VIEWS: View[] = ['documents', 'library', 'feedback', 'sessions', 'trash'];
 function readRoute(): { view: View; chatId: string | null } {
   const [, first, second] = location.hash.replace(/^#/, '').split('/');
   if (first === 'chat' && second) return { view: 'chat', chatId: decodeURIComponent(second) };
@@ -261,7 +262,7 @@ export default function ChatScreen({ user, notice, onSignOut, onSessionExpired }
   // Deletes the open chat with its messages and documents (laptop-backend DELETE /chats/{id}).
   async function deleteChat() {
     if (!chat || busy) return;
-    if (!confirm(`Delete “${chat.title}”? Its messages and documents are deleted too, and this can't be undone.`)) return;
+    if (!confirm(`Delete “${chat.title}”? It moves to 🗑 Deleted with its messages and documents, where you can restore it for 30 days.`)) return;
     try {
       await api.deleteChat(chat.id);
       const id = chat.id;
@@ -429,6 +430,10 @@ export default function ChatScreen({ user, notice, onSignOut, onSessionExpired }
           onClick={() => { setView('feedback'); setSidebarOpen(false); }}>
           📊 Feedback
         </button>
+        <button type="button" className={'side-action' + (view === 'trash' ? ' active' : '')} disabled={!user}
+          onClick={() => { setView('trash'); setSidebarOpen(false); }}>
+          🗑 Deleted
+        </button>
         {user?.role === 'admin' && (
           <button type="button" className={'side-action' + (view === 'sessions' ? ' active' : '')}
             onClick={() => { setView('sessions'); setSidebarOpen(false); }}>
@@ -474,7 +479,7 @@ export default function ChatScreen({ user, notice, onSignOut, onSessionExpired }
           {sidebarHidden && (
             <button type="button" className="sidebar-show" onClick={toggleSidebar} aria-label="Show sidebar" title="Show sidebar">❯</button>
           )}
-          <span className="title">{view === 'documents' ? 'Documents' : view === 'library' ? (user?.role === 'admin' ? 'All documents' : 'My documents') : view === 'sessions' ? 'Signed-in users' : view === 'feedback' ? 'Feedback' : chat ? chat.title : 'New chat'}</span>
+          <span className="title">{view === 'documents' ? 'Documents' : view === 'library' ? (user?.role === 'admin' ? 'All documents' : 'My documents') : view === 'sessions' ? 'Signed-in users' : view === 'feedback' ? 'Feedback' : view === 'trash' ? 'Deleted' : chat ? chat.title : 'New chat'}</span>
           {view === 'chat' && chat && (
             <button type="button" className="icon-button" onClick={deleteChat} disabled={busy}
               aria-label="Delete this chat" title="Delete this chat">🗑</button>
@@ -501,6 +506,14 @@ export default function ChatScreen({ user, notice, onSignOut, onSessionExpired }
             onOpenChat={id => { const c = chats.find(x => x.id === id); if (c) openChat(c); }} />
         ) : view === 'sessions' && user.role === 'admin' ? (
           <AdminSessionsView onError={fail} />
+        ) : view === 'trash' ? (
+          <TrashView onError={fail}
+            onChatRestored={async c => {
+              try { setChats(await api.chats()); } catch { /* list reloads on the next visit */ }
+              setDocsVersion(v => v + 1);
+              openChat(c);
+            }}
+            onDocumentRestored={() => setDocsVersion(v => v + 1)} />
         ) : view === 'feedback' ? (
           <FeedbackView onError={fail}
             onOpenChat={id => { const c = chats.find(x => x.id === id); if (c) openChat(c); }} />

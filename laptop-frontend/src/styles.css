@@ -276,3 +276,11 @@ button.link { background: none; border: none; padding: 0; color: var(--accent); 
 .history-title { display: flex; align-items: center; gap: 0.4rem; font-weight: 600; }
 .history-meta { font-size: 0.82rem; margin-top: 0.2rem; }
 .history-meta code { font-size: 0.78rem; }
+
+/* Deleted (TrashView.tsx) */
+.trash h3 { margin: 1.25rem 0 0.4rem; font-size: 0.95rem; }
+.trash-list { list-style: none; margin: 0; padding: 0; }
+.trash-list li { display: flex; align-items: center; gap: 0.75rem; padding: 0.6rem 0.2rem; border-bottom: 1px solid var(--border); }
+.trash-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 0.15rem; }
+.trash-main strong, .trash-main a { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.trash-list button { margin: 0; flex: none; }
