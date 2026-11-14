@@ -1,10 +1,10 @@
 import { useEffect, useRef, useState, type FormEvent, type KeyboardEvent } from 'react';
 import { copyText } from '../copy';
-import DocumentsView from './DocumentsView';
+import DocumentsView, { ACCEPT, MAX_BYTES, MAX_FILES } from './DocumentsView';
 import FeedbackView from './FeedbackView';
 import LibraryView from './LibraryView';
 import AdminSessionsView from './AdminSessionsView';
-import UploadSnackbar, { type UploadItem } from './UploadSnackbar';
+import UploadSnackbar, { fromUploaded, type UploadItem } from './UploadSnackbar';
 import { api, HttpError, SIGN_IN_URL, type Chat, type Feedback, type Message, type User } from '../api';
 
 interface Props {
@@ -94,6 +94,30 @@ export default function ChatScreen({ user, notice, onSignOut, onSessionExpired }
   const [docsVersion, setDocsVersion] = useState(0);
   const endRef = useRef<HTMLDivElement>(null);
   const scrollRef = useRef<HTMLElement>(null);
+  const attachRef = useRef<HTMLInputElement>(null);
+
+  // 📎 in the message box: pick files and upload them straight into this chat (or a new one);
+  // the snackbar shows the embedding progress, as for uploads from the Documents screen.
+  async function attach(list: FileList | null) {
+    const files = Array.from(list ?? []);
+    if (attachRef.current) attachRef.current.value = '';
+    if (!files.length) return;
+    const tooBig = files.find(f => f.size > MAX_BYTES);
+    if (tooBig) { fail('', new Error(`${tooBig.name} is larger than 10 MB.`)); return; }
+    if (files.length > MAX_FILES) { fail('', new Error(`At most ${MAX_FILES} files at a time.`)); return; }
+    const target = await ensureChat();
+    if (!target) return;
+    const batch = Date.now() + ':';
+    const placeholders = files.map((f, i): UploadItem => ({ key: batch + i, filename: f.name, status: 'uploading' }));
+    setUploads(items => [...items.filter(i => i.status !== 'ready' && i.status !== 'duplicate'), ...placeholders]);
+    try {
+      const { documents } = await api.upload(target.id, files);
+      setUploads(items => [...items.filter(i => !i.key.startsWith(batch)), ...documents.map(fromUploaded)]);
+    } catch (err) {
+      setUploads(items => items.filter(i => !i.key.startsWith(batch)));
+      fail('Upload failed: ', err);
+    }
+  }
   // The question to keep at the top of the view (just asked, or the latest one of a chat just
   // opened); its answer then renders below it instead of the view following the end.
   const [anchor, setAnchor] = useState<number | null>(null);
@@ -519,8 +543,10 @@ export default function ChatScreen({ user, notice, onSignOut, onSessionExpired }
             <form onSubmit={send} className="composer">
               <div className="composer-box">
                 <button type="button" className="composer-add" disabled={busy || !user}
-                  onClick={() => setView('documents')}
-                  aria-label="Add documents" title={chat ? 'Add documents to this chat' : 'Add documents (starts a new chat)'}>📎</button>
+                  onClick={() => attachRef.current?.click()}
+                  aria-label="Add documents" title={chat ? 'Add documents to this chat' : 'Add documents (starts a new chat)'}>＋</button>
+                <input ref={attachRef} type="file" multiple accept={ACCEPT} hidden
+                  onChange={e => attach(e.target.files)} />
                 <textarea rows={1} value={input} disabled={busy} aria-busy={busy}
                   placeholder={busy ? 'Waiting for the answer…' : 'Send a message (Shift+Enter for a new line)'}
                   onChange={e => setInput(e.target.value)} onKeyDown={onComposerKey} autoFocus />
