@@ -103,6 +103,21 @@ async def create_chat(payload: ChatCreate, user: UserModel = Depends(current_use
 
     return new_chat
 
+@router.delete("/chats/{chat_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_chat(chat_id: uuid.UUID, user: UserModel = Depends(current_user), db: AsyncSession = Depends(get_db)):
+    """Deletes one of your chats with its messages and documents (ON DELETE CASCADE). Its chunks
+    leave Milvus first; if that fails nothing is deleted (502). Someone else's chat is a 404."""
+    chat = await _own_chat(chat_id, user, db)
+    try:
+        await asyncio.to_thread(chat_service.vector_store.delete, expr=f"chat_id == {_milvus_str(str(chat_id))}")
+    except Exception as exc:
+        log.warning("Deleting chunks of chat %s failed: %s", chat_id, exc)
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY,
+                            detail="Could not remove the chat's documents from search. Nothing was deleted; try again.")
+    await db.delete(chat)
+    await db.commit()
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
 @router.get("/chats/{chat_id}/messages", response_model=List[MessageResponse])
 async def list_messages(chat_id: uuid.UUID, user: UserModel = Depends(current_user), db: AsyncSession = Depends(get_db)):
     await _own_chat(chat_id, user, db)
@@ -365,6 +380,44 @@ async def open_document(document_id: uuid.UUID, user: UserModel = Depends(curren
             "Content-Security-Policy": "sandbox",
         },
     )
+
+@router.delete("/documents/{document_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_document(document_id: uuid.UUID, user: UserModel = Depends(current_user), db: AsyncSession = Depends(get_db)):
+    """Deletes a document: your own, or anyone's for admins (others' are a 404, as for /file).
+    While it is still embedding it's a 409, since the background task would add its chunks after
+    the delete. If it's the copy answers use (ready), its chunks leave Milvus first; chunks carry
+    only chat_id and source, so other live documents with the same name in the chat (pasted texts
+    share names) are deleted with it and embedded again from their stored originals. Older,
+    replaced or failed copies have no chunks, so only the row goes."""
+    query = select(ChatDocumentModel).where(ChatDocumentModel.id == document_id)
+    if user.role != "admin":
+        query = query.where(ChatDocumentModel.user_id == user.id)
+    doc = (await db.execute(query)).scalar_one_or_none()
+    if not doc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found.")
+    if doc.status == "embedding":
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT,
+                            detail="This document is still being added. Try again once it's ready.")
+    if doc.status == "ready":
+        expr = f"chat_id == {_milvus_str(str(doc.chat_id))} and source == {_milvus_str(doc.filename)}"
+        try:
+            await asyncio.to_thread(chat_service.vector_store.delete, expr=expr)
+            same_name = (await db.execute(
+                select(ChatDocumentModel).where(ChatDocumentModel.chat_id == doc.chat_id,
+                                                ChatDocumentModel.filename == doc.filename,
+                                                ChatDocumentModel.status == "ready",
+                                                ChatDocumentModel.id != doc.id)
+            )).scalars().all()
+            for other in same_name:
+                item = DocumentItem(text=file_text.extract_text(other.filename, other.data), source=other.filename)
+                await chat_service.vector_store.aadd_documents(chat_service.chunk_documents(doc.chat_id, [item]))
+        except Exception as exc:
+            log.warning("Deleting chunks of %s (chat %s) failed: %s", doc.filename, doc.chat_id, exc)
+            raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY,
+                                detail="Could not remove the document from search. Nothing was deleted; try again.")
+    await db.delete(doc)
+    await db.commit()
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 async def _generate(chat: UserChatModel, question: str, history: list,
                     rejected: tuple[str, str | None] | None = None) -> tuple[str, bool, list[dict]]:

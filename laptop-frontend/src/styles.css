@@ -220,6 +220,9 @@ button.link { background: none; border: none; padding: 0; color: var(--accent); 
 .doc-card { border: 1px solid var(--border); border-radius: 12px; padding: 0.8rem 0.9rem; display: flex; flex-direction: column; gap: 0.35rem; min-width: 0; }
 .doc-card.replaced { opacity: 0.6; }
 .doc-card-top { display: flex; align-items: center; justify-content: space-between; }
+.doc-card-top .chip { margin-left: auto; }
+.doc-card-delete { margin-left: 0.4rem; padding: 0.1rem 0.4rem; font-size: 0.85rem; }
+.doc-card-delete:disabled { opacity: 0.4; cursor: default; }
 .doc-card-icon { font-size: 1.6rem; }
 .doc-card-name { font-weight: 600; color: var(--accent); text-decoration: none; overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
 .doc-card-name:hover { text-decoration: underline; }

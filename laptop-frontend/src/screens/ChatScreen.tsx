@@ -203,6 +203,21 @@ export default function ChatScreen({ user, notice, onSignOut, onSessionExpired }
     setSidebarOpen(false);
   }
 
+  // Deletes the open chat with its messages and documents (laptop-backend DELETE /chats/{id}).
+  async function deleteChat() {
+    if (!chat || busy) return;
+    if (!confirm(`Delete “${chat.title}”? Its messages and documents are deleted too, and this can't be undone.`)) return;
+    try {
+      await api.deleteChat(chat.id);
+      const id = chat.id;
+      setChats(cs => cs.filter(c => c.id !== id));
+      setDocsVersion(v => v + 1);
+      newChat();
+    } catch (err) {
+      fail('Could not delete the chat: ', err);
+    }
+  }
+
   async function openChat(c: Chat) {
     setStatus('');
     setView('chat');
@@ -387,6 +402,10 @@ export default function ChatScreen({ user, notice, onSignOut, onSessionExpired }
         <header className="topbar">
           <button type="button" className="menu-toggle" aria-label="Menu" onClick={() => setSidebarOpen(o => !o)}>☰</button>
           <span className="title">{view === 'documents' ? 'Documents' : view === 'library' ? (user?.role === 'admin' ? 'All documents' : 'My documents') : view === 'sessions' ? 'Signed-in users' : view === 'feedback' ? 'Feedback' : chat ? chat.title : 'New chat'}</span>
+          {view === 'chat' && chat && (
+            <button type="button" className="icon-button" onClick={deleteChat} disabled={busy}
+              aria-label="Delete this chat" title="Delete this chat">🗑</button>
+          )}
         </header>
 
         {status && <p className="status">{status}</p>}
