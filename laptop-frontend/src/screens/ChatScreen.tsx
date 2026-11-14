@@ -86,6 +86,17 @@ export default function ChatScreen({ user, notice, onSignOut, onSessionExpired }
   const [sending, setSending] = useState(false);
   const [view, setView] = useState<View>(() => readRoute().view);
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  // Wide screens: ☰ / « hide the sidebar completely (remembered per browser); phones keep the overlay.
+  const [sidebarHidden, setSidebarHidden] = useState(() => {
+    try { return localStorage.getItem('sidebar.hidden') === '1'; } catch { return false; }
+  });
+  function toggleSidebar() {
+    if (window.matchMedia('(max-width: 760px)').matches) { setSidebarOpen(o => !o); return; }
+    setSidebarHidden(h => {
+      try { localStorage.setItem('sidebar.hidden', h ? '0' : '1'); } catch { /* storage blocked */ }
+      return !h;
+    });
+  }
   // From laptop-backend's MAX_QUESTIONS_PER_CHAT (0 = no limit); it refuses more with a 409.
   const [maxQuestions, setMaxQuestions] = useState(0);
   // From laptop-backend's MAX_REGENERATIONS (0 = no limit).
@@ -395,9 +406,12 @@ export default function ChatScreen({ user, notice, onSignOut, onSessionExpired }
   }
 
   return (
-    <div className={'layout' + (sidebarOpen ? ' sidebar-open' : '')}>
+    <div className={'layout' + (sidebarOpen ? ' sidebar-open' : '') + (sidebarHidden ? ' sidebar-hidden' : '')}>
       <aside className="sidebar">
-        <div className="brand">Laptop Dev Chat</div>
+        <div className="brand">
+          <span>Laptop Dev Chat</span>
+          <button type="button" className="sidebar-hide" onClick={toggleSidebar} aria-label="Hide sidebar" title="Hide sidebar">«</button>
+        </div>
         <a href="/" className={'side-action' + (view === 'chat' && !chat ? ' active' : '')}
           onClick={e => { if (e.button === 0 && !e.metaKey && !e.ctrlKey && !e.shiftKey) { e.preventDefault(); newChat(); } }}>
           🏠 Home
@@ -456,7 +470,8 @@ export default function ChatScreen({ user, notice, onSignOut, onSessionExpired }
 
       <main className="content">
         <header className="topbar">
-          <button type="button" className="menu-toggle" aria-label="Menu" onClick={() => setSidebarOpen(o => !o)}>☰</button>
+          <button type="button" className="menu-toggle" aria-label={sidebarHidden ? 'Show sidebar' : 'Menu'}
+            title={sidebarHidden ? 'Show sidebar' : undefined} onClick={toggleSidebar}>☰</button>
           <span className="title">{view === 'documents' ? 'Documents' : view === 'library' ? (user?.role === 'admin' ? 'All documents' : 'My documents') : view === 'sessions' ? 'Signed-in users' : view === 'feedback' ? 'Feedback' : chat ? chat.title : 'New chat'}</span>
           {view === 'chat' && chat && (
             <button type="button" className="icon-button" onClick={deleteChat} disabled={busy}
