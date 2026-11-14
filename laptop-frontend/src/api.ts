@@ -84,6 +84,13 @@ export interface ChatDocument {
   sha256?: string | null;
 }
 
+export interface Trash {
+  purge_after_days: number;
+  chats: { id: string; title: string; model_id: string; created_at: string; deleted_at: string; documents: number }[];
+  documents: { id: string; chat_id: string; chat_title: string; filename: string; size_bytes: number;
+    version: number; created_at: string; deleted_at: string }[];
+}
+
 export interface UploadedDocument {
   id: string;
   filename: string;
@@ -153,6 +160,9 @@ export const api = {
   adminSessions: () => request<SignedInSession[]>('/admin/sessions'),
   deleteDocument: (id: string) => request<void>(`/documents/${id}`, undefined, 'DELETE'),
   deleteChat: (chatId: string) => request<void>(`/chats/${chatId}`, undefined, 'DELETE'),
+  trash: () => request<Trash>('/trash'),
+  restoreChat: (chatId: string) => request<Chat>(`/chats/${chatId}/restore`, undefined, 'POST'),
+  restoreDocument: (id: string) => request<ChatDocument>(`/documents/${id}/restore`, undefined, 'POST'),
   documents: (all = false) => request<ChatDocument[]>(all ? '/documents?all=true' : '/documents'),
   // `model`: the chat switches to it (laptop-backend checks it's installed).
   send: (chatId: string, content: string, model?: string) =>

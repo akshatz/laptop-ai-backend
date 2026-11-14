@@ -45,7 +45,7 @@ export default function LibraryView({ user, onError, onOpenChat, reloadKey }: Pr
 
   async function remove(d: ChatDocument) {
     const whose = d.mine ? '' : ` (${d.owner_name}'s)`;
-    if (!confirm(`Delete “${d.filename}”${whose}? Answers in “${d.chat_title}” stop using it. This can't be undone.`)) return;
+    if (!confirm(`Delete “${d.filename}”${whose}? Answers in “${d.chat_title}” stop using it. You can restore it from 🗑 Deleted for 30 days.`)) return;
     try {
       await api.deleteDocument(d.id);
       setDocs(ds => (ds ?? []).filter(x => x.id !== d.id));

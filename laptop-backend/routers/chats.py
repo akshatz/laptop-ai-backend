@@ -8,7 +8,7 @@ from typing import List
 from urllib.parse import quote
 from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, Request, Response, UploadFile, status
 from langchain_core.messages import AIMessage, HumanMessage
-from sqlalchemy import case, func, select, update
+from sqlalchemy import case, delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 import chat_service
@@ -20,7 +20,7 @@ from models import ChatDocumentModel, MessageModel, UserChatModel, UserModel
 from sessions import current_user
 from schemas import (
     MAX_DOCUMENTS_PER_INGEST, ChatCreate, ChatDocumentResponse, ChatResponse, DocumentIngest, DocumentIngestResponse,
-    DocumentItem, FeedbackDashboard, UploadedDocument, FeedbackItem, FeedbackModelStats, MessageCreate, MessageFeedback, MessageResponse, WebSource,
+    DeletedChat, DeletedDocument, DocumentItem, FeedbackDashboard, TrashResponse, UploadedDocument, FeedbackItem, FeedbackModelStats, MessageCreate, MessageFeedback, MessageResponse, WebSource,
 )
 
 router = APIRouter()
@@ -38,6 +38,8 @@ NO_SOURCES_REPLY = "I couldn't find this in your documents or on the web."
 # Regenerations allowed per answer (2: first answer + 2 more, like Open WebUI's Regenerate Limit
 # Function); 0 = no limit.
 MAX_REGENERATIONS = int(os.environ.get("MAX_REGENERATIONS", "2"))
+# Deleted chats and documents stay restorable this many days, then are removed for good.
+TRASH_DAYS = int(os.environ.get("TRASH_DAYS", "30"))
 
 async def _optional_user(request: Request, db: AsyncSession = Depends(get_db)) -> UserModel | None:
     try:
@@ -76,7 +78,8 @@ async def _own_chat(chat_id: uuid.UUID, user: UserModel, db: AsyncSession) -> Us
     """The chat if it belongs to the signed-in user; someone else's chat is a 404 too, so chat ids
     can't be probed."""
     query = await db.execute(
-        select(UserChatModel).where(UserChatModel.id == chat_id, UserChatModel.user_id == user.id)
+        select(UserChatModel).where(UserChatModel.id == chat_id, UserChatModel.user_id == user.id,
+                                    UserChatModel.deleted_at.is_(None))
     )
     chat = query.scalar_one_or_none()
     if not chat:
@@ -86,7 +89,8 @@ async def _own_chat(chat_id: uuid.UUID, user: UserModel, db: AsyncSession) -> Us
 @router.get("/chats", response_model=List[ChatResponse])
 async def list_chats(user: UserModel = Depends(current_user), db: AsyncSession = Depends(get_db)):
     query = await db.execute(
-        select(UserChatModel).where(UserChatModel.user_id == user.id).order_by(UserChatModel.updated_at.desc())
+        select(UserChatModel).where(UserChatModel.user_id == user.id, UserChatModel.deleted_at.is_(None))
+        .order_by(UserChatModel.updated_at.desc())
     )
     return query.scalars().all()
 
@@ -105,8 +109,9 @@ async def create_chat(payload: ChatCreate, user: UserModel = Depends(current_use
 
 @router.delete("/chats/{chat_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_chat(chat_id: uuid.UUID, user: UserModel = Depends(current_user), db: AsyncSession = Depends(get_db)):
-    """Deletes one of your chats with its messages and documents (ON DELETE CASCADE). Its chunks
-    leave Milvus first; if that fails nothing is deleted (502). Someone else's chat is a 404."""
+    """Moves one of your chats to Deleted (deleted_at), with its messages and documents; restorable
+    until purged (TRASH_DAYS). Its chunks leave Milvus first, so answers stop using its documents;
+    if that fails nothing is deleted (502). Someone else's chat is a 404."""
     chat = await _own_chat(chat_id, user, db)
     try:
         await asyncio.to_thread(chat_service.vector_store.delete, expr=f"chat_id == {_milvus_str(str(chat_id))}")
@@ -114,7 +119,7 @@ async def delete_chat(chat_id: uuid.UUID, user: UserModel = Depends(current_user
         log.warning("Deleting chunks of chat %s failed: %s", chat_id, exc)
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY,
                             detail="Could not remove the chat's documents from search. Nothing was deleted; try again.")
-    await db.delete(chat)
+    chat.deleted_at = datetime.now(timezone.utc)
     await db.commit()
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
@@ -236,7 +241,8 @@ async def _ingest(chat_id: uuid.UUID, user: UserModel, files: list, db: AsyncSes
     in the chat with other content is its next version and replaces that one's chunks."""
     existing = (await db.execute(
         select(ChatDocumentModel).where(ChatDocumentModel.chat_id == chat_id,
-                                        ChatDocumentModel.status.in_(("embedding", "ready")))
+                                        ChatDocumentModel.status.in_(("embedding", "ready")),
+                                        ChatDocumentModel.deleted_at.is_(None))
     )).scalars().all()
     by_hash = {d.sha256: d for d in existing if d.sha256}
     latest_version: dict[str, int] = {}
@@ -351,6 +357,7 @@ async def list_documents(all: bool = False, user: UserModel = Depends(current_us
         .join(UserModel, UserModel.id == ChatDocumentModel.user_id)
         .order_by(ChatDocumentModel.created_at.desc())
     )
+    query = query.where(ChatDocumentModel.deleted_at.is_(None), UserChatModel.deleted_at.is_(None))
     if not all:
         query = query.where(ChatDocumentModel.user_id == user.id)
     return [
@@ -395,7 +402,7 @@ async def delete_document(document_id: uuid.UUID, user: UserModel = Depends(curr
     only chat_id and source, so other live documents with the same name in the chat (pasted texts
     share names) are deleted with it and embedded again from their stored originals. Older,
     replaced or failed copies have no chunks, so only the row goes."""
-    query = select(ChatDocumentModel).where(ChatDocumentModel.id == document_id)
+    query = select(ChatDocumentModel).where(ChatDocumentModel.id == document_id, ChatDocumentModel.deleted_at.is_(None))
     if user.role != "admin":
         query = query.where(ChatDocumentModel.user_id == user.id)
     doc = (await db.execute(query)).scalar_one_or_none()
@@ -412,6 +419,7 @@ async def delete_document(document_id: uuid.UUID, user: UserModel = Depends(curr
                 select(ChatDocumentModel).where(ChatDocumentModel.chat_id == doc.chat_id,
                                                 ChatDocumentModel.filename == doc.filename,
                                                 ChatDocumentModel.status == "ready",
+                                                ChatDocumentModel.deleted_at.is_(None),
                                                 ChatDocumentModel.id != doc.id)
             )).scalars().all()
             for other in same_name:
@@ -423,9 +431,114 @@ async def delete_document(document_id: uuid.UUID, user: UserModel = Depends(curr
             log.warning("Deleting chunks of %s (chat %s) failed: %s", doc.filename, doc.chat_id, exc)
             raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY,
                                 detail="Could not remove the document from search. Nothing was deleted; try again.")
-    await db.delete(doc)
+    doc.deleted_at = datetime.now(timezone.utc)
     await db.commit()
     return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+async def _purge_old(user: UserModel, db: AsyncSession) -> None:
+    """Removes for good the user's chats and documents deleted more than TRASH_DAYS ago."""
+    cutoff = datetime.now(timezone.utc) - timedelta(days=TRASH_DAYS)
+    await db.execute(delete(UserChatModel).where(UserChatModel.user_id == user.id,
+                                                 UserChatModel.deleted_at < cutoff))
+    await db.execute(delete(ChatDocumentModel).where(ChatDocumentModel.user_id == user.id,
+                                                     ChatDocumentModel.deleted_at < cutoff))
+    await db.commit()
+
+@router.get("/trash", response_model=TrashResponse)
+async def list_trash(user: UserModel = Depends(current_user), db: AsyncSession = Depends(get_db)):
+    """Your deleted chats and documents, newest deletion first, after purging those older than
+    TRASH_DAYS. Documents of a deleted chat come back with it, so only documents deleted on their
+    own (their chat still exists) are listed separately."""
+    await _purge_old(user, db)
+    doc_count = (select(func.count()).where(ChatDocumentModel.chat_id == UserChatModel.id)
+                 .correlate(UserChatModel).scalar_subquery())
+    chats = (await db.execute(
+        select(UserChatModel, doc_count)
+        .where(UserChatModel.user_id == user.id, UserChatModel.deleted_at.is_not(None))
+        .order_by(UserChatModel.deleted_at.desc())
+    )).all()
+    docs = (await db.execute(
+        select(ChatDocumentModel, UserChatModel.title)
+        .join(UserChatModel, UserChatModel.id == ChatDocumentModel.chat_id)
+        .where(ChatDocumentModel.user_id == user.id, ChatDocumentModel.deleted_at.is_not(None),
+               UserChatModel.deleted_at.is_(None))
+        .order_by(ChatDocumentModel.deleted_at.desc())
+    )).all()
+    return TrashResponse(
+        purge_after_days=TRASH_DAYS,
+        chats=[DeletedChat(id=c.id, title=c.title, model_id=c.model_id, created_at=c.created_at,
+                           deleted_at=c.deleted_at, documents=n) for c, n in chats],
+        documents=[DeletedDocument(id=d.id, chat_id=d.chat_id, chat_title=title, filename=d.filename,
+                                   size_bytes=d.size_bytes, version=d.version, created_at=d.created_at,
+                                   deleted_at=d.deleted_at) for d, title in docs],
+    )
+
+def _item_for(doc: ChatDocumentModel) -> DocumentItem:
+    """The stored original as an item for _embed (pictures are read there, so their text is empty)."""
+    text = "" if file_text.is_image(doc.filename) else file_text.extract_text(doc.filename, doc.data)
+    return DocumentItem(text=text, source=doc.filename)
+
+@router.post("/chats/{chat_id}/restore", response_model=ChatResponse)
+async def restore_chat(chat_id: uuid.UUID, background: BackgroundTasks,
+                       user: UserModel = Depends(current_user), db: AsyncSession = Depends(get_db)):
+    """Brings a deleted chat back with its messages; its live documents (not deleted on their own,
+    ready before) are embedded again from the stored originals in the background."""
+    chat = (await db.execute(select(UserChatModel).where(
+        UserChatModel.id == chat_id, UserChatModel.user_id == user.id, UserChatModel.deleted_at.is_not(None)
+    ))).scalar_one_or_none()
+    if not chat:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Deleted chat not found.")
+    docs = (await db.execute(select(ChatDocumentModel).where(
+        ChatDocumentModel.chat_id == chat_id, ChatDocumentModel.deleted_at.is_(None),
+        ChatDocumentModel.status == "ready")
+    )).scalars().all()
+    jobs = [(d.id, d.filename, d.version, _item_for(d)) for d in docs]
+    for d in docs:
+        d.status = "embedding"
+    chat.deleted_at = None
+    await db.commit()
+    await db.refresh(chat)
+    background.add_task(_embed, chat_id, jobs, False)
+    return chat
+
+@router.post("/documents/{document_id}/restore", response_model=ChatDocumentResponse)
+async def restore_document(document_id: uuid.UUID, background: BackgroundTasks,
+                           user: UserModel = Depends(current_user), db: AsyncSession = Depends(get_db)):
+    """Brings a deleted document back into its chat (409 while the chat itself is deleted: restore
+    that instead). A newer live version of the same file in the chat wins, so this one comes back
+    as `replaced`; otherwise it's embedded again (replacing an older live version's chunks)."""
+    row = (await db.execute(
+        select(ChatDocumentModel, UserChatModel)
+        .join(UserChatModel, UserChatModel.id == ChatDocumentModel.chat_id)
+        .where(ChatDocumentModel.id == document_id, ChatDocumentModel.user_id == user.id,
+               ChatDocumentModel.deleted_at.is_not(None))
+    )).one_or_none()
+    if not row:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Deleted document not found.")
+    doc, chat = row
+    if chat.deleted_at is not None:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT,
+                            detail="Its chat is deleted too. Restore the chat, which brings its documents back.")
+    live = (await db.execute(select(ChatDocumentModel).where(
+        ChatDocumentModel.chat_id == doc.chat_id, ChatDocumentModel.filename == doc.filename,
+        ChatDocumentModel.status.in_(("embedding", "ready")), ChatDocumentModel.deleted_at.is_(None))
+    )).scalars().all()
+    doc.deleted_at = None
+    job = None
+    if doc.status == "ready":
+        if any(other.version > doc.version for other in live):
+            doc.status = "replaced"
+        else:
+            doc.status = "embedding"
+            job = (doc.id, doc.filename, doc.version, _item_for(doc))
+    await db.commit()
+    if job:
+        background.add_task(_embed, doc.chat_id, [job], any(other.version < doc.version for other in live))
+    return ChatDocumentResponse(
+        id=doc.id, chat_id=doc.chat_id, chat_title=chat.title, filename=doc.filename,
+        content_type=doc.content_type, size_bytes=doc.size_bytes, chunks=doc.chunks, version=doc.version,
+        status=doc.status, error=doc.error, created_at=doc.created_at, sha256=doc.sha256,
+    )
 
 async def _generate(chat: UserChatModel, question: str, history: list,
                     rejected: tuple[str, str | None] | None = None) -> tuple[str, bool, list[dict]]:

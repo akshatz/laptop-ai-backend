@@ -52,6 +52,8 @@ class UserChatModel(Base):
     is_pinned: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
+    # Set when the owner deletes it; hidden everywhere, restorable from Deleted until purged.
+    deleted_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
 
 class MessageModel(Base):
     __tablename__ = "messages"
@@ -91,3 +93,5 @@ class ChatDocumentModel(Base):
     status: Mapped[str] = mapped_column(String(20), nullable=False, default="ready", server_default="ready")
     error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
+    # Set when deleted (its Milvus chunks are removed then); restorable until purged.
+    deleted_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)

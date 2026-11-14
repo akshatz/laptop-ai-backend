@@ -321,3 +321,76 @@ async def test_picture_fails_when_nothing_can_read_it(client, chat_id, vector_st
     await client.post(f"/chats/{chat_id}/files", files=[("files", ("dog.jpg", b"\xff\xd8 fake", "image/jpeg"))])
     [doc] = (await client.get("/documents")).json()
     assert doc["status"] == "failed" and doc["error"] == "ollama down"
+
+
+async def test_deleted_chat_goes_to_trash_and_comes_back(client, chat_id, vector_store):
+    await client.post(f"/chats/{chat_id}/files", files=[("files", ("menu.txt", b"Tea 10", "text/plain"))])
+    assert (await client.delete(f"/chats/{chat_id}")).status_code == 204
+
+    trash = (await client.get("/trash")).json()
+    assert trash["purge_after_days"] == 30
+    assert [(c["id"], c["documents"]) for c in trash["chats"]] == [(chat_id, 1)]
+    assert trash["documents"] == []  # documents of a deleted chat come back with it
+
+    vector_store.added.clear()
+    restored = await client.post(f"/chats/{chat_id}/restore")
+    assert restored.status_code == 200 and restored.json()["id"] == chat_id
+    assert [c["id"] for c in (await client.get("/chats")).json()] == [chat_id]
+    # Its document is embedded again from the stored original.
+    assert [d.page_content for d in vector_store.added] == ["Tea 10"]
+    assert [d["status"] for d in (await client.get("/documents")).json()] == ["ready"]
+    assert (await client.get("/trash")).json()["chats"] == []
+    assert (await client.post(f"/chats/{chat_id}/restore")).status_code == 404
+
+
+async def test_deleted_document_goes_to_trash_and_comes_back(client, chat_id, vector_store):
+    await client.post(f"/chats/{chat_id}/files", files=[("files", ("menu.txt", b"Tea 10", "text/plain"))])
+    [doc] = (await client.get("/documents")).json()
+    await client.delete(f"/documents/{doc['id']}")
+    assert [d["filename"] for d in (await client.get("/trash")).json()["documents"]] == ["menu.txt"]
+
+    vector_store.added.clear()
+    restored = await client.post(f"/documents/{doc['id']}/restore")
+    assert restored.status_code == 200 and restored.json()["status"] == "embedding"
+    assert [d.page_content for d in vector_store.added] == ["Tea 10"]
+    assert [d["status"] for d in (await client.get("/documents")).json()] == ["ready"]
+
+
+async def test_restored_old_version_does_not_replace_the_newer_one(client, chat_id, vector_store):
+    await client.post(f"/chats/{chat_id}/files", files=[("files", ("menu.txt", b"Tea 10", "text/plain"))])
+    [v1] = (await client.get("/documents")).json()
+    await client.delete(f"/documents/{v1['id']}")
+    await client.post(f"/chats/{chat_id}/files", files=[("files", ("menu.txt", b"Tea 15", "text/plain"))])
+    vector_store.added.clear()
+
+    restored = (await client.post(f"/documents/{v1['id']}/restore")).json()
+    assert restored["status"] == "replaced" and vector_store.added == []
+    assert [(d["version"], d["status"]) for d in (await client.get("/documents")).json()] == [(2, "ready"), (1, "replaced")]
+
+
+async def test_document_of_a_deleted_chat_is_restored_with_the_chat(client, chat_id, vector_store):
+    await client.post(f"/chats/{chat_id}/files", files=[("files", ("menu.txt", b"Tea 10", "text/plain"))])
+    [doc] = (await client.get("/documents")).json()
+    await client.delete(f"/documents/{doc['id']}")
+    await client.delete(f"/chats/{chat_id}")
+    assert (await client.post(f"/documents/{doc['id']}/restore")).status_code == 409
+
+
+async def test_trash_is_private_and_purged_after_30_days(client, chat_id, vector_store, session_maker, sign_in, make_client):
+    from datetime import datetime, timedelta, timezone
+    from sqlalchemy import select, update
+    import models
+
+    await client.delete(f"/chats/{chat_id}")
+    async with await make_client() as other:
+        await sign_in(other, "meera@example.com", "Meera")
+        assert (await other.get("/trash")).json()["chats"] == []
+        assert (await other.post(f"/chats/{chat_id}/restore")).status_code == 404
+
+    async with session_maker() as session:
+        await session.execute(update(models.UserChatModel).values(
+            deleted_at=datetime.now(timezone.utc) - timedelta(days=31)))
+        await session.commit()
+    assert (await client.get("/trash")).json()["chats"] == []
+    async with session_maker() as session:
+        assert (await session.execute(select(models.UserChatModel))).scalars().all() == []
