@@ -6,7 +6,7 @@ import uuid
 from datetime import date, datetime, timedelta, timezone
 from typing import List
 from urllib.parse import quote
-from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, Response, UploadFile, status
+from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, Request, Response, UploadFile, status
 from langchain_core.messages import AIMessage, HumanMessage
 from sqlalchemy import case, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -39,13 +39,36 @@ NO_SOURCES_REPLY = "I couldn't find this in your documents or on the web."
 # Function); 0 = no limit.
 MAX_REGENERATIONS = int(os.environ.get("MAX_REGENERATIONS", "2"))
 
+async def _optional_user(request: Request, db: AsyncSession = Depends(get_db)) -> UserModel | None:
+    try:
+        return await current_user(request, db)
+    except HTTPException:
+        return None
+
+# Who may use the paid cloud models: "admins" (default) or "all" signed-in users.
+CLOUD_MODELS_FOR = os.environ.get("CLOUD_MODELS_FOR", "admins").strip().lower()
+
+def _may_use_cloud(user: UserModel) -> bool:
+    return CLOUD_MODELS_FOR == "all" or user.role == "admin"
+
+def _check_model_allowed(model: str, user: UserModel) -> None:
+    """Cloud models spend paid credit: only for CLOUD_MODELS_FOR, and only the ones offered (403
+    otherwise)."""
+    if chat_service.is_cloud_model(model) and (
+        not _may_use_cloud(user) or model not in chat_service.list_cloud_models()
+    ):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=f"Model '{model}' is not available to you.")
+
 @router.get("/models")
-async def list_models():
-    """Chat models available in Ollama, for the /ui model dropdown."""
+async def list_models(user: UserModel | None = Depends(_optional_user)):
+    """Chat models available in Ollama, for the /ui model dropdown, plus the cloud models for
+    CLOUD_MODELS_FOR (admins by default)."""
     try:
         models = await chat_service.list_chat_models()
     except Exception as exc:
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=f"Ollama unavailable: {exc}")
+    if user and _may_use_cloud(user):
+        models += chat_service.list_cloud_models()
     return {"default": chat_service.DEFAULT_CHAT_MODEL, "models": models,
             "max_questions_per_chat": MAX_QUESTIONS_PER_CHAT, "max_regenerations": MAX_REGENERATIONS}
 
@@ -79,6 +102,21 @@ async def create_chat(payload: ChatCreate, user: UserModel = Depends(current_use
     await db.refresh(new_chat)
 
     return new_chat
+
+@router.delete("/chats/{chat_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_chat(chat_id: uuid.UUID, user: UserModel = Depends(current_user), db: AsyncSession = Depends(get_db)):
+    """Deletes one of your chats with its messages and documents (ON DELETE CASCADE). Its chunks
+    leave Milvus first; if that fails nothing is deleted (502). Someone else's chat is a 404."""
+    chat = await _own_chat(chat_id, user, db)
+    try:
+        await asyncio.to_thread(chat_service.vector_store.delete, expr=f"chat_id == {_milvus_str(str(chat_id))}")
+    except Exception as exc:
+        log.warning("Deleting chunks of chat %s failed: %s", chat_id, exc)
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY,
+                            detail="Could not remove the chat's documents from search. Nothing was deleted; try again.")
+    await db.delete(chat)
+    await db.commit()
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 @router.get("/chats/{chat_id}/messages", response_model=List[MessageResponse])
 async def list_messages(chat_id: uuid.UUID, user: UserModel = Depends(current_user), db: AsyncSession = Depends(get_db)):
@@ -246,6 +284,9 @@ async def _embed(chat_id: uuid.UUID, jobs: list, versioned: bool) -> None:
                 if versioned and version > 1:
                     expr = f"chat_id == {_milvus_str(str(chat_id))} and source == {_milvus_str(filename)}"
                     await asyncio.to_thread(chat_service.vector_store.delete, expr=expr)
+                if not item.text and file_text.is_image(filename):
+                    row = await session.get(ChatDocumentModel, doc_id)
+                    item = DocumentItem(text=await file_text.read_image(filename, row.data), source=filename)
                 chunks = chat_service.chunk_documents(chat_id, [item])
                 await chat_service.vector_store.aadd_documents(chunks)
             except Exception as exc:
@@ -289,7 +330,9 @@ async def upload_files(chat_id: uuid.UUID, background: BackgroundTasks, files: l
         if len(data) > MAX_FILE_BYTES:
             raise HTTPException(status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, detail=f"{name}: larger than 10 MB.")
         try:
-            item = DocumentItem(text=file_text.extract_text(name, data), source=name)
+            # Pictures are read by the vision model in the background (_embed), so the text is empty here.
+            text = "" if file_text.is_image(name) else file_text.extract_text(name, data)
+            item = DocumentItem(text=text, source=name)
         except file_text.UnsupportedFile as exc:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
         items.append((item, name, upload.content_type or "application/octet-stream", data))
@@ -315,6 +358,7 @@ async def list_documents(all: bool = False, user: UserModel = Depends(current_us
             id=d.id, chat_id=d.chat_id, chat_title=title, filename=d.filename, content_type=d.content_type,
             size_bytes=d.size_bytes, chunks=d.chunks, version=d.version, status=d.status, error=d.error,
             created_at=d.created_at, owner_name=name, owner_email=email, mine=d.user_id == user.id,
+            sha256=d.sha256,
         )
         for d, title, name, email in (await db.execute(query)).all()
     ]
@@ -342,6 +386,46 @@ async def open_document(document_id: uuid.UUID, user: UserModel = Depends(curren
             "Content-Security-Policy": "sandbox",
         },
     )
+
+@router.delete("/documents/{document_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_document(document_id: uuid.UUID, user: UserModel = Depends(current_user), db: AsyncSession = Depends(get_db)):
+    """Deletes a document: your own, or anyone's for admins (others' are a 404, as for /file).
+    While it is still embedding it's a 409, since the background task would add its chunks after
+    the delete. If it's the copy answers use (ready), its chunks leave Milvus first; chunks carry
+    only chat_id and source, so other live documents with the same name in the chat (pasted texts
+    share names) are deleted with it and embedded again from their stored originals. Older,
+    replaced or failed copies have no chunks, so only the row goes."""
+    query = select(ChatDocumentModel).where(ChatDocumentModel.id == document_id)
+    if user.role != "admin":
+        query = query.where(ChatDocumentModel.user_id == user.id)
+    doc = (await db.execute(query)).scalar_one_or_none()
+    if not doc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found.")
+    if doc.status == "embedding":
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT,
+                            detail="This document is still being added. Try again once it's ready.")
+    if doc.status == "ready":
+        expr = f"chat_id == {_milvus_str(str(doc.chat_id))} and source == {_milvus_str(doc.filename)}"
+        try:
+            await asyncio.to_thread(chat_service.vector_store.delete, expr=expr)
+            same_name = (await db.execute(
+                select(ChatDocumentModel).where(ChatDocumentModel.chat_id == doc.chat_id,
+                                                ChatDocumentModel.filename == doc.filename,
+                                                ChatDocumentModel.status == "ready",
+                                                ChatDocumentModel.id != doc.id)
+            )).scalars().all()
+            for other in same_name:
+                text = (await file_text.read_image(other.filename, other.data) if file_text.is_image(other.filename)
+                        else file_text.extract_text(other.filename, other.data))
+                item = DocumentItem(text=text, source=other.filename)
+                await chat_service.vector_store.aadd_documents(chat_service.chunk_documents(doc.chat_id, [item]))
+        except Exception as exc:
+            log.warning("Deleting chunks of %s (chat %s) failed: %s", doc.filename, doc.chat_id, exc)
+            raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY,
+                                detail="Could not remove the document from search. Nothing was deleted; try again.")
+    await db.delete(doc)
+    await db.commit()
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 async def _generate(chat: UserChatModel, question: str, history: list,
                     rejected: tuple[str, str | None] | None = None) -> tuple[str, bool, list[dict]]:
@@ -389,7 +473,7 @@ async def _generate(chat: UserChatModel, question: str, history: list,
     except Exception as exc:
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=f"Failed to reach the Ollama model '{chat.model_id}': {exc}",
+            detail=f"Failed to reach the model '{chat.model_id}': {exc}",
         )
 
     return ai_reply.content, web_searched, web_results
@@ -405,13 +489,18 @@ async def send_message(chat_id: uuid.UUID, payload: MessageCreate, user: UserMod
     """
     chat = await _own_chat(chat_id, user, db)
     if payload.model and chat_service._with_tag(payload.model) != chat_service._with_tag(chat.model_id):
-        try:
-            installed = await chat_service.list_chat_models()
-        except Exception as exc:
-            raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=f"Ollama unavailable: {exc}")
-        if chat_service._with_tag(payload.model) not in installed:
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Unknown model '{payload.model}'.")
+        if chat_service.is_cloud_model(payload.model):
+            _check_model_allowed(payload.model, user)
+        else:
+            try:
+                installed = await chat_service.list_chat_models()
+            except Exception as exc:
+                raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=f"Ollama unavailable: {exc}")
+            if chat_service._with_tag(payload.model) not in installed:
+                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Unknown model '{payload.model}'.")
         chat.model_id = chat_service._with_tag(payload.model)
+    # Also covers a chat created with a cloud model_id, or an admin who is no longer one.
+    _check_model_allowed(chat.model_id, user)
 
     query = await db.execute(
         select(MessageModel).where(MessageModel.chat_id == chat_id).order_by(MessageModel.created_at)
@@ -466,6 +555,7 @@ async def regenerate_answer(chat_id: uuid.UUID, message_id: uuid.UUID, user: Use
     rating is cleared, `regenerations` counts up). Only the latest answer can be regenerated, at
     most MAX_REGENERATIONS times (409 after that)."""
     chat = await _own_chat(chat_id, user, db)
+    _check_model_allowed(chat.model_id, user)
     messages = (await db.execute(
         select(MessageModel).where(MessageModel.chat_id == chat_id).order_by(MessageModel.created_at)
     )).scalars().all()

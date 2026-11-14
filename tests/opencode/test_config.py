@@ -1,4 +1,4 @@
-"""devops/opencode/opencode.json: local models plus pinned OpenAI ones, and every model it names exists."""
+"""devops/opencode/opencode.json: local models plus pinned paid ones (OpenAI, OpenRouter), and every model it names exists."""
 
 import json
 import re
@@ -6,7 +6,7 @@ from pathlib import Path
 
 CONFIG = json.loads((Path(__file__).resolve().parents[2] / "devops" / "opencode" / "opencode.json").read_text())
 LOCAL_PROVIDERS = {"openwebui", "ollama"}
-PAID_PROVIDERS = {"openai"}
+PAID_PROVIDERS = {"openai", "openrouter"}
 PROVIDERS = LOCAL_PROVIDERS | PAID_PROVIDERS
 
 
@@ -24,6 +24,8 @@ def test_paid_providers_are_opt_in():
     """The default and title models stay local, so nothing spends credit unless picked."""
     assert CONFIG["provider"]["openai"]["options"] == {
         "baseURL": "https://api.openai.com/v1", "apiKey": "{env:OPENAI_API_KEY}"}
+    assert CONFIG["provider"]["openrouter"]["options"] == {
+        "baseURL": "https://openrouter.ai/api/v1", "apiKey": "{env:OPENROUTER_API_KEY}"}
     for model in (CONFIG["model"], CONFIG["small_model"]):
         assert model.split("/", 1)[0] in LOCAL_PROVIDERS
 

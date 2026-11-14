@@ -198,6 +198,73 @@ async def test_models_lists_only_installed_chat_models(client, monkeypatch):
                                "max_questions_per_chat": 0, "max_regenerations": 2}
 
 
+CLOUD = "openrouter/anthropic/claude-haiku-5.5"
+
+
+async def _make_admin(session_maker, user_id):
+    from sqlalchemy import update
+    import models
+
+    async with session_maker() as session:
+        await session.execute(update(models.UserModel).where(models.UserModel.id == uuid.UUID(user_id)).values(role="admin"))
+        await session.commit()
+
+
+@pytest.fixture
+def cloud(monkeypatch):
+    """OpenRouter configured with one cloud model, Ollama with llama3.2."""
+    monkeypatch.setattr(chat_service, "OPENROUTER_API_KEY", "sk-or-test")
+    monkeypatch.setattr(chat_service, "CLOUD_MODELS", CLOUD.removeprefix("openrouter/"))
+    names = ["llama3.2:latest"]
+    _fake_ollama(monkeypatch, lambda r: chat_service.httpx.Response(200, json={"models": [{"name": n} for n in names]}))
+
+
+async def test_cloud_models_are_listed_only_for_admins(client, signed_in, session_maker, cloud):
+    assert CLOUD not in (await client.get("/models")).json()["models"]
+    await _make_admin(session_maker, signed_in)
+    assert (await client.get("/models")).json()["models"] == ["llama3.2:latest", CLOUD]
+
+
+async def test_cloud_models_for_all_users(client, chat_id, chain, vector_store, web, cloud, monkeypatch):
+    monkeypatch.setattr(routers.chats, "CLOUD_MODELS_FOR", "all")
+    assert CLOUD in (await client.get("/models")).json()["models"]
+    response = await client.post(f"/chats/{chat_id}/messages", json={"content": "hi", "model": CLOUD})
+    assert response.status_code == 201 and chain.models == [CLOUD]
+    # Signed out still sees only the local models.
+    client.cookies.clear()
+    assert CLOUD not in (await client.get("/models")).json()["models"]
+
+
+async def test_no_cloud_models_without_a_key(client, signed_in, session_maker, cloud, monkeypatch):
+    monkeypatch.setattr(chat_service, "OPENROUTER_API_KEY", "")
+    await _make_admin(session_maker, signed_in)
+    assert (await client.get("/models")).json()["models"] == ["llama3.2:latest"]
+
+
+async def test_non_admin_cannot_use_a_cloud_model(client, chat_id, chain, vector_store, web, cloud):
+    response = await client.post(f"/chats/{chat_id}/messages", json={"content": "hi", "model": CLOUD})
+    assert response.status_code == 403 and chain.models == []
+    # Nor by creating the chat with it.
+    other = (await client.post("/chats", json={"model_id": CLOUD})).json()["id"]
+    assert (await client.post(f"/chats/{other}/messages", json={"content": "hi"})).status_code == 403
+
+
+async def test_admin_can_use_a_cloud_model(client, chat_id, signed_in, session_maker, chain, vector_store, web, cloud):
+    await _make_admin(session_maker, signed_in)
+    response = await client.post(f"/chats/{chat_id}/messages", json={"content": "hi", "model": CLOUD})
+    assert response.status_code == 201 and chain.models == [CLOUD]
+    unlisted = "openrouter/openai/gpt-5.5-pro"
+    assert (await client.post(f"/chats/{chat_id}/messages", json={"content": "hi", "model": unlisted})).status_code == 403
+
+
+def test_cloud_chain_uses_openrouter(monkeypatch):
+    monkeypatch.setattr(chat_service, "OPENROUTER_API_KEY", "sk-or-test")
+    llm = chat_service.build_rag_chat_chain(CLOUD).last
+    assert type(llm).__name__ == "ChatOpenAI" and llm.model_name == "anthropic/claude-haiku-5.5"
+    assert str(llm.openai_api_base) == "https://openrouter.ai/api/v1"
+    assert type(chat_service.build_rag_chat_chain("llama3.2:latest").last).__name__ == "ChatOllama"
+
+
 async def test_models_ollama_down_is_a_502(client, monkeypatch):
     _fake_ollama(monkeypatch, lambda request: chat_service.httpx.Response(500))
     assert (await client.get("/models")).status_code == 502

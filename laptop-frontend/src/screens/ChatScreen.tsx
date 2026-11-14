@@ -1,11 +1,22 @@
 import { useEffect, useRef, useState, type FormEvent, type KeyboardEvent } from 'react';
 import { copyText } from '../copy';
-import DocumentsView from './DocumentsView';
+import DocumentsView, { MAX_BYTES, MAX_FILES } from './DocumentsView';
 import FeedbackView from './FeedbackView';
 import LibraryView from './LibraryView';
 import AdminSessionsView from './AdminSessionsView';
-import UploadSnackbar, { type UploadItem } from './UploadSnackbar';
-import { api, HttpError, SIGN_IN_URL, type Chat, type Feedback, type Message, type User } from '../api';
+import UploadSnackbar, { fromUploaded, type UploadItem } from './UploadSnackbar';
+import { api, documentUrl, HttpError, SIGN_IN_URL, type Chat, type ChatDocument, type Feedback, type Message, type User } from '../api';
+
+const isImage = (name: string) => /\.(png|jpe?g|gif|webp)$/i.test(name);
+
+function fileIcon(name: string) {
+  const n = name.toLowerCase();
+  if (n.endsWith('.pdf')) return '📕';
+  if (n.endsWith('.docx')) return '📘';
+  if (/\.(png|jpe?g|gif|webp)$/.test(n)) return '🖼️';
+  if (/\.(csv|tsv)$/.test(n)) return '📊';
+  return '📄';
+}
 
 interface Props {
   // null: signed out; the same layout asks the person to sign in.
@@ -75,6 +86,17 @@ export default function ChatScreen({ user, notice, onSignOut, onSessionExpired }
   const [sending, setSending] = useState(false);
   const [view, setView] = useState<View>(() => readRoute().view);
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  // Wide screens: ☰ / « hide the sidebar completely (remembered per browser); phones keep the overlay.
+  const [sidebarHidden, setSidebarHidden] = useState(() => {
+    try { return localStorage.getItem('sidebar.hidden') === '1'; } catch { return false; }
+  });
+  function toggleSidebar() {
+    if (window.matchMedia('(max-width: 760px)').matches) { setSidebarOpen(o => !o); return; }
+    setSidebarHidden(h => {
+      try { localStorage.setItem('sidebar.hidden', h ? '0' : '1'); } catch { /* storage blocked */ }
+      return !h;
+    });
+  }
   // From laptop-backend's MAX_QUESTIONS_PER_CHAT (0 = no limit); it refuses more with a 409.
   const [maxQuestions, setMaxQuestions] = useState(0);
   // From laptop-backend's MAX_REGENERATIONS (0 = no limit).
@@ -92,8 +114,41 @@ export default function ChatScreen({ user, notice, onSignOut, onSessionExpired }
   const [uploads, setUploads] = useState<UploadItem[]>([]);
   // Bumped when an embedding finishes, so the Documents list reloads.
   const [docsVersion, setDocsVersion] = useState(0);
+  // The open chat's documents, shown as chips above the message box (replaced versions left out).
+  const [chatDocs, setChatDocs] = useState<ChatDocument[]>([]);
+  useEffect(() => {
+    if (!chat || !user) { setChatDocs([]); return; }
+    const id = chat.id;
+    api.documents()
+      .then(all => setChatDocs(all.filter(d => d.chat_id === id && d.status !== 'replaced')))
+      .catch(() => setChatDocs([]));
+  }, [chat?.id, docsVersion, uploads]);
   const endRef = useRef<HTMLDivElement>(null);
   const scrollRef = useRef<HTMLElement>(null);
+  const attachRef = useRef<HTMLInputElement>(null);
+
+  // 📎 in the message box: pick files and upload them straight into this chat (or a new one);
+  // the snackbar shows the embedding progress, as for uploads from the Documents screen.
+  async function attach(list: FileList | null) {
+    const files = Array.from(list ?? []);
+    if (attachRef.current) attachRef.current.value = '';
+    if (!files.length) return;
+    const tooBig = files.find(f => f.size > MAX_BYTES);
+    if (tooBig) { fail('', new Error(`${tooBig.name} is larger than 10 MB.`)); return; }
+    if (files.length > MAX_FILES) { fail('', new Error(`At most ${MAX_FILES} files at a time.`)); return; }
+    const target = await ensureChat();
+    if (!target) return;
+    const batch = Date.now() + ':';
+    const placeholders = files.map((f, i): UploadItem => ({ key: batch + i, filename: f.name, status: 'uploading' }));
+    setUploads(items => [...items.filter(i => i.status !== 'ready' && i.status !== 'duplicate'), ...placeholders]);
+    try {
+      const { documents } = await api.upload(target.id, files);
+      setUploads(items => [...items.filter(i => !i.key.startsWith(batch)), ...documents.map(fromUploaded)]);
+    } catch (err) {
+      setUploads(items => items.filter(i => !i.key.startsWith(batch)));
+      fail('Upload failed: ', err);
+    }
+  }
   // The question to keep at the top of the view (just asked, or the latest one of a chat just
   // opened); its answer then renders below it instead of the view following the end.
   const [anchor, setAnchor] = useState<number | null>(null);
@@ -201,6 +256,33 @@ export default function ChatScreen({ user, notice, onSignOut, onSessionExpired }
     setMessages([]);
     setView('chat');
     setSidebarOpen(false);
+  }
+
+  // Deletes the open chat with its messages and documents (laptop-backend DELETE /chats/{id}).
+  async function deleteChat() {
+    if (!chat || busy) return;
+    if (!confirm(`Delete “${chat.title}”? Its messages and documents are deleted too, and this can't be undone.`)) return;
+    try {
+      await api.deleteChat(chat.id);
+      const id = chat.id;
+      setChats(cs => cs.filter(c => c.id !== id));
+      setDocsVersion(v => v + 1);
+      newChat();
+    } catch (err) {
+      fail('Could not delete the chat: ', err);
+    }
+  }
+
+  // ✕ on a chip: deletes that document from the chat (laptop-backend DELETE /documents/{id}).
+  async function removeAttachment(d: ChatDocument) {
+    if (!confirm(`Remove “${d.filename}” from this chat?`)) return;
+    try {
+      await api.deleteDocument(d.id);
+      setChatDocs(ds => ds.filter(x => x.id !== d.id));
+      setDocsVersion(v => v + 1);
+    } catch (err) {
+      fail('Could not remove the file: ', err);
+    }
   }
 
   async function openChat(c: Chat) {
@@ -324,9 +406,12 @@ export default function ChatScreen({ user, notice, onSignOut, onSessionExpired }
   }
 
   return (
-    <div className={'layout' + (sidebarOpen ? ' sidebar-open' : '')}>
+    <div className={'layout' + (sidebarOpen ? ' sidebar-open' : '') + (sidebarHidden ? ' sidebar-hidden' : '')}>
       <aside className="sidebar">
-        <div className="brand">Laptop Dev Chat</div>
+        <div className="brand">
+          <span>Laptop Dev Chat</span>
+          <button type="button" className="sidebar-hide" onClick={toggleSidebar} aria-label="Hide sidebar" title="Hide sidebar">❮</button>
+        </div>
         <a href="/" className={'side-action' + (view === 'chat' && !chat ? ' active' : '')}
           onClick={e => { if (e.button === 0 && !e.metaKey && !e.ctrlKey && !e.shiftKey) { e.preventDefault(); newChat(); } }}>
           🏠 Home
@@ -385,8 +470,15 @@ export default function ChatScreen({ user, notice, onSignOut, onSessionExpired }
 
       <main className="content">
         <header className="topbar">
-          <button type="button" className="menu-toggle" aria-label="Menu" onClick={() => setSidebarOpen(o => !o)}>☰</button>
+          <button type="button" className="menu-toggle" aria-label="Menu" onClick={toggleSidebar}>☰</button>
+          {sidebarHidden && (
+            <button type="button" className="sidebar-show" onClick={toggleSidebar} aria-label="Show sidebar" title="Show sidebar">❯</button>
+          )}
           <span className="title">{view === 'documents' ? 'Documents' : view === 'library' ? (user?.role === 'admin' ? 'All documents' : 'My documents') : view === 'sessions' ? 'Signed-in users' : view === 'feedback' ? 'Feedback' : chat ? chat.title : 'New chat'}</span>
+          {view === 'chat' && chat && (
+            <button type="button" className="icon-button" onClick={deleteChat} disabled={busy}
+              aria-label="Delete this chat" title="Delete this chat">🗑</button>
+          )}
         </header>
 
         {status && <p className="status">{status}</p>}
@@ -518,16 +610,52 @@ export default function ChatScreen({ user, notice, onSignOut, onSessionExpired }
             ) : (
             <form onSubmit={send} className="composer">
               <div className="composer-box">
+                {(chatDocs.length > 0 || uploads.some(u => u.status === 'uploading')) && (
+                  <div className="attachments" aria-label="Documents in this chat">
+                    {chatDocs.map(d => (
+                      <span key={d.id} className={'attachment ' + d.status}>
+                        <a href={documentUrl(d.id)} target="_blank" rel="noreferrer"
+                          title={d.status === 'failed' ? (d.error ?? 'Failed') : d.filename}>
+                          {isImage(d.filename)
+                            ? <img className="attachment-thumb" src={documentUrl(d.id)} alt="" loading="lazy" />
+                            : <span aria-hidden="true">{fileIcon(d.filename)}</span>}
+                          <span className="attachment-name">{d.filename}</span>
+                          {d.status === 'embedding' && <span className="attachment-state">⏳</span>}
+                          {d.status === 'failed' && <span className="attachment-state">⚠️</span>}
+                        </a>
+                        <button type="button" className="attachment-remove" onClick={() => removeAttachment(d)}
+                          disabled={d.status === 'embedding' || busy}
+                          aria-label={`Remove ${d.filename}`}
+                          title={d.status === 'embedding' ? 'Can be removed once it is ready' : 'Remove from this chat'}>✕</button>
+                      </span>
+                    ))}
+                    {uploads.filter(u => u.status === 'uploading').map(u => (
+                      <span key={u.key} className="attachment embedding">
+                        <span aria-hidden="true">{fileIcon(u.filename)}</span>
+                        <span className="attachment-name">{u.filename}</span>
+                        <span className="attachment-state">⏳</span>
+                      </span>
+                    ))}
+                  </div>
+                )}
                 <textarea rows={1} value={input} disabled={busy} aria-busy={busy}
                   placeholder={busy ? 'Waiting for the answer…' : 'Send a message (Shift+Enter for a new line)'}
                   onChange={e => setInput(e.target.value)} onKeyDown={onComposerKey} autoFocus />
-                <select className="composer-model" value={model} onChange={e => setModel(e.target.value)} disabled={busy || !user}
-                  aria-label="Model" title={chat ? 'Model for the next question in this chat' : 'Model for this chat'}>
-                  {(models.includes(model) ? models : [model, ...models]).map(m => (
-                    <option key={m} value={m}>{m.replace(/:latest$/, '')}</option>
-                  ))}
-                </select>
-                <button type="submit" disabled={busy || !input.trim()} aria-label="Send">➤</button>
+                <div className="composer-row">
+                  <button type="button" className="composer-add" disabled={busy || !user}
+                    onClick={() => attachRef.current?.click()}
+                    aria-label="Add documents" title={chat ? 'Add documents to this chat' : 'Add documents (starts a new chat)'}>＋</button>
+                  <input ref={attachRef} type="file" multiple hidden
+                    onChange={e => attach(e.target.files)} />
+                  <span className="composer-spacer" />
+                  <select className="composer-model" value={model} onChange={e => setModel(e.target.value)} disabled={busy || !user}
+                    aria-label="Model" title={chat ? 'Model for the next question in this chat' : 'Model for this chat'}>
+                    {(models.includes(model) ? models : [model, ...models]).map(m => (
+                      <option key={m} value={m}>{m.startsWith('openrouter/') ? `${m.split('/').pop()} (paid)` : m.replace(/:latest$/, '')}</option>
+                    ))}
+                  </select>
+                  <button type="submit" disabled={busy || !input.trim()} aria-label="Send">➤</button>
+                </div>
               </div>
             </form>
             )}

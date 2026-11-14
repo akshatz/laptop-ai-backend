@@ -62,6 +62,9 @@ services:
       # OpenAI key (paid credit) for the "openai" provider; admin container only, never
       # opencode-user.json. Empty leaves those models listed but failing.
       - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      # OpenRouter key (paid credit) for the "openrouter" provider; admin container only, never
+      # opencode-user.json. Empty leaves those models listed but failing.
+      - OPENROUTER_API_KEY=${OPENROUTER_API_KEY:-}
     volumes:
       - ./opencode/opencode.json:/root/.config/opencode/opencode.json:ro
       - opencode-data:/root/.local/share/opencode
@@ -799,6 +802,11 @@ services:
       # query stay on llama3.2 (short prompts, fast and right there).
       - DEFAULT_CHAT_MODEL=gemma3:4b
       - WEB_SEARCH_DECISION_MODEL=llama3.2
+      # Paid OpenRouter models for admins (ids from openrouter.ai/models, without "openrouter/");
+      # offered only while openrouter_api_key is in OpenBao (docs/laptop-backend.md).
+      - CLOUD_MODELS=${CLOUD_MODELS:-anthropic/claude-haiku-5.5,anthropic/claude-sonnet-5.5,openai/gpt-5.4-mini}
+      # admins (default) or all: who may pick them. "all" lets everyone spend the OpenRouter credit.
+      - CLOUD_MODELS_FOR=${CLOUD_MODELS_FOR:-admins}
       - MILVUS_URI=http://milvus:19530
       # Same embedding model as open-webui's RAG_EMBEDDING_MODEL; picks collection custom_backend_docs_<model>
       - EMBEDDING_MODEL=embeddinggemma

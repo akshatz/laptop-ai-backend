@@ -13,10 +13,8 @@ interface Props {
   reloadKey: number;
 }
 
-const MAX_FILES = 5;
-const MAX_BYTES = 10 * 1024 * 1024;
-// Keep in sync with laptop-backend/file_text.py.
-const ACCEPT = '.pdf,.docx,.txt,.md,.markdown,.csv,.tsv,.json,.html,.htm,.xml,.log,.yaml,.yml';
+export const MAX_FILES = 5;
+export const MAX_BYTES = 10 * 1024 * 1024;
 
 const size = (n: number) => (n < 1024 ? `${n} B` : n < 1024 * 1024 ? `${(n / 1024).toFixed(0)} KB` : `${(n / 1024 / 1024).toFixed(1)} MB`);
 
@@ -97,7 +95,7 @@ export default function DocumentsView({ chat, ensureChat, onError, onOpenChat, o
         onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') inputRef.current?.click(); }}>
         <div className="dropzone-icon">⬆</div>
         <div><strong>Choose files</strong> or drag them here</div>
-        <input ref={inputRef} type="file" multiple accept={ACCEPT} hidden
+        <input ref={inputRef} type="file" multiple hidden
           onChange={e => { addFiles(e.target.files); e.target.value = ''; }} />
       </div>
 
