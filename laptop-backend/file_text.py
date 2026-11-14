@@ -1,17 +1,35 @@
 """Text from uploaded files, for adding them to a chat as context: PDF (pypdf, text layer only,
 no OCR), Word .docx (python-docx, paragraphs and tables) and plain text (.txt, .md, .csv, .json,
 .html, …). Raises UnsupportedFile for anything else, and for files with no text (e.g. a scanned
-PDF without a text layer)."""
+PDF without a text layer). Pictures (.png, .jpg, .webp, .gif) are read in the upload's background
+task by read_image: OCR with Tesseract first (exact text, a second or two), and only when that
+finds almost no text (a photo) a vision model in Ollama describes it (IMAGE_MODEL, default
+gemma3:4b; up to a minute or more on CPU)."""
 
+import asyncio
+import base64
 import io
+import os
+import subprocess
 from pathlib import Path
 
 from docx import Document as DocxDocument
 from pypdf import PdfReader
 from pypdf.errors import PdfReadError
+import httpx
 
 TEXT_SUFFIXES = {".txt", ".md", ".markdown", ".csv", ".tsv", ".json", ".html", ".htm", ".xml", ".log", ".yaml", ".yml"}
-SUPPORTED = sorted(TEXT_SUFFIXES | {".pdf", ".docx"})
+IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".webp", ".gif"}
+SUPPORTED = sorted(TEXT_SUFFIXES | IMAGE_SUFFIXES | {".pdf", ".docx"})
+
+# Below this many characters of OCR text the picture is treated as a photo and described instead.
+OCR_MIN_CHARS = 20
+IMAGE_MODEL = os.environ.get("IMAGE_MODEL", "gemma3:4b")
+OLLAMA_BASE_URL = os.environ.get("OLLAMA_BASE_URL", "http://ollama:11434")
+IMAGE_PROMPT = (
+    "Copy out all text visible in this image exactly, keeping numbers, names and dates as written. "
+    "Then describe briefly what the image shows. Plain text only."
+)
 
 
 class UnsupportedFile(ValueError):
@@ -45,3 +63,39 @@ def extract_text(filename: str, data: bytes) -> str:
     if not text:
         raise UnsupportedFile(f"{filename}: no text found (a scanned PDF needs OCR, which isn't supported here)")
     return text
+
+
+def is_image(filename: str) -> bool:
+    return Path(filename).suffix.lower() in IMAGE_SUFFIXES
+
+
+async def describe_image(filename: str, data: bytes) -> str:
+    """The image's visible text plus a short description, from IMAGE_MODEL through Ollama."""
+    async with httpx.AsyncClient(timeout=600) as client:
+        response = await client.post(f"{OLLAMA_BASE_URL}/api/generate", json={
+            "model": IMAGE_MODEL, "prompt": IMAGE_PROMPT, "stream": False,
+            "images": [base64.b64encode(data).decode()], "options": {"temperature": 0.1},
+        })
+        response.raise_for_status()
+    text = (response.json().get("response") or "").strip()
+    if not text:
+        raise UnsupportedFile(f"{filename}: no text or description could be read from the picture")
+    return text
+
+
+def ocr_image(data: bytes) -> str:
+    """Text in the picture via the tesseract CLI (installed in the image), '' if it can't run."""
+    try:
+        result = subprocess.run(["tesseract", "stdin", "stdout", "-l", "eng"], input=data,
+                                capture_output=True, timeout=120, check=True)
+    except (OSError, subprocess.SubprocessError):
+        return ""
+    return result.stdout.decode("utf-8", errors="replace").strip()
+
+
+async def read_image(filename: str, data: bytes) -> str:
+    """OCR text when the picture has some, else the vision model's text and description."""
+    text = await asyncio.to_thread(ocr_image, data)
+    if len(text) >= OCR_MIN_CHARS:
+        return text
+    return await describe_image(filename, data)

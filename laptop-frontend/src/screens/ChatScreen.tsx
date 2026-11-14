@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type FormEvent, type KeyboardEvent } from 'react';
 import { copyText } from '../copy';
-import DocumentsView, { ACCEPT, MAX_BYTES, MAX_FILES } from './DocumentsView';
+import DocumentsView, { MAX_BYTES, MAX_FILES } from './DocumentsView';
 import FeedbackView from './FeedbackView';
 import LibraryView from './LibraryView';
 import AdminSessionsView from './AdminSessionsView';
@@ -624,7 +624,7 @@ export default function ChatScreen({ user, notice, onSignOut, onSessionExpired }
                   <button type="button" className="composer-add" disabled={busy || !user}
                     onClick={() => attachRef.current?.click()}
                     aria-label="Add documents" title={chat ? 'Add documents to this chat' : 'Add documents (starts a new chat)'}>＋</button>
-                  <input ref={attachRef} type="file" multiple accept={ACCEPT} hidden
+                  <input ref={attachRef} type="file" multiple hidden
                     onChange={e => attach(e.target.files)} />
                   <span className="composer-spacer" />
                   <select className="composer-model" value={model} onChange={e => setModel(e.target.value)} disabled={busy || !user}

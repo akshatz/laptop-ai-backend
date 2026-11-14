@@ -284,6 +284,9 @@ async def _embed(chat_id: uuid.UUID, jobs: list, versioned: bool) -> None:
                 if versioned and version > 1:
                     expr = f"chat_id == {_milvus_str(str(chat_id))} and source == {_milvus_str(filename)}"
                     await asyncio.to_thread(chat_service.vector_store.delete, expr=expr)
+                if not item.text and file_text.is_image(filename):
+                    row = await session.get(ChatDocumentModel, doc_id)
+                    item = DocumentItem(text=await file_text.read_image(filename, row.data), source=filename)
                 chunks = chat_service.chunk_documents(chat_id, [item])
                 await chat_service.vector_store.aadd_documents(chunks)
             except Exception as exc:
@@ -327,7 +330,9 @@ async def upload_files(chat_id: uuid.UUID, background: BackgroundTasks, files: l
         if len(data) > MAX_FILE_BYTES:
             raise HTTPException(status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, detail=f"{name}: larger than 10 MB.")
         try:
-            item = DocumentItem(text=file_text.extract_text(name, data), source=name)
+            # Pictures are read by the vision model in the background (_embed), so the text is empty here.
+            text = "" if file_text.is_image(name) else file_text.extract_text(name, data)
+            item = DocumentItem(text=text, source=name)
         except file_text.UnsupportedFile as exc:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
         items.append((item, name, upload.content_type or "application/octet-stream", data))
@@ -409,7 +414,9 @@ async def delete_document(document_id: uuid.UUID, user: UserModel = Depends(curr
                                                 ChatDocumentModel.id != doc.id)
             )).scalars().all()
             for other in same_name:
-                item = DocumentItem(text=file_text.extract_text(other.filename, other.data), source=other.filename)
+                text = (await file_text.read_image(other.filename, other.data) if file_text.is_image(other.filename)
+                        else file_text.extract_text(other.filename, other.data))
+                item = DocumentItem(text=text, source=other.filename)
                 await chat_service.vector_store.aadd_documents(chat_service.chunk_documents(doc.chat_id, [item]))
         except Exception as exc:
             log.warning("Deleting chunks of %s (chat %s) failed: %s", doc.filename, doc.chat_id, exc)

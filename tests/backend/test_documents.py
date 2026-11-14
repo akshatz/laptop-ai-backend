@@ -96,7 +96,7 @@ async def test_html_is_served_as_plain_text(client, chat_id, vector_store):
 
 async def test_unsupported_or_empty_files_add_nothing(client, chat_id, vector_store):
     good = ("files", ("ok.txt", b"fine", "text/plain"))
-    response = await client.post(f"/chats/{chat_id}/files", files=[good, ("files", ("photo.jpg", b"\xff\xd8", "image/jpeg"))])
+    response = await client.post(f"/chats/{chat_id}/files", files=[good, ("files", ("clip.mp4", b"\x00", "video/mp4"))])
     assert response.status_code == 400 and "unsupported file type" in response.json()["detail"]
     response = await client.post(f"/chats/{chat_id}/files", files=[("files", ("empty.txt", b"  ", "text/plain"))])
     assert response.status_code == 400 and "no text found" in response.json()["detail"]
@@ -277,3 +277,30 @@ async def test_delete_chat_with_its_messages_and_documents(client, chat_id, vect
     assert (await client.get("/chats")).json() == []
     assert (await client.get("/documents")).json() == []
     assert (await client.get(f"/chats/{chat_id}/messages")).status_code == 404
+
+
+async def test_pictures_are_read_with_ocr_first(client, chat_id, vector_store, monkeypatch):
+    import file_text
+
+    async def no_vision(name, data):
+        raise AssertionError("vision model not needed when OCR finds text")
+    monkeypatch.setattr(file_text, "ocr_image", lambda data: "Electricity bill total Rs 1,240 due 20 Nov")
+    monkeypatch.setattr(file_text, "describe_image", no_vision)
+
+    response = await client.post(f"/chats/{chat_id}/files", files=[("files", ("bill.png", b"\x89PNG fake", "image/png"))])
+    assert response.status_code == 201
+    [doc] = (await client.get("/documents")).json()
+    assert doc["status"] == "ready" and doc["filename"] == "bill.png"
+    assert [d.page_content for d in vector_store.added] == ["Electricity bill total Rs 1,240 due 20 Nov"]
+
+
+async def test_pictures_without_text_are_described(client, chat_id, vector_store, monkeypatch):
+    import file_text
+
+    async def describe(name, data):
+        return "A dog sitting on a red sofa."
+    monkeypatch.setattr(file_text, "ocr_image", lambda data: "")
+    monkeypatch.setattr(file_text, "describe_image", describe)
+
+    await client.post(f"/chats/{chat_id}/files", files=[("files", ("dog.jpg", b"\xff\xd8 fake", "image/jpeg"))])
+    assert [d.page_content for d in vector_store.added] == ["A dog sitting on a red sofa."]
