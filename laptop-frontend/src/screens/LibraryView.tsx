@@ -40,6 +40,17 @@ export default function LibraryView({ user, onError, onOpenChat, reloadKey }: Pr
     api.documents(isAdmin && everyone).then(setDocs).catch(err => onError('Could not load documents: ', err));
   }, [everyone, reloadKey]);
 
+  async function remove(d: ChatDocument) {
+    const whose = d.mine ? '' : ` (${d.owner_name}'s)`;
+    if (!confirm(`Delete “${d.filename}”${whose}? Answers in “${d.chat_title}” stop using it. This can't be undone.`)) return;
+    try {
+      await api.deleteDocument(d.id);
+      setDocs(ds => (ds ?? []).filter(x => x.id !== d.id));
+    } catch (err) {
+      onError('Could not delete the document: ', err);
+    }
+  }
+
   const shown = useMemo(() => {
     const q = search.trim().toLowerCase();
     return (docs ?? []).filter(d =>
@@ -80,8 +91,15 @@ export default function LibraryView({ user, onError, onOpenChat, reloadKey }: Pr
             {shown.map(d => (
               <article key={d.id} className={'doc-card ' + d.status}>
                 <div className="doc-card-top">
-                  <span className="doc-card-icon" aria-hidden="true">{icon(d)}</span>
+                  {/\.(png|jpe?g|gif|webp)$/i.test(d.filename)
+                    ? <a href={documentUrl(d.id)} target="_blank" rel="noreferrer" tabIndex={-1} aria-hidden="true">
+                        <img className="doc-card-thumb" src={documentUrl(d.id)} alt="" loading="lazy" />
+                      </a>
+                    : <span className="doc-card-icon" aria-hidden="true">{icon(d)}</span>}
                   <span className={'chip ' + d.status} title={d.error ?? undefined}>{STATUS[d.status] ?? d.status}</span>
+                  <button type="button" className="icon-button doc-card-delete" onClick={() => remove(d)}
+                    disabled={d.status === 'embedding'} aria-label={`Delete ${d.filename}`}
+                    title={d.status === 'embedding' ? 'Can be deleted once it is ready' : 'Delete'}>🗑</button>
                 </div>
                 <a className="doc-card-name" href={documentUrl(d.id)} target="_blank" rel="noreferrer" title={d.filename}>
                   {d.filename}

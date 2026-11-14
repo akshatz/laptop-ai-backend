@@ -130,6 +130,7 @@ async function request<T>(path: string, body?: unknown, method = body === undefi
     try { detail = JSON.parse(text).detail ?? text; } catch { /* not JSON */ }
     throw new HttpError(res.status, typeof detail === 'string' ? detail : JSON.stringify(detail));
   }
+  if (res.status === 204) return undefined as T;
   return res.json() as Promise<T>;
 }
 
@@ -149,6 +150,8 @@ export const api = {
     return request<IngestResult>(`/chats/${chatId}/files`, form);
   },
   adminSessions: () => request<SignedInSession[]>('/admin/sessions'),
+  deleteDocument: (id: string) => request<void>(`/documents/${id}`, undefined, 'DELETE'),
+  deleteChat: (chatId: string) => request<void>(`/chats/${chatId}`, undefined, 'DELETE'),
   documents: (all = false) => request<ChatDocument[]>(all ? '/documents?all=true' : '/documents'),
   // `model`: the chat switches to it (laptop-backend checks it's installed).
   send: (chatId: string, content: string, model?: string) =>
