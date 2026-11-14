@@ -260,6 +260,18 @@ export default function ChatScreen({ user, notice, onSignOut, onSessionExpired }
     }
   }
 
+  // ✕ on a chip: deletes that document from the chat (laptop-backend DELETE /documents/{id}).
+  async function removeAttachment(d: ChatDocument) {
+    if (!confirm(`Remove “${d.filename}” from this chat?`)) return;
+    try {
+      await api.deleteDocument(d.id);
+      setChatDocs(ds => ds.filter(x => x.id !== d.id));
+      setDocsVersion(v => v + 1);
+    } catch (err) {
+      fail('Could not remove the file: ', err);
+    }
+  }
+
   async function openChat(c: Chat) {
     setStatus('');
     setView('chat');
@@ -582,13 +594,19 @@ export default function ChatScreen({ user, notice, onSignOut, onSessionExpired }
                 {(chatDocs.length > 0 || uploads.some(u => u.status === 'uploading')) && (
                   <div className="attachments" aria-label="Documents in this chat">
                     {chatDocs.map(d => (
-                      <a key={d.id} className={'attachment ' + d.status} href={documentUrl(d.id)} target="_blank" rel="noreferrer"
-                        title={d.status === 'failed' ? (d.error ?? 'Failed') : d.filename}>
-                        <span aria-hidden="true">{fileIcon(d.filename)}</span>
-                        <span className="attachment-name">{d.filename}</span>
-                        {d.status === 'embedding' && <span className="attachment-state">⏳</span>}
-                        {d.status === 'failed' && <span className="attachment-state">✕</span>}
-                      </a>
+                      <span key={d.id} className={'attachment ' + d.status}>
+                        <a href={documentUrl(d.id)} target="_blank" rel="noreferrer"
+                          title={d.status === 'failed' ? (d.error ?? 'Failed') : d.filename}>
+                          <span aria-hidden="true">{fileIcon(d.filename)}</span>
+                          <span className="attachment-name">{d.filename}</span>
+                          {d.status === 'embedding' && <span className="attachment-state">⏳</span>}
+                          {d.status === 'failed' && <span className="attachment-state">⚠️</span>}
+                        </a>
+                        <button type="button" className="attachment-remove" onClick={() => removeAttachment(d)}
+                          disabled={d.status === 'embedding' || busy}
+                          aria-label={`Remove ${d.filename}`}
+                          title={d.status === 'embedding' ? 'Can be removed once it is ready' : 'Remove from this chat'}>✕</button>
+                      </span>
                     ))}
                     {uploads.filter(u => u.status === 'uploading').map(u => (
                       <span key={u.key} className="attachment embedding">
