@@ -30,6 +30,7 @@ main:not(.content) { max-width: 720px; margin: 2rem auto; padding: 0 1rem; }
 a.button { display: inline-block; padding: 0.6rem 1.6rem; border-radius: 6px; background: var(--accent); color: #fff; text-decoration: none; }
 
 label { display: block; margin-top: 0.6rem; font-size: 0.9rem; }
+[hidden] { display: none !important; }
 input, textarea, select { display: block; width: 100%; padding: 0.5rem; margin-top: 0.2rem; font: inherit; }
 textarea { min-height: 5rem; }
 button { padding: 0.45rem 1rem; cursor: pointer; font: inherit; }
