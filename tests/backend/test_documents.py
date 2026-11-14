@@ -98,7 +98,7 @@ async def test_html_is_served_as_plain_text(client, chat_id, vector_store):
 
 async def test_unsupported_or_empty_files_add_nothing(client, chat_id, vector_store):
     good = ("files", ("ok.txt", b"fine", "text/plain"))
-    response = await client.post(f"/chats/{chat_id}/files", files=[good, ("files", ("photo.jpg", b"\xff\xd8", "image/jpeg"))])
+    response = await client.post(f"/chats/{chat_id}/files", files=[good, ("files", ("clip.mp4", b"\x00", "video/mp4"))])
     assert response.status_code == 400 and "unsupported file type" in response.json()["detail"]
     response = await client.post(f"/chats/{chat_id}/files", files=[("files", ("empty.txt", b"  ", "text/plain"))])
     assert response.status_code == 400 and "no text found" in response.json()["detail"]
@@ -193,3 +193,131 @@ async def test_all_documents_for_admins_only(client, chat_id, vector_store, sess
         assert (await other.get("/documents")).json() == []
         opened = await other.get(f"/documents/{ravis['id']}/file")
         assert opened.status_code == 200 and opened.content == b"ravi's list"
+
+
+async def test_delete_your_document_removes_its_chunks(client, chat_id, vector_store, sign_in, make_client):
+    await client.post(f"/chats/{chat_id}/files", files=[("files", ("menu.txt", b"Tea 10", "text/plain"))])
+    [doc] = (await client.get("/documents")).json()
+
+    async with await make_client() as other:
+        await sign_in(other, "meera@example.com", "Meera")
+        assert (await other.delete(f"/documents/{doc['id']}")).status_code == 404
+
+    assert (await client.delete(f"/documents/{doc['id']}")).status_code == 204
+    assert vector_store.deleted == [f'chat_id == "{chat_id}" and source == "menu.txt"']
+    assert (await client.get("/documents")).json() == []
+    assert (await client.delete(f"/documents/{doc['id']}")).status_code == 404
+
+
+async def test_deleting_an_older_version_leaves_milvus_alone(client, chat_id, vector_store):
+    await client.post(f"/chats/{chat_id}/files", files=[("files", ("menu.txt", b"Tea 10", "text/plain"))])
+    await client.post(f"/chats/{chat_id}/files", files=[("files", ("menu.txt", b"Tea 15", "text/plain"))])
+    vector_store.deleted.clear()
+    old = [d for d in (await client.get("/documents")).json() if d["status"] == "replaced"][0]
+
+    assert (await client.delete(f"/documents/{old['id']}")).status_code == 204
+    assert vector_store.deleted == []
+    assert [(d["version"], d["status"]) for d in (await client.get("/documents")).json()] == [(2, "ready")]
+
+
+async def test_deleting_a_pasted_text_keeps_its_namesake(client, chat_id, vector_store):
+    await client.post(f"/chats/{chat_id}/documents", json={"documents": [{"text": "one"}]})
+    await client.post(f"/chats/{chat_id}/documents", json={"documents": [{"text": "two"}]})
+    first = (await client.get("/documents")).json()[1]
+    vector_store.added.clear()
+
+    assert (await client.delete(f"/documents/{first['id']}")).status_code == 204
+    # Both share the name "Pasted text 1.txt", so the other one is embedded again.
+    assert [d.page_content for d in vector_store.added] == ["two"]
+
+
+async def test_delete_refused_while_embedding_or_when_milvus_fails(client, chat_id, vector_store, session_maker, monkeypatch):
+    from sqlalchemy import update
+    import models
+
+    await client.post(f"/chats/{chat_id}/files", files=[("files", ("a.txt", b"text", "text/plain"))])
+    [doc] = (await client.get("/documents")).json()
+    async with session_maker() as session:
+        await session.execute(update(models.ChatDocumentModel).values(status="embedding"))
+        await session.commit()
+    assert (await client.delete(f"/documents/{doc['id']}")).status_code == 409
+
+    async with session_maker() as session:
+        await session.execute(update(models.ChatDocumentModel).values(status="ready"))
+        await session.commit()
+    def broken(ids=None, expr=None):
+        raise RuntimeError("milvus down")
+    monkeypatch.setattr(vector_store, "delete", broken)
+    assert (await client.delete(f"/documents/{doc['id']}")).status_code == 502
+    assert len((await client.get("/documents")).json()) == 1
+
+
+async def test_admins_can_delete_anyones_document(client, chat_id, vector_store, session_maker, sign_in, make_client):
+    from sqlalchemy import update
+    import models
+
+    await client.post(f"/chats/{chat_id}/files", files=[("files", ("ravi.txt", b"ravi's list", "text/plain"))])
+    [doc] = (await client.get("/documents")).json()
+    async with await make_client() as other:
+        meera = await sign_in(other, "meera@example.com", "Meera")
+        async with session_maker() as session:
+            await session.execute(update(models.UserModel).where(models.UserModel.id == uuid.UUID(meera)).values(role="admin"))
+            await session.commit()
+        assert (await other.delete(f"/documents/{doc['id']}")).status_code == 204
+    assert (await client.get("/documents")).json() == []
+
+
+async def test_delete_chat_with_its_messages_and_documents(client, chat_id, vector_store, sign_in, make_client):
+    await client.post(f"/chats/{chat_id}/files", files=[("files", ("a.txt", b"text", "text/plain"))])
+
+    async with await make_client() as other:
+        await sign_in(other, "meera@example.com", "Meera")
+        assert (await other.delete(f"/chats/{chat_id}")).status_code == 404
+
+    assert (await client.delete(f"/chats/{chat_id}")).status_code == 204
+    assert vector_store.deleted == [f'chat_id == "{chat_id}"']
+    assert (await client.get("/chats")).json() == []
+    assert (await client.get("/documents")).json() == []
+    assert (await client.get(f"/chats/{chat_id}/messages")).status_code == 404
+
+
+async def test_pictures_get_a_description_and_ocr_text(client, chat_id, vector_store, monkeypatch):
+    import file_text
+
+    async def describe(name, data):
+        return "A screenshot of an electricity bill."
+    monkeypatch.setattr(file_text, "ocr_image", lambda data: "Total Rs 1,240 due 20 Nov")
+    monkeypatch.setattr(file_text, "describe_image", describe)
+
+    response = await client.post(f"/chats/{chat_id}/files", files=[("files", ("bill.png", b"\x89PNG fake", "image/png"))])
+    assert response.status_code == 201
+    [doc] = (await client.get("/documents")).json()
+    assert doc["status"] == "ready" and doc["filename"] == "bill.png"
+    assert [d.page_content for d in vector_store.added] == [
+        "Description of the picture bill.png: A screenshot of an electricity bill.\n\n"
+        "Text in the picture (OCR):\nTotal Rs 1,240 due 20 Nov"]
+
+
+async def test_picture_keeps_ocr_text_when_the_vision_model_fails(client, chat_id, vector_store, monkeypatch):
+    import file_text
+
+    async def down(name, data):
+        raise RuntimeError("ollama down")
+    monkeypatch.setattr(file_text, "ocr_image", lambda data: "Total Rs 1,240")
+    monkeypatch.setattr(file_text, "describe_image", down)
+
+    await client.post(f"/chats/{chat_id}/files", files=[("files", ("bill.png", b"\x89PNG fake", "image/png"))])
+    assert [d.page_content for d in vector_store.added] == ["Text in the picture (OCR):\nTotal Rs 1,240"]
+
+
+async def test_picture_fails_when_nothing_can_read_it(client, chat_id, vector_store, monkeypatch):
+    import file_text
+
+    async def down(name, data):
+        raise RuntimeError("ollama down")
+    monkeypatch.setattr(file_text, "ocr_image", lambda data: "")
+    monkeypatch.setattr(file_text, "describe_image", down)
+
+    await client.post(f"/chats/{chat_id}/files", files=[("files", ("dog.jpg", b"\xff\xd8 fake", "image/jpeg"))])
+    [doc] = (await client.get("/documents")).json()
+    assert doc["status"] == "failed" and doc["error"] == "ollama down"

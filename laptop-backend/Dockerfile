@@ -1,6 +1,7 @@
 FROM python:3.11-alpine
 
-RUN apk add --no-cache bash
+# tesseract: OCR for uploaded pictures (file_text.ocr_image), English data only.
+RUN apk add --no-cache bash tesseract-ocr tesseract-ocr-data-eng
 
 WORKDIR /app
 
