@@ -410,7 +410,7 @@ export default function ChatScreen({ user, notice, onSignOut, onSessionExpired }
       <aside className="sidebar">
         <div className="brand">
           <span>Laptop Dev Chat</span>
-          <button type="button" className="sidebar-hide" onClick={toggleSidebar} aria-label="Hide sidebar" title="Hide sidebar">«</button>
+          <button type="button" className="sidebar-hide" onClick={toggleSidebar} aria-label="Hide sidebar" title="Hide sidebar">❮</button>
         </div>
         <a href="/" className={'side-action' + (view === 'chat' && !chat ? ' active' : '')}
           onClick={e => { if (e.button === 0 && !e.metaKey && !e.ctrlKey && !e.shiftKey) { e.preventDefault(); newChat(); } }}>
@@ -470,8 +470,10 @@ export default function ChatScreen({ user, notice, onSignOut, onSessionExpired }
 
       <main className="content">
         <header className="topbar">
-          <button type="button" className="menu-toggle" aria-label={sidebarHidden ? 'Show sidebar' : 'Menu'}
-            title={sidebarHidden ? 'Show sidebar' : undefined} onClick={toggleSidebar}>☰</button>
+          <button type="button" className="menu-toggle" aria-label="Menu" onClick={toggleSidebar}>☰</button>
+          {sidebarHidden && (
+            <button type="button" className="sidebar-show" onClick={toggleSidebar} aria-label="Show sidebar" title="Show sidebar">❯</button>
+          )}
           <span className="title">{view === 'documents' ? 'Documents' : view === 'library' ? (user?.role === 'admin' ? 'All documents' : 'My documents') : view === 'sessions' ? 'Signed-in users' : view === 'feedback' ? 'Feedback' : chat ? chat.title : 'New chat'}</span>
           {view === 'chat' && chat && (
             <button type="button" className="icon-button" onClick={deleteChat} disabled={busy}

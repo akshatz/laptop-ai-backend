@@ -41,11 +41,11 @@ button { padding: 0.45rem 1rem; cursor: pointer; font: inherit; }
 .layout { display: grid; grid-template-columns: 270px 1fr; height: 100vh; }
 .sidebar { background: var(--side-bg); border-right: 1px solid var(--border); display: flex; flex-direction: column; padding: 0.75rem; min-height: 0; }
 .brand { font-weight: 700; font-size: 1.05rem; padding: 0.25rem 0.5rem 0.75rem; display: flex; align-items: center; justify-content: space-between; }
-.sidebar-hide { background: none; border: none; font-size: 1.2rem; line-height: 1; padding: 0.1rem 0.4rem; border-radius: 6px; color: var(--muted); cursor: pointer; }
-.sidebar-hide:hover { background: var(--hover); color: inherit; }
+.sidebar-hide, .sidebar-show { background: none; border: none; font-size: 1.2rem; line-height: 1; padding: 0.1rem 0.4rem; border-radius: 6px; color: var(--muted); cursor: pointer; }
+.sidebar-hide:hover, .sidebar-show:hover { background: var(--hover); color: inherit; }
 .sidebar-hidden { grid-template-columns: 0 1fr; }
 .sidebar-hidden .sidebar { display: none; }
-.sidebar-hidden .menu-toggle { display: inline-block; }
+.sidebar-show { font-size: 1.1rem; border: 1px solid var(--border); }
 .side-action { text-align: left; background: none; border: 1px solid var(--border); border-radius: 8px; margin-bottom: 0.4rem; padding: 0.55rem 0.75rem; }
 .side-action:hover, .history-item:hover { background: var(--hover); }
 .side-action.active, .history-item.active { background: var(--user-bg); }
@@ -144,6 +144,7 @@ a.side-action { display: block; text-decoration: none; color: inherit; }
   .sidebar-open .backdrop { display: block; position: fixed; inset: 0; background: #0006; z-index: 10; }
   .menu-toggle { display: inline-block; }
   .sidebar-hidden .sidebar { display: flex; }
+  .sidebar-show { display: none; }
   .topbar .model span { display: none; }
   .msg.user .bubble { max-width: 90%; }
 }
