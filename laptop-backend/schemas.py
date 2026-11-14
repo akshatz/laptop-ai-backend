@@ -161,6 +161,8 @@ class ChatDocumentResponse(BaseModel):
     owner_email: Optional[str] = None
     # False only in an admin's ?all=true list, for other people's documents.
     mine: bool = True
+    # Content hash, so the documents library can group copies and versions of a file across chats.
+    sha256: Optional[str] = None
 
 class UploadedDocument(BaseModel):
     id: uuid.UUID

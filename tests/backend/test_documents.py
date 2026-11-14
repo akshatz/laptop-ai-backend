@@ -1,3 +1,4 @@
+import hashlib
 import io
 import uuid
 
@@ -73,6 +74,7 @@ async def test_documents_lists_and_opens_your_own(client, chat_id, vector_store,
     assert [d["filename"] for d in docs] == ["Pasted text 1.txt", "list.txt"]
     assert docs[1]["chat_id"] == chat_id and docs[1]["chat_title"] == "New Chat"
     assert docs[1]["size_bytes"] == 11 and docs[1]["chunks"] == 1 and "data" not in docs[1]
+    assert docs[1]["sha256"] == hashlib.sha256(b"milk, bread").hexdigest()
 
     opened = await client.get(f"/documents/{docs[1]['id']}/file")
     assert opened.status_code == 200 and opened.content == b"milk, bread"

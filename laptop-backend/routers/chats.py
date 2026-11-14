@@ -358,6 +358,7 @@ async def list_documents(all: bool = False, user: UserModel = Depends(current_us
             id=d.id, chat_id=d.chat_id, chat_title=title, filename=d.filename, content_type=d.content_type,
             size_bytes=d.size_bytes, chunks=d.chunks, version=d.version, status=d.status, error=d.error,
             created_at=d.created_at, owner_name=name, owner_email=email, mine=d.user_id == user.id,
+            sha256=d.sha256,
         )
         for d, title, name, email in (await db.execute(query)).all()
     ]
