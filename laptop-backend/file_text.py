@@ -26,9 +26,13 @@ SUPPORTED = sorted(TEXT_SUFFIXES | IMAGE_SUFFIXES | {".pdf", ".docx"})
 IMAGE_MODEL = os.environ.get("IMAGE_MODEL", "gemma3:4b")
 OLLAMA_BASE_URL = os.environ.get("OLLAMA_BASE_URL", "http://ollama:11434")
 IMAGE_PROMPT = (
-    "Describe what this picture shows. For a screenshot: which app or website, what is on screen, and "
-    "what each visible setting, menu, button or selector is for, with its current value (for example a "
-    "model name). For a document or photo: what it is and its key facts. Plain text, at most 150 words."
+    "Describe what this picture shows, using only what is visible. Copy every label, name, number and "
+    "version exactly as written; never guess or add a version, brand or detail that is not shown. "
+    "For a screenshot: which app or website (only if its name is visible), then each visible setting, "
+    "menu, button or selector as 'what it is: its exact text' (for example 'model selector: <text>'), "
+    "noting where it is on screen. If a value has parts, such as a model name followed by a level like "
+    "Low/Medium/High, say what each part likely means (for example a reasoning or effort level). "
+    "For a document or photo: what it is and its key facts. Plain text, at most 180 words."
 )
 
 
