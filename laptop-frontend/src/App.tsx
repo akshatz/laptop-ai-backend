@@ -35,14 +35,22 @@ export default function App() {
       setError(SIGNIN_ERRORS[signin] ?? SIGNIN_ERRORS.failed);
       history.replaceState(null, '', location.pathname);
     }
-    api.me()
-      .then(u => { setUser(u); try { sessionStorage.removeItem(REDIRECT_KEY); } catch { /* ignore */ } setLoading(false); })
+    let retry: number | undefined;
+    const load = () => api.me()
+      .then(u => { setUser(u); setError(''); try { sessionStorage.removeItem(REDIRECT_KEY); } catch { /* ignore */ } setLoading(false); })
       .catch(err => {
         // 401: not signed in; go to authentik unless that just failed (then the dashboard asks).
         if (err instanceof HttpError && err.status === 401) { if (!signin && autoSignIn()) return; }
-        else setError('Could not reach the server: ' + err.message);
+        else {
+          // The server is down or restarting: say so briefly and ask again every 5 s; once it
+          // answers, a signed-out visitor is sent to sign in as usual.
+          setError('The server is not reachable right now. Trying again…');
+          retry = window.setTimeout(load, 5000);
+        }
         setLoading(false);
       });
+    load();
+    return () => window.clearTimeout(retry);
   }, []);
 
   async function signOut() {

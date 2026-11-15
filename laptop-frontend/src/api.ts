@@ -140,6 +140,12 @@ async function request<T>(path: string, body?: unknown, method = body === undefi
     const text = await res.text();
     let detail: unknown = text;
     try { detail = JSON.parse(text).detail ?? text; } catch { /* not JSON */ }
+    // nginx's own error page (the backend is down or restarting) is HTML: never show it as it is.
+    if (typeof detail === 'string' && /^\s*<(!doctype|html)/i.test(detail)) {
+      detail = [502, 503, 504].includes(res.status)
+        ? 'The server is not reachable right now (it may be restarting).'
+        : `The server returned an error (${res.status}).`;
+    }
     throw new HttpError(res.status, typeof detail === 'string' ? detail : JSON.stringify(detail));
   }
   if (res.status === 204) return undefined as T;
