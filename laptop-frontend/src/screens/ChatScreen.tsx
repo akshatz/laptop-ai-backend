@@ -491,7 +491,6 @@ export default function ChatScreen({ user, notice, onSignOut, onSessionExpired }
             <button type="button" className="sidebar-show" onClick={toggleSidebar} aria-label="Show sidebar" title="Show sidebar">❯</button>
           )}
           <span className="title">{view === 'documents' ? 'Documents' : view === 'library' ? 'All documents' : view === 'versions' ? 'Versions' : view === 'sessions' ? 'Signed-in users' : view === 'feedback' ? 'Feedback' : view === 'trash' ? 'Deleted' : chat ? chat.title : 'New chat'}</span>
-          <Clock />
           {view === 'chat' && chat && (
             <button type="button" className="icon-button" onClick={deleteChat} disabled={busy}
               aria-label="Delete this chat" title="Delete this chat">🗑</button>
