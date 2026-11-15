@@ -1,0 +1,15 @@
+# Optional, for working on laptop-frontend: nginx serves the app you build on the laptop
+# (laptop-frontend/dist) instead of the files baked into the image, so a UI change needs
+# `npm run build` and a browser reload, not an image rebuild.
+#
+#   cd laptop-frontend && npm ci && npm run build        # once, then again after each change
+#   docker compose -f devops/docker-compose.yml -f devops/docker-compose.frontend-dist.yml up -d --no-deps laptop-frontend
+#
+# Recreate the service this way once; after that only `npm run build` is needed. A plain
+# `docker compose -f devops/docker-compose.yml up -d laptop-frontend` goes back to the image's own
+# files. dist/ must exist before the first start (Docker would create it empty, and the app would
+# show nginx's 404).
+services:
+  laptop-frontend:
+    volumes:
+      - ../laptop-frontend/dist:/usr/share/nginx/html:ro

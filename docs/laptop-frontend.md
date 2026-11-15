@@ -52,6 +52,8 @@ Full-width, like other chat apps: a sidebar with **New chat**, **Add documents**
 
 `docker compose -f devops/docker-compose.yml up -d --build laptop-frontend` builds the app (Node stage: `npm ci`, `tsc`, `vite build`) and serves it with nginx at http://localhost:8012 and `http://<OPEN_WEBUI_HOST>:8012`. nginx forwards `/api/<path>` to `laptop-backend:8000/<path>` with the browser's `Host` (port included) and `X-Forwarded-Proto`, from which laptop-backend builds the callback URL (see [nginx.conf](../laptop-frontend/nginx.conf); 600 s read timeout, since answers from a CPU model can take minutes). Rebuild after changing the app.
 
+**Without rebuilding the image** (for working on the UI): [devops/docker-compose.frontend-dist.yml](../devops/docker-compose.frontend-dist.yml) mounts `laptop-frontend/dist` read-only into nginx. Build once with `cd laptop-frontend && npm ci && npm run build`, recreate the service once with `docker compose -f devops/docker-compose.yml -f devops/docker-compose.frontend-dist.yml up -d --no-deps laptop-frontend`, and from then on a change needs only `npm run build` and a browser reload. `dist/` must exist before that first start. It is opt-in: a plain `up -d laptop-frontend` serves the image's own files again, and a fresh clone needs nothing extra. The backend has no such mount; its code is copied into its image.
+
 The container is limited to 1 GB of memory and half a CPU (`mem_limit`/`cpus` in compose); the limits apply to the running nginx, not to the image build.
 
 ### One-time setup for sign-in

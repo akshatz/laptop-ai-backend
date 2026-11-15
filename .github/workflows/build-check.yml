@@ -28,6 +28,8 @@ jobs:
       # logs) fail without them, and a variable missing from .env.example shows up here.
       - name: Validate docker-compose.yml
         run: docker compose --env-file .env.example -f devops/docker-compose.yml config -q
+      - name: Validate the optional frontend dist override
+        run: docker compose --env-file .env.example -f devops/docker-compose.yml -f devops/docker-compose.frontend-dist.yml config -q
 
   backend-build:
     runs-on: ubuntu-latest
