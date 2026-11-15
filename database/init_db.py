@@ -57,6 +57,8 @@ class UserChatModel(Base):
     is_pinned: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
+    # Set when the owner deletes it; hidden everywhere, restorable from Deleted until purged.
+    deleted_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
 
 class MessageModel(Base):
     __tablename__ = "messages"
@@ -78,7 +80,7 @@ class MessageModel(Base):
     earlier_versions: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)
 
 class ChatDocumentModel(Base):
-    """A file (or pasted text) added to a chat as context, kept so its owner can see and open it."""
+    """A file (or pasted text) added to a chat as context, kept so every signed-in user can see and open it."""
     __tablename__ = "chat_documents"
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
     chat_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("user_chats.id", ondelete="CASCADE"), nullable=False)
@@ -97,6 +99,8 @@ class ChatDocumentModel(Base):
     status: Mapped[str] = mapped_column(String(20), nullable=False, default="ready", server_default="ready")
     error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
+    # Set when deleted (its Milvus chunks are removed then); restorable until purged.
+    deleted_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
 
 # 🚀 2. ASYNC MIGRATION MACHINE RUNNER
 DATABASE_URL = os.environ["INIT_DB_DATABASE_URL"]
