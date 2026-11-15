@@ -3,6 +3,7 @@ import { copyText } from '../copy';
 import DocumentsView, { MAX_BYTES, MAX_FILES } from './DocumentsView';
 import FeedbackView from './FeedbackView';
 import LibraryView from './LibraryView';
+import VersionsView from './VersionsView';
 import TrashView from './TrashView';
 import AdminSessionsView from './AdminSessionsView';
 import UploadSnackbar, { fromUploaded, type UploadItem } from './UploadSnackbar';
@@ -29,12 +30,12 @@ interface Props {
 
 const initials = (name: string) => name.split(/\s+/).filter(Boolean).slice(0, 2).map(w => w[0].toUpperCase()).join('') || '?';
 
-type View = 'chat' | 'documents' | 'library' | 'feedback' | 'sessions' | 'trash';
+type View = 'chat' | 'documents' | 'library' | 'versions' | 'feedback' | 'sessions' | 'trash';
 type Shown = Pick<Message, 'role' | 'content' | 'web_searched' | 'web_sources'> & Partial<Pick<Message, 'id' | 'feedback' | 'regenerations' | 'created_at' | 'earlier_versions'>>;
 
-// The open screen and chat live in the URL hash (#/chat/<id>, #/documents, #/library,
+// The open screen and chat live in the URL hash (#/chat/<id>, #/documents, #/library, #/versions,
 // #/feedback, #/sessions; empty = Home), so a reload, Back/Forward or a copied link keeps them.
-const VIEWS: View[] = ['documents', 'library', 'feedback', 'sessions', 'trash'];
+const VIEWS: View[] = ['documents', 'library', 'versions', 'feedback', 'sessions', 'trash'];
 function readRoute(): { view: View; chatId: string | null } {
   const [, first, second] = location.hash.replace(/^#/, '').split('/');
   if (first === 'chat' && second) return { view: 'chat', chatId: decodeURIComponent(second) };
@@ -440,6 +441,10 @@ export default function ChatScreen({ user, notice, onSignOut, onSessionExpired }
           onClick={() => { setView('trash'); setSidebarOpen(false); }}>
           🗑 Deleted
         </button>
+        <button type="button" className={'side-action' + (view === 'versions' ? ' active' : '')} disabled={!user}
+          onClick={() => { setView('versions'); setSidebarOpen(false); }}>
+          🕘 Versions
+        </button>
         {user?.role === 'admin' && (
           <button type="button" className={'side-action' + (view === 'sessions' ? ' active' : '')}
             onClick={() => { setView('sessions'); setSidebarOpen(false); }}>
@@ -485,7 +490,8 @@ export default function ChatScreen({ user, notice, onSignOut, onSessionExpired }
           {sidebarHidden && (
             <button type="button" className="sidebar-show" onClick={toggleSidebar} aria-label="Show sidebar" title="Show sidebar">❯</button>
           )}
-          <span className="title">{view === 'documents' ? 'Documents' : view === 'library' ? 'All documents' : view === 'sessions' ? 'Signed-in users' : view === 'feedback' ? 'Feedback' : view === 'trash' ? 'Deleted' : chat ? chat.title : 'New chat'}</span>
+          <span className="title">{view === 'documents' ? 'Documents' : view === 'library' ? 'All documents' : view === 'versions' ? 'Versions' : view === 'sessions' ? 'Signed-in users' : view === 'feedback' ? 'Feedback' : view === 'trash' ? 'Deleted' : chat ? chat.title : 'New chat'}</span>
+          <Clock />
           {view === 'chat' && chat && (
             <button type="button" className="icon-button" onClick={deleteChat} disabled={busy}
               aria-label="Delete this chat" title="Delete this chat">🗑</button>
@@ -508,6 +514,9 @@ export default function ChatScreen({ user, notice, onSignOut, onSessionExpired }
             onBack={() => setView('chat')} />
         ) : view === 'library' ? (
           <LibraryView user={user} onError={fail} reloadKey={docsVersion}
+            onOpenChat={id => { const c = chats.find(x => x.id === id); if (c) openChat(c); }} />
+        ) : view === 'versions' ? (
+          <VersionsView onError={fail} reloadKey={docsVersion}
             onOpenChat={id => { const c = chats.find(x => x.id === id); if (c) openChat(c); }} />
         ) : view === 'sessions' && user.role === 'admin' ? (
           <AdminSessionsView onError={fail} />
