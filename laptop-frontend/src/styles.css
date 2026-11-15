@@ -276,6 +276,11 @@ button.link { background: none; border: none; padding: 0; color: var(--accent); 
 .history-log li { position: relative; padding: 0 0 1.1rem 1rem; }
 .history-dot { position: absolute; left: -0.45rem; top: 0.35rem; width: 0.75rem; height: 0.75rem; border-radius: 50%; background: var(--border); border: 2px solid var(--bg, #fff); }
 .history-log li.latest .history-dot { background: var(--accent); }
+/* Versions page: one card per file, its timeline inside */
+.version-group { border: 1px solid var(--border); border-radius: 12px; padding: 0.8rem 1rem 0.4rem; margin: 0.75rem 0; }
+.version-group h3 { margin: 0; font-size: 1rem; overflow-wrap: anywhere; }
+.version-group-meta { margin: 0.15rem 0 0; font-size: 0.82rem; }
+.version-group .history-log { margin-top: 0.8rem; }
 .history-title { display: flex; align-items: center; gap: 0.4rem; font-weight: 600; }
 .history-meta { font-size: 0.82rem; margin-top: 0.2rem; }
 .history-meta code { font-size: 0.78rem; }
