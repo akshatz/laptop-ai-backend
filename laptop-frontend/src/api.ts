@@ -66,8 +66,10 @@ export interface FeedbackDashboard {
 
 export interface ChatDocument {
   id: string;
-  chat_id: string;
-  chat_title: string;
+  // Null for other people's documents in the everyone list: their chats stay private (admins
+  // get them).
+  chat_id: string | null;
+  chat_title: string | null;
   filename: string;
   content_type: string;
   size_bytes: number;
@@ -77,9 +79,11 @@ export interface ChatDocument {
   status: 'embedding' | 'ready' | 'failed' | 'replaced';
   error: string | null;
   created_at: string;
+  owner_id?: string | null;
   owner_name?: string | null;
+  // Other people's email: admins only.
   owner_email?: string | null;
-  // False only in an admin's everyone list, for other people's documents.
+  // False for other people's documents in the everyone list.
   mine?: boolean;
   sha256?: string | null;
 }
@@ -163,6 +167,7 @@ export const api = {
   trash: () => request<Trash>('/trash'),
   restoreChat: (chatId: string) => request<Chat>(`/chats/${chatId}/restore`, undefined, 'POST'),
   restoreDocument: (id: string) => request<ChatDocument>(`/documents/${id}/restore`, undefined, 'POST'),
+  // Your own documents; `all`: everyone's (documents are visible to every signed-in user).
   documents: (all = false) => request<ChatDocument[]>(all ? '/documents?all=true' : '/documents'),
   // `model`: the chat switches to it (laptop-backend checks it's installed).
   send: (chatId: string, content: string, model?: string) =>

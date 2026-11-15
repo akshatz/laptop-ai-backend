@@ -424,7 +424,7 @@ export default function ChatScreen({ user, notice, onSignOut, onSessionExpired }
         </button>
         <button type="button" className={'side-action' + (view === 'library' ? ' active' : '')} disabled={!user}
           onClick={() => { setView('library'); setSidebarOpen(false); }}>
-          🗂️ {user?.role === 'admin' ? 'All documents' : 'My documents'}
+          🗂️ All documents
         </button>
         <button type="button" className={'side-action' + (view === 'feedback' ? ' active' : '')} disabled={!user}
           onClick={() => { setView('feedback'); setSidebarOpen(false); }}>
@@ -479,7 +479,7 @@ export default function ChatScreen({ user, notice, onSignOut, onSessionExpired }
           {sidebarHidden && (
             <button type="button" className="sidebar-show" onClick={toggleSidebar} aria-label="Show sidebar" title="Show sidebar">❯</button>
           )}
-          <span className="title">{view === 'documents' ? 'Documents' : view === 'library' ? (user?.role === 'admin' ? 'All documents' : 'My documents') : view === 'sessions' ? 'Signed-in users' : view === 'feedback' ? 'Feedback' : view === 'trash' ? 'Deleted' : chat ? chat.title : 'New chat'}</span>
+          <span className="title">{view === 'documents' ? 'Documents' : view === 'library' ? 'All documents' : view === 'sessions' ? 'Signed-in users' : view === 'feedback' ? 'Feedback' : view === 'trash' ? 'Deleted' : chat ? chat.title : 'New chat'}</span>
           {view === 'chat' && chat && (
             <button type="button" className="icon-button" onClick={deleteChat} disabled={busy}
               aria-label="Delete this chat" title="Delete this chat">🗑</button>
