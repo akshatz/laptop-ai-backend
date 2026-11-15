@@ -41,12 +41,15 @@ export default function DocumentHistory({ versions, onClose, onOpenChat }: Props
                 {new Date(d.created_at).toLocaleString()} · {size(d.size_bytes)}
                 {d.sha256 && <> · <code title={d.sha256}>{d.sha256.slice(0, 7)}</code></>}
               </div>
-              <div className="history-meta">
-                Chat:{' '}
-                {d.mine
-                  ? <button type="button" className="link" onClick={() => onOpenChat(d.chat_id)}>{d.chat_title}</button>
-                  : d.chat_title}
-              </div>
+              {/* Other people's chats stay private: their uploads come without one (admins get it). */}
+              {d.chat_title != null && (
+                <div className="history-meta">
+                  Chat:{' '}
+                  {d.mine
+                    ? <button type="button" className="link" onClick={() => { if (d.chat_id) onOpenChat(d.chat_id); }}>{d.chat_title}</button>
+                    : d.chat_title}
+                </div>
+              )}
             </div>
           </li>
         ))}

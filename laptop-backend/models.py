@@ -74,7 +74,7 @@ class MessageModel(Base):
     earlier_versions: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)
 
 class ChatDocumentModel(Base):
-    """A file (or pasted text) added to a chat as context, kept so its owner can see and open it."""
+    """A file (or pasted text) added to a chat as context, kept so every signed-in user can see and open it."""
     __tablename__ = "chat_documents"
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
     chat_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("user_chats.id", ondelete="CASCADE"), nullable=False)

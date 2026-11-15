@@ -89,6 +89,8 @@ export default function UploadSnackbar({ items, setItems, onDone }: Props) {
           return <li key={i.key} className={'snack-' + i.status}><span aria-hidden="true">{icon}</span> {text}</li>;
         })}
       </ul>
+      {/* Said at upload time, since the message box's ＋ has no other place for it. */}
+      <p className="muted snackbar-note">Everyone signed in can see these under 🗂️ All documents.</p>
       {pending && <div className="snackbar-bar"><div style={{ width: `${total ? (done / total) * 100 : 0}%` }} /></div>}
     </div>
   );

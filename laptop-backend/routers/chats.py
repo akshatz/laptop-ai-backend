@@ -8,9 +8,9 @@ from typing import List
 from urllib.parse import quote
 from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, Request, Response, UploadFile, status
 from langchain_core.messages import AIMessage, HumanMessage
-from sqlalchemy import case, delete, func, select, update
+from sqlalchemy import and_, case, delete, exists, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import aliased
+from sqlalchemy.orm import aliased, defer
 import chat_service
 import db
 import file_text
@@ -348,35 +348,45 @@ async def upload_files(chat_id: uuid.UUID, background: BackgroundTasks, files: l
 @router.get("/documents", response_model=List[ChatDocumentResponse])
 async def list_documents(all: bool = False, user: UserModel = Depends(current_user), db: AsyncSession = Depends(get_db)):
     """Your own documents across all your chats, newest first (the file contents aren't sent).
-    `?all=true` lists everyone's, with the owner, for admins (users.role == "admin") only."""
-    if all and user.role != "admin":
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only admins can see everyone's documents.")
+    `?all=true` lists everyone's, with the owner's name: documents are visible to every signed-in
+    user. Other people's chats stay private, so their documents come without the chat (id and
+    title) and without the owner's email; admins (users.role == "admin") get those too."""
     query = (
         select(ChatDocumentModel, UserChatModel.title, UserModel.name, UserModel.email)
         .join(UserChatModel, UserChatModel.id == ChatDocumentModel.chat_id)
         .join(UserModel, UserModel.id == ChatDocumentModel.user_id)
+        # The files themselves (up to 10 MB each) stay in the database: this is only the list.
+        .options(defer(ChatDocumentModel.data))
         .order_by(ChatDocumentModel.created_at.desc())
     )
     query = query.where(ChatDocumentModel.deleted_at.is_(None), UserChatModel.deleted_at.is_(None))
     if not all:
         query = query.where(ChatDocumentModel.user_id == user.id)
-    return [
-        ChatDocumentResponse(
-            id=d.id, chat_id=d.chat_id, chat_title=title, filename=d.filename, content_type=d.content_type,
+    documents = []
+    for d, title, name, email in (await db.execute(query)).all():
+        mine = d.user_id == user.id
+        details = mine or user.role == "admin"
+        documents.append(ChatDocumentResponse(
+            id=d.id, chat_id=d.chat_id if details else None, chat_title=title if details else None,
+            filename=d.filename, content_type=d.content_type,
             size_bytes=d.size_bytes, chunks=d.chunks, version=d.version, status=d.status, error=d.error,
-            created_at=d.created_at, owner_name=name, owner_email=email, mine=d.user_id == user.id,
-            sha256=d.sha256,
-        )
-        for d, title, name, email in (await db.execute(query)).all()
-    ]
+            created_at=d.created_at, owner_id=d.user_id, owner_name=name, owner_email=email if details else None,
+            mine=mine, sha256=d.sha256,
+        ))
+    return documents
 
 @router.get("/documents/{document_id}/file")
 async def open_document(document_id: uuid.UUID, user: UserModel = Depends(current_user), db: AsyncSession = Depends(get_db)):
-    """The original file, shown in the browser where it can (PDF, text). Someone else's document is
-    a 404, except for admins (they see everyone's in the documents library)."""
+    """The original file, shown in the browser where it can (PDF, text). Every signed-in user can
+    open any document that /documents?all=true lists. A deleted document, or one in a deleted
+    chat, opens only for its owner (from Deleted) and for admins; for anyone else it's a 404."""
     query = select(ChatDocumentModel).where(ChatDocumentModel.id == document_id)
     if user.role != "admin":
-        query = query.where(ChatDocumentModel.user_id == user.id)
+        listed = and_(
+            ChatDocumentModel.deleted_at.is_(None),
+            exists().where(UserChatModel.id == ChatDocumentModel.chat_id, UserChatModel.deleted_at.is_(None)),
+        )
+        query = query.where(or_(ChatDocumentModel.user_id == user.id, listed))
     query = await db.execute(query)
     doc = query.scalar_one_or_none()
     if not doc:
@@ -396,7 +406,8 @@ async def open_document(document_id: uuid.UUID, user: UserModel = Depends(curren
 
 @router.delete("/documents/{document_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_document(document_id: uuid.UUID, user: UserModel = Depends(current_user), db: AsyncSession = Depends(get_db)):
-    """Deletes a document: your own, or anyone's for admins (others' are a 404, as for /file).
+    """Deletes a document: your own, or anyone's for admins. Someone else's is a 404: seeing and
+    opening a document doesn't let you delete it.
     While it is still embedding it's a 409, since the background task would add its chunks after
     the delete. If it's the copy answers use (ready), its chunks leave Milvus first; chunks carry
     only chat_id and source, so other live documents with the same name in the chat (pasted texts

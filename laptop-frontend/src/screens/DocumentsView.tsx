@@ -86,6 +86,7 @@ export default function DocumentsView({ chat, ensureChat, onError, onOpenChat, o
       <p className="muted">
         Files are read and added as context for {chat ? <strong>{chat.title}</strong> : 'a new chat'}.
         PDF (with selectable text), Word (.docx) or text files; up to {MAX_FILES} at a time, 10 MB each.
+        Everyone signed in can see and open them under 🗂️ All documents.
       </p>
 
       <div className={'dropzone' + (dragging ? ' dragging' : '')}
@@ -135,7 +136,7 @@ export default function DocumentsView({ chat, ensureChat, onError, onOpenChat, o
                   <a href={documentUrl(d.id)} target="_blank" rel="noreferrer">📄 {d.filename}</a>
                   {d.version > 1 && <span className="muted"> v{d.version}</span>}
                 </td>
-                <td><button type="button" className="link" onClick={() => onOpenChat(d.chat_id)}>{d.chat_title}</button></td>
+                <td><button type="button" className="link" onClick={() => { if (d.chat_id) onOpenChat(d.chat_id); }}>{d.chat_title}</button></td>
                 <td className={'doc-status ' + d.status} title={d.error ?? undefined}>{STATUS_LABEL[d.status] ?? d.status}</td>
                 <td>{size(d.size_bytes)}</td>
                 <td>{new Date(d.created_at).toLocaleString()}</td>
