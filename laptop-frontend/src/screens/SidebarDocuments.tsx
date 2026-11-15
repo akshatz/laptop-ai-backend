@@ -70,8 +70,10 @@ export default function SidebarDocuments({ reloadKey, onOpenChat }: Props) {
                           {kind === 'first' ? 'first upload' : kind === 'same' ? 'same content' : 'changed'}
                           {' · '}{new Date(d.created_at).toLocaleDateString()}
                         </small>
-                        <button type="button" className="link side-doc-chat" onClick={() => onOpenChat(d.chat_id)}
-                          title={d.chat_title}>{d.chat_title}</button>
+                        {d.chat_id && d.chat_title && (
+                          <button type="button" className="link side-doc-chat" onClick={() => onOpenChat(d.chat_id!)}
+                            title={d.chat_title}>{d.chat_title}</button>
+                        )}
                       </li>
                     );
                   })}

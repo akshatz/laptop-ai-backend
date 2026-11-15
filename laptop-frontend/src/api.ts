@@ -66,8 +66,10 @@ export interface FeedbackDashboard {
 
 export interface ChatDocument {
   id: string;
-  chat_id: string;
-  chat_title: string;
+  // Null for other people's documents in the everyone list: their chats stay private (admins
+  // get them).
+  chat_id: string | null;
+  chat_title: string | null;
   filename: string;
   content_type: string;
   size_bytes: number;
@@ -77,11 +79,20 @@ export interface ChatDocument {
   status: 'embedding' | 'ready' | 'failed' | 'replaced';
   error: string | null;
   created_at: string;
+  owner_id?: string | null;
   owner_name?: string | null;
+  // Other people's email: admins only.
   owner_email?: string | null;
-  // False only in an admin's everyone list, for other people's documents.
+  // False for other people's documents in the everyone list.
   mine?: boolean;
   sha256?: string | null;
+}
+
+export interface Trash {
+  purge_after_days: number;
+  chats: { id: string; title: string; model_id: string; created_at: string; deleted_at: string; documents: number }[];
+  documents: { id: string; chat_id: string; chat_title: string; filename: string; size_bytes: number;
+    version: number; created_at: string; deleted_at: string }[];
 }
 
 export interface UploadedDocument {
@@ -129,6 +140,12 @@ async function request<T>(path: string, body?: unknown, method = body === undefi
     const text = await res.text();
     let detail: unknown = text;
     try { detail = JSON.parse(text).detail ?? text; } catch { /* not JSON */ }
+    // nginx's own error page (the backend is down or restarting) is HTML: never show it as it is.
+    if (typeof detail === 'string' && /^\s*<(!doctype|html)/i.test(detail)) {
+      detail = [502, 503, 504].includes(res.status)
+        ? 'The server is not reachable right now (it may be restarting).'
+        : `The server returned an error (${res.status}).`;
+    }
     throw new HttpError(res.status, typeof detail === 'string' ? detail : JSON.stringify(detail));
   }
   if (res.status === 204) return undefined as T;
@@ -153,6 +170,13 @@ export const api = {
   adminSessions: () => request<SignedInSession[]>('/admin/sessions'),
   deleteDocument: (id: string) => request<void>(`/documents/${id}`, undefined, 'DELETE'),
   deleteChat: (chatId: string) => request<void>(`/chats/${chatId}`, undefined, 'DELETE'),
+  trash: () => request<Trash>('/trash'),
+  restoreChat: (chatId: string) => request<Chat>(`/chats/${chatId}/restore`, undefined, 'POST'),
+  restoreDocument: (id: string) => request<ChatDocument>(`/documents/${id}/restore`, undefined, 'POST'),
+  // Delete for good, from Deleted: removed at once (also from Milvus) instead of after 30 days.
+  purgeChat: (chatId: string) => request<void>(`/trash/chats/${chatId}`, undefined, 'DELETE'),
+  purgeDocument: (id: string) => request<void>(`/trash/documents/${id}`, undefined, 'DELETE'),
+  // Your own documents; `all`: everyone's (documents are visible to every signed-in user).
   documents: (all = false) => request<ChatDocument[]>(all ? '/documents?all=true' : '/documents'),
   // `model`: the chat switches to it (laptop-backend checks it's installed).
   send: (chatId: string, content: string, model?: string) =>

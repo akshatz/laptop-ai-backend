@@ -5,6 +5,7 @@ import DocumentHistory from './DocumentHistory';
 interface Props {
   user: User;
   onError: (prefix: string, err: unknown) => void;
+  // For the versions panel; the cards themselves don't show or link a chat.
   onOpenChat: (chatId: string) => void;
   // Changes when a background embedding finishes.
   reloadKey: number;
@@ -28,11 +29,14 @@ const STATUS: Record<ChatDocument['status'], string> = {
   embedding: '⏳ Embedding', ready: '✓ Ready', failed: '✕ Failed', replaced: 'Replaced',
 };
 
-// Every document the viewer may see, as cards: their own, or everyone's for admins
-// (laptop-backend's GET /documents?all=true, users.role == "admin").
+// Everyone's documents as cards (laptop-backend's GET /documents?all=true): every signed-in user
+// sees and opens all of them, or only their own with "Only mine". The cards are about the
+// documents, not the chats they were added to: no chat is shown or linked on them (other
+// people's aren't even sent, except to admins). Deleting is for the owner and for admins
+// (users.role == "admin").
 export default function LibraryView({ user, onError, onOpenChat, reloadKey }: Props) {
   const isAdmin = user.role === 'admin';
-  const [everyone, setEveryone] = useState(isAdmin);
+  const [everyone, setEveryone] = useState(true);
   const [docs, setDocs] = useState<ChatDocument[] | null>(null);
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
@@ -40,12 +44,16 @@ export default function LibraryView({ user, onError, onOpenChat, reloadKey }: Pr
   const [historyKey, setHistoryKey] = useState<string | null>(null);
 
   useEffect(() => {
-    api.documents(isAdmin && everyone).then(setDocs).catch(err => onError('Could not load documents: ', err));
+    api.documents(everyone).then(setDocs).catch(err => onError('Could not load documents: ', err));
   }, [everyone, reloadKey]);
+
+  const canDelete = (d: ChatDocument) => isAdmin || d.mine !== false;
 
   async function remove(d: ChatDocument) {
     const whose = d.mine ? '' : ` (${d.owner_name}'s)`;
-    if (!confirm(`Delete “${d.filename}”${whose}? Answers in “${d.chat_title}” stop using it. This can't be undone.`)) return;
+    const answers = d.chat_title ? ` Answers in “${d.chat_title}” stop using it.` : '';
+    const restore = d.mine ? 'You can restore it' : 'Its owner can restore it';
+    if (!confirm(`Delete “${d.filename}”${whose}?${answers} ${restore} from 🗑 Deleted for 30 days.`)) return;
     try {
       await api.deleteDocument(d.id);
       setDocs(ds => (ds ?? []).filter(x => x.id !== d.id));
@@ -58,12 +66,12 @@ export default function LibraryView({ user, onError, onOpenChat, reloadKey }: Pr
     const q = search.trim().toLowerCase();
     return (docs ?? []).filter(d =>
       (statusFilter === 'all' || d.status === statusFilter) &&
-      (!q || [d.filename, d.chat_title, d.owner_name ?? '', d.owner_email ?? ''].some(t => t.toLowerCase().includes(q))));
+      (!q || [d.filename, d.owner_name ?? '', d.owner_email ?? ''].some(t => t.toLowerCase().includes(q))));
   }, [docs, search, statusFilter]);
 
   // One card per file name and owner (across chats), showing the newest upload; the others are
   // its versions, listed in the history panel. `docs` is newest first already.
-  const groupKey = (d: ChatDocument) => `${d.owner_email ?? ''}\u0000${d.filename}`;
+  const groupKey = (d: ChatDocument) => `${d.owner_id ?? d.owner_email ?? ''}\u0000${d.filename}`;
   const versionsOf = useMemo(() => {
     const map = new Map<string, ChatDocument[]>();
     for (const d of docs ?? []) map.set(groupKey(d), [...(map.get(groupKey(d)) ?? []), d]);
@@ -78,17 +86,19 @@ export default function LibraryView({ user, onError, onOpenChat, reloadKey }: Pr
   return (
     <section className="documents library">
       <div className="dash-head">
-        <h2>{isAdmin && everyone ? 'All documents' : 'My documents'}</h2>
-        {isAdmin && (
-          <div className="segmented" role="group" aria-label="Whose documents">
-            <button type="button" className={everyone ? 'on' : ''} aria-pressed={everyone} onClick={() => setEveryone(true)}>Everyone</button>
-            <button type="button" className={!everyone ? 'on' : ''} aria-pressed={!everyone} onClick={() => setEveryone(false)}>Only mine</button>
-          </div>
-        )}
+        <h2>{everyone ? 'All documents' : 'My documents'}</h2>
+        <div className="segmented" role="group" aria-label="Whose documents">
+          <button type="button" className={everyone ? 'on' : ''} aria-pressed={everyone} onClick={() => setEveryone(true)}>Everyone</button>
+          <button type="button" className={!everyone ? 'on' : ''} aria-pressed={!everyone} onClick={() => setEveryone(false)}>Only mine</button>
+        </div>
       </div>
+      <p className="muted library-note">
+        Everyone signed in can see and open the documents here. A document is used for answers only in the chat it
+        was added to, and only the person who added it, or an admin, can delete it.
+      </p>
 
       <div className="library-filters">
-        <input type="search" placeholder={isAdmin && everyone ? 'Search name, chat or person' : 'Search name or chat'}
+        <input type="search" placeholder={everyone ? 'Search name or person' : 'Search name'}
           value={search} onChange={e => setSearch(e.target.value)} aria-label="Search documents" />
         <select value={statusFilter} onChange={e => setStatusFilter(e.target.value as StatusFilter)} aria-label="Status">
           <option value="all">Any status</option>
@@ -114,9 +124,11 @@ export default function LibraryView({ user, onError, onOpenChat, reloadKey }: Pr
                       </a>
                     : <span className="doc-card-icon" aria-hidden="true">{icon(d)}</span>}
                   <span className={'chip ' + d.status} title={d.error ?? undefined}>{STATUS[d.status] ?? d.status}</span>
-                  <button type="button" className="icon-button doc-card-delete" onClick={() => remove(d)}
-                    disabled={d.status === 'embedding'} aria-label={`Delete ${d.filename}`}
-                    title={d.status === 'embedding' ? 'Can be deleted once it is ready' : 'Delete'}>🗑</button>
+                  {canDelete(d) && (
+                    <button type="button" className="icon-button doc-card-delete" onClick={() => remove(d)}
+                      disabled={d.status === 'embedding'} aria-label={`Delete ${d.filename}`}
+                      title={d.status === 'embedding' ? 'Can be deleted once it is ready' : 'Delete'}>🗑</button>
+                  )}
                 </div>
                 <a className="doc-card-name" href={documentUrl(d.id)} target="_blank" rel="noreferrer" title={d.filename}>
                   {d.filename}
@@ -129,11 +141,7 @@ export default function LibraryView({ user, onError, onOpenChat, reloadKey }: Pr
                 )}
                 {d.status === 'failed' && d.error && <p className="doc-card-error">{d.error}</p>}
                 <dl className="doc-card-meta">
-                  {isAdmin && everyone && <><dt>Owner</dt><dd title={d.owner_email ?? undefined}>{d.mine ? 'You' : d.owner_name}</dd></>}
-                  <dt>Chat</dt>
-                  <dd>{d.mine
-                    ? <button type="button" className="link" onClick={() => onOpenChat(d.chat_id)}>{d.chat_title}</button>
-                    : d.chat_title}</dd>
+                  {everyone && <><dt>Owner</dt><dd title={d.owner_email ?? undefined}>{d.mine ? 'You' : d.owner_name}</dd></>}
                   <dt>Size</dt><dd>{size(d.size_bytes)}{d.chunks ? ` · ${d.chunks} chunks` : ''}</dd>
                   <dt>Added</dt><dd>{new Date(d.created_at).toLocaleString()}</dd>
                 </dl>

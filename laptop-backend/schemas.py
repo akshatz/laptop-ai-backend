@@ -147,8 +147,10 @@ class DocumentIngest(BaseModel):
 
 class ChatDocumentResponse(BaseModel):
     id: uuid.UUID
-    chat_id: uuid.UUID
-    chat_title: str
+    # Null for other people's documents in the ?all=true list (their chats stay private), except
+    # for admins.
+    chat_id: Optional[uuid.UUID] = None
+    chat_title: Optional[str] = None
     filename: str
     content_type: str
     size_bytes: int
@@ -157,12 +159,37 @@ class ChatDocumentResponse(BaseModel):
     status: str = "ready"
     error: Optional[str] = None
     created_at: datetime
+    owner_id: Optional[uuid.UUID] = None
     owner_name: Optional[str] = None
+    # Other people's email: admins only.
     owner_email: Optional[str] = None
-    # False only in an admin's ?all=true list, for other people's documents.
+    # False for other people's documents in the ?all=true list.
     mine: bool = True
     # Content hash, so the documents library can group copies and versions of a file across chats.
     sha256: Optional[str] = None
+
+class DeletedChat(BaseModel):
+    id: uuid.UUID
+    title: str
+    model_id: str
+    created_at: datetime
+    deleted_at: datetime
+    documents: int = 0
+
+class DeletedDocument(BaseModel):
+    id: uuid.UUID
+    chat_id: uuid.UUID
+    chat_title: str
+    filename: str
+    size_bytes: int
+    version: int = 1
+    created_at: datetime
+    deleted_at: datetime
+
+class TrashResponse(BaseModel):
+    purge_after_days: int
+    chats: List[DeletedChat]
+    documents: List[DeletedDocument]
 
 class UploadedDocument(BaseModel):
     id: uuid.UUID

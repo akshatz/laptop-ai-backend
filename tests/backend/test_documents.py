@@ -81,10 +81,10 @@ async def test_documents_lists_and_opens_your_own(client, chat_id, vector_store,
     assert opened.headers["content-disposition"].startswith("inline;")
     assert opened.headers["x-content-type-options"] == "nosniff"
 
+    # Someone else's own list stays empty, and they can't add to this chat.
     async with await make_client() as other:
         await sign_in(other, "meera@example.com", "Meera")
         assert (await other.get("/documents")).json() == []
-        assert (await other.get(f"/documents/{docs[1]['id']}/file")).status_code == 404
         response = await other.post(f"/chats/{chat_id}/files", files=[("files", ("x.txt", b"x", "text/plain"))])
         assert response.status_code == 404
 
@@ -171,28 +171,71 @@ async def test_documents_need_a_session(client):
     assert (await client.get(f"/documents/{uuid.uuid4()}/file")).status_code == 401
 
 
-async def test_all_documents_for_admins_only(client, chat_id, vector_store, session_maker, sign_in, make_client):
+async def test_everyone_sees_and_opens_all_documents(client, signed_in, chat_id, vector_store, session_maker, sign_in, make_client):
     from sqlalchemy import update
     import models
 
     await client.post(f"/chats/{chat_id}/files", files=[("files", ("ravi.txt", b"ravi's list", "text/plain"))])
+    [ravis] = (await client.get("/documents?all=true")).json()
+    assert ravis["owner_name"] == "Ravi" and ravis["mine"] is True and ravis["chat_id"] == chat_id
+
     async with await make_client() as other:
         meera = await sign_in(other, "meera@example.com", "Meera")
-        assert (await other.get("/documents?all=true")).status_code == 403
-        assert (await other.get("/documents")).json() == []
-        ravis = (await client.get("/documents")).json()[0]
-        assert ravis["owner_name"] == "Ravi" and ravis["mine"] is True
-        assert (await other.get(f"/documents/{ravis['id']}/file")).status_code == 404
+        meeras_chat = (await other.post("/chats", json={})).json()["id"]
+        await other.post(f"/chats/{meeras_chat}/files", files=[("files", ("meera.txt", b"meera's list", "text/plain"))])
 
+        # Her own list is still only hers; the everyone list has both, newest first.
+        assert [d["filename"] for d in (await other.get("/documents")).json()] == ["meera.txt"]
+        hers, his = (await other.get("/documents?all=true")).json()
+        assert (hers["filename"], hers["mine"], hers["chat_id"], hers["chat_title"], hers["owner_email"]) == (
+            "meera.txt", True, meeras_chat, "New Chat", "meera@example.com")
+        # Someone else's document comes with the owner's name, but not their chat or email.
+        assert (his["filename"], his["owner_name"], his["owner_id"], his["mine"]) == ("ravi.txt", "Ravi", signed_in, False)
+        assert his["chat_id"] is None and his["chat_title"] is None and his["owner_email"] is None
+        assert "data" not in his
+
+        opened = await other.get(f"/documents/{his['id']}/file")
+        assert opened.status_code == 200 and opened.content == b"ravi's list"
+        # Seeing it doesn't let her delete it, or get into the chat it is in.
+        assert (await other.delete(f"/documents/{his['id']}")).status_code == 404
+        assert (await other.get(f"/chats/{chat_id}/messages")).status_code == 404
+        assert len((await client.get("/documents")).json()) == 1
+
+        # Admins also get the chat and the owner's email.
         async with session_maker() as session:
             await session.execute(update(models.UserModel).where(models.UserModel.id == uuid.UUID(meera)).values(role="admin"))
             await session.commit()
-        everyone = (await other.get("/documents?all=true")).json()
-        assert [(d["filename"], d["owner_name"], d["owner_email"], d["mine"]) for d in everyone] == [
-            ("ravi.txt", "Ravi", "ravi@example.com", False)]
-        assert (await other.get("/documents")).json() == []
-        opened = await other.get(f"/documents/{ravis['id']}/file")
-        assert opened.status_code == 200 and opened.content == b"ravi's list"
+        his = (await other.get("/documents?all=true")).json()[1]
+        assert (his["chat_id"], his["chat_title"], his["owner_email"], his["mine"]) == (
+            chat_id, "New Chat", "ravi@example.com", False)
+
+
+async def test_deleted_documents_are_hidden_from_everyone_else(client, chat_id, vector_store, sign_in, make_client):
+    await client.post(f"/chats/{chat_id}/files", files=[
+        ("files", ("a.txt", b"one", "text/plain")), ("files", ("b.txt", b"two", "text/plain"))])
+    ids = {d["filename"]: d["id"] for d in (await client.get("/documents")).json()}
+
+    async with await make_client() as other:
+        await sign_in(other, "meera@example.com", "Meera")
+        assert {d["filename"] for d in (await other.get("/documents?all=true")).json()} == {"a.txt", "b.txt"}
+
+        # A deleted document leaves the list and no longer opens for others; its owner still
+        # opens it from Deleted.
+        assert (await client.delete(f"/documents/{ids['a.txt']}")).status_code == 204
+        assert [d["filename"] for d in (await other.get("/documents?all=true")).json()] == ["b.txt"]
+        assert (await other.get(f"/documents/{ids['a.txt']}/file")).status_code == 404
+        assert (await client.get(f"/documents/{ids['a.txt']}/file")).status_code == 200
+
+        # The same for the documents of a deleted chat.
+        assert (await client.delete(f"/chats/{chat_id}")).status_code == 204
+        assert (await other.get("/documents?all=true")).json() == []
+        assert (await other.get(f"/documents/{ids['b.txt']}/file")).status_code == 404
+        assert (await client.get(f"/documents/{ids['b.txt']}/file")).status_code == 200
+
+        # Restored, it is back for everyone.
+        assert (await client.post(f"/chats/{chat_id}/restore")).status_code == 200
+        assert [d["filename"] for d in (await other.get("/documents?all=true")).json()] == ["b.txt"]
+        assert (await other.get(f"/documents/{ids['b.txt']}/file")).status_code == 200
 
 
 async def test_delete_your_document_removes_its_chunks(client, chat_id, vector_store, sign_in, make_client):
@@ -321,3 +364,166 @@ async def test_picture_fails_when_nothing_can_read_it(client, chat_id, vector_st
     await client.post(f"/chats/{chat_id}/files", files=[("files", ("dog.jpg", b"\xff\xd8 fake", "image/jpeg"))])
     [doc] = (await client.get("/documents")).json()
     assert doc["status"] == "failed" and doc["error"] == "ollama down"
+
+
+async def test_deleted_chat_goes_to_trash_and_comes_back(client, chat_id, vector_store):
+    await client.post(f"/chats/{chat_id}/files", files=[("files", ("menu.txt", b"Tea 10", "text/plain"))])
+    assert (await client.delete(f"/chats/{chat_id}")).status_code == 204
+
+    trash = (await client.get("/trash")).json()
+    assert trash["purge_after_days"] == 30
+    assert [(c["id"], c["documents"]) for c in trash["chats"]] == [(chat_id, 1)]
+    assert trash["documents"] == []  # documents of a deleted chat come back with it
+
+    vector_store.added.clear()
+    restored = await client.post(f"/chats/{chat_id}/restore")
+    assert restored.status_code == 200 and restored.json()["id"] == chat_id
+    assert [c["id"] for c in (await client.get("/chats")).json()] == [chat_id]
+    # Its document is embedded again from the stored original.
+    assert [d.page_content for d in vector_store.added] == ["Tea 10"]
+    assert [d["status"] for d in (await client.get("/documents")).json()] == ["ready"]
+    assert (await client.get("/trash")).json()["chats"] == []
+    assert (await client.post(f"/chats/{chat_id}/restore")).status_code == 404
+
+
+async def test_deleted_document_goes_to_trash_and_comes_back(client, chat_id, vector_store):
+    await client.post(f"/chats/{chat_id}/files", files=[("files", ("menu.txt", b"Tea 10", "text/plain"))])
+    [doc] = (await client.get("/documents")).json()
+    await client.delete(f"/documents/{doc['id']}")
+    assert [d["filename"] for d in (await client.get("/trash")).json()["documents"]] == ["menu.txt"]
+
+    vector_store.added.clear()
+    restored = await client.post(f"/documents/{doc['id']}/restore")
+    assert restored.status_code == 200 and restored.json()["status"] == "embedding"
+    assert [d.page_content for d in vector_store.added] == ["Tea 10"]
+    assert [d["status"] for d in (await client.get("/documents")).json()] == ["ready"]
+
+
+async def test_restored_old_version_does_not_replace_the_newer_one(client, chat_id, vector_store):
+    await client.post(f"/chats/{chat_id}/files", files=[("files", ("menu.txt", b"Tea 10", "text/plain"))])
+    [v1] = (await client.get("/documents")).json()
+    await client.delete(f"/documents/{v1['id']}")
+    await client.post(f"/chats/{chat_id}/files", files=[("files", ("menu.txt", b"Tea 15", "text/plain"))])
+    vector_store.added.clear()
+
+    restored = (await client.post(f"/documents/{v1['id']}/restore")).json()
+    assert restored["status"] == "replaced" and vector_store.added == []
+    assert [(d["version"], d["status"]) for d in (await client.get("/documents")).json()] == [(2, "ready"), (1, "replaced")]
+
+
+async def test_document_of_a_deleted_chat_is_restored_with_the_chat(client, chat_id, vector_store):
+    await client.post(f"/chats/{chat_id}/files", files=[("files", ("menu.txt", b"Tea 10", "text/plain"))])
+    [doc] = (await client.get("/documents")).json()
+    await client.delete(f"/documents/{doc['id']}")
+    await client.delete(f"/chats/{chat_id}")
+    assert (await client.post(f"/documents/{doc['id']}/restore")).status_code == 409
+
+
+async def test_trash_is_private_and_purged_after_30_days(client, chat_id, vector_store, session_maker, sign_in, make_client):
+    from datetime import datetime, timedelta, timezone
+    from sqlalchemy import select, update
+    import models
+
+    await client.delete(f"/chats/{chat_id}")
+    async with await make_client() as other:
+        await sign_in(other, "meera@example.com", "Meera")
+        assert (await other.get("/trash")).json()["chats"] == []
+        assert (await other.post(f"/chats/{chat_id}/restore")).status_code == 404
+
+    async with session_maker() as session:
+        await session.execute(update(models.UserChatModel).values(
+            deleted_at=datetime.now(timezone.utc) - timedelta(days=31)))
+        await session.commit()
+    assert (await client.get("/trash")).json()["chats"] == []
+    async with session_maker() as session:
+        assert (await session.execute(select(models.UserChatModel))).scalars().all() == []
+
+
+async def test_delete_a_deleted_chat_for_good(client, chat_id, chain, vector_store, session_maker, sign_in, make_client):
+    from sqlalchemy import select
+    import models
+
+    await client.post(f"/chats/{chat_id}/files", files=[("files", ("menu.txt", b"Tea 10", "text/plain"))])
+    await client.post(f"/chats/{chat_id}/messages", json={"content": "What does tea cost?"})
+    live_chat = (await client.post("/chats", json={})).json()["id"]
+    await client.delete(f"/chats/{chat_id}")
+    vector_store.deleted.clear()
+
+    # Only a chat that is already in Deleted: a live one, or someone else's, is a 404.
+    assert (await client.delete(f"/trash/chats/{live_chat}")).status_code == 404
+    async with await make_client() as other:
+        await sign_in(other, "meera@example.com", "Meera")
+        assert (await other.delete(f"/trash/chats/{chat_id}")).status_code == 404
+    assert [c["id"] for c in (await client.get("/trash")).json()["chats"]] == [chat_id]
+    assert vector_store.deleted == []
+
+    # If Milvus can't be reached, nothing is removed.
+    def broken(ids=None, expr=None):
+        raise RuntimeError("milvus down")
+    working = vector_store.delete
+    vector_store.delete = broken
+    assert (await client.delete(f"/trash/chats/{chat_id}")).status_code == 502
+    vector_store.delete = working
+    assert [c["id"] for c in (await client.get("/trash")).json()["chats"]] == [chat_id]
+
+    # Gone for good: its chunks, the chat, its messages and the stored originals.
+    assert (await client.delete(f"/trash/chats/{chat_id}")).status_code == 204
+    assert vector_store.deleted == [f'chat_id == "{chat_id}"']
+    assert (await client.get("/trash")).json()["chats"] == []
+    assert (await client.post(f"/chats/{chat_id}/restore")).status_code == 404
+    async with session_maker() as session:
+        assert [str(c.id) for c in (await session.execute(select(models.UserChatModel))).scalars().all()] == [live_chat]
+        assert (await session.execute(select(models.MessageModel))).scalars().all() == []
+        assert (await session.execute(select(models.ChatDocumentModel))).scalars().all() == []
+
+
+async def test_delete_a_deleted_document_for_good(client, chat_id, vector_store, session_maker, sign_in, make_client):
+    from sqlalchemy import select
+    import models
+
+    await client.post(f"/chats/{chat_id}/files", files=[("files", ("menu.txt", b"Tea 10", "text/plain")),
+                                                       ("files", ("list.txt", b"milk", "text/plain"))])
+    docs = {d["filename"]: d["id"] for d in (await client.get("/documents")).json()}
+    await client.delete(f"/documents/{docs['menu.txt']}")
+    vector_store.deleted.clear()
+
+    # A live document, or someone else's, is a 404.
+    assert (await client.delete(f"/trash/documents/{docs['list.txt']}")).status_code == 404
+    async with await make_client() as other:
+        await sign_in(other, "meera@example.com", "Meera")
+        assert (await other.delete(f"/trash/documents/{docs['menu.txt']}")).status_code == 404
+    assert [d["filename"] for d in (await client.get("/trash")).json()["documents"]] == ["menu.txt"]
+    assert vector_store.deleted == []
+
+    def broken(ids=None, expr=None):
+        raise RuntimeError("milvus down")
+    working = vector_store.delete
+    vector_store.delete = broken
+    assert (await client.delete(f"/trash/documents/{docs['menu.txt']}")).status_code == 502
+    vector_store.delete = working
+    assert [d["filename"] for d in (await client.get("/trash")).json()["documents"]] == ["menu.txt"]
+
+    # Gone for good: its chunks and the stored original, not even its owner can open it any more.
+    assert (await client.delete(f"/trash/documents/{docs['menu.txt']}")).status_code == 204
+    assert vector_store.deleted == [f'chat_id == "{chat_id}" and source == "menu.txt"']
+    assert (await client.get("/trash")).json()["documents"] == []
+    assert (await client.get(f"/documents/{docs['menu.txt']}/file")).status_code == 404
+    assert (await client.post(f"/documents/{docs['menu.txt']}/restore")).status_code == 404
+    async with session_maker() as session:
+        left = (await session.execute(select(models.ChatDocumentModel))).scalars().all()
+        assert [d.filename for d in left] == ["list.txt"]
+    # The chat and its other document are untouched.
+    assert [d["filename"] for d in (await client.get("/documents")).json()] == ["list.txt"]
+
+
+async def test_deleting_a_document_for_good_keeps_a_live_namesakes_chunks(client, chat_id, vector_store):
+    # Both pasted texts are called "Pasted text 1.txt", and chunks carry only the chat and that name.
+    await client.post(f"/chats/{chat_id}/documents", json={"documents": [{"text": "one"}]})
+    await client.post(f"/chats/{chat_id}/documents", json={"documents": [{"text": "two"}]})
+    first = (await client.get("/documents")).json()[1]
+    await client.delete(f"/documents/{first['id']}")
+    vector_store.deleted.clear()
+
+    assert (await client.delete(f"/trash/documents/{first['id']}")).status_code == 204
+    assert vector_store.deleted == []  # "two" is still live under that name
+    assert [d["filename"] for d in (await client.get("/documents")).json()] == ["Pasted text 1.txt"]

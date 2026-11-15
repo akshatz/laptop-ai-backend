@@ -59,6 +59,9 @@ services:
       # Open WebUI API key (Settings → Account → API Keys) for the "openwebui" provider in
       # opencode.json; empty leaves only the direct "ollama" provider usable.
       - OPENWEBUI_API_KEY=${OPENWEBUI_API_KEY:-}
+      # OpenAI key (paid credit) for the "openai" provider; admin container only, never
+      # opencode-user.json. Empty leaves those models listed but failing.
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
       # OpenRouter key (paid credit) for the "openrouter" provider; admin container only, never
       # opencode-user.json. Empty leaves those models listed but failing.
       - OPENROUTER_API_KEY=${OPENROUTER_API_KEY:-}
@@ -812,6 +815,17 @@ services:
       - AUTHENTIK_INTERNAL_URL=http://authentik-server:9000
       # The OIDC client id/secret and the session key come from OpenBao (apps/default/custom-backend).
       - FRONTEND_ORIGINS=http://localhost:8012,http://${OPEN_WEBUI_HOST}:8012
+      # Logging (laptop-backend/logging_setup.py): LOG_LEVEL DEBUG|INFO|WARNING|ERROR|CRITICAL; with LOG_FILE
+      # set (e.g. /var/log/laptop-backend/app.log, on the laptop-backend-logs volume) logs also go to that
+      # rotating file, next to the console (`docker logs`).
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - LOG_FILE=${LOG_FILE:-}
+      - LOG_FILE_MAX_MB=${LOG_FILE_MAX_MB:-10}
+      - LOG_FILE_BACKUPS=${LOG_FILE_BACKUPS:-5}
+      # One INFO line per request with its duration ("timing" logger); false turns it off.
+      - LOG_REQUEST_TIMING=${LOG_REQUEST_TIMING:-true}
+    volumes:
+      - laptop-backend-logs:/var/log/laptop-backend
     depends_on:
       postgres-db:
         condition: service_healthy
@@ -849,6 +863,7 @@ volumes:
   otelcol-audit-storage: # openwebui-audit-shipper's read offsets into Open WebUI's audit log
   openbao-data: # Persists sealed/unsealed OpenBao secret data across restarts
   openbao-logs: # OpenBao's audit log (audit.log)
+  laptop-backend-logs: # laptop-backend's log file when LOG_FILE points into it
   otelcol-openbao-audit-storage: # openbao-audit-shipper's read offsets into OpenBao's audit log
   otelcol-ollama-storage: # ollama-log-shipper's read offsets into ollama's Docker log
   passbolt-gpg: # Passbolt server GPG keypair, generated on first run

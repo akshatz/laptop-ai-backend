@@ -182,7 +182,7 @@ button.link { background: none; border: none; padding: 0; color: var(--accent); 
 .doc-table th { text-align: left; color: var(--muted); font-weight: 500; border-bottom: 1px solid var(--border); padding: 0.4rem; }
 .doc-table td { border-bottom: 1px solid var(--border); padding: 0.45rem 0.4rem; }
 .doc-table a { color: var(--accent); text-decoration: none; }
-/* Phones: hide Size and Added, let long names wrap. */
+/* Phones: only the first three columns (My documents: Name, Status, Size), let long names wrap. */
 @media (max-width: 760px) {
   .doc-table th:nth-child(n+4), .doc-table td:nth-child(n+4) { display: none; }
 }
@@ -214,6 +214,7 @@ button.link { background: none; border: none; padding: 0; color: var(--accent); 
 .snack-ready span { color: #3c9d5d; }
 .snack-failed { color: #d9534f; }
 .snack-duplicate, .snack-uploading { color: var(--muted); }
+.snackbar-note { margin: 0.4rem 0 0; font-size: 0.8rem; }
 .snackbar-bar { height: 4px; background: var(--border); border-radius: 2px; margin-top: 0.5rem; overflow: hidden; }
 .snackbar-bar div { height: 100%; background: var(--accent); transition: width 0.3s; }
 
@@ -233,6 +234,7 @@ button.link { background: none; border: none; padding: 0; color: var(--accent); 
 .library-filters input { flex: 1 1 220px; margin: 0; }
 .library-filters select { width: auto; margin: 0; }
 .library-count { font-size: 0.8rem; margin: 0.4rem 0 0.6rem; }
+.library-note { font-size: 0.85rem; margin: 0.3rem 0 0; }
 .segmented { display: inline-flex; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
 .segmented button { margin: 0 !important; border: none; border-radius: 0; background: none; color: inherit; padding: 0.35rem 0.75rem; font: inherit; font-size: 0.85rem; cursor: pointer; }
 .segmented button.on { background: var(--user-bg); }
@@ -251,7 +253,6 @@ button.link { background: none; border: none; padding: 0; color: var(--accent); 
 .doc-card-meta { display: grid; grid-template-columns: auto 1fr; gap: 0.15rem 0.6rem; margin: 0.2rem 0 0; font-size: 0.8rem; }
 .doc-card-meta dt { color: var(--muted); }
 .doc-card-meta dd { margin: 0; min-width: 0; overflow-wrap: anywhere; }
-.doc-card-meta .link { background: none; border: none; padding: 0; margin: 0 !important; color: var(--accent); cursor: pointer; font: inherit; text-align: left; overflow-wrap: anywhere; }
 .chip { display: inline-block; align-self: flex-start; font-size: 0.72rem; padding: 0.1rem 0.5rem; border-radius: 999px; border: 1px solid var(--border); color: var(--muted); white-space: nowrap; }
 .chip.ready { color: #3c9d5d; border-color: color-mix(in srgb, #3c9d5d 45%, transparent); }
 .chip.failed { color: #d9534f; border-color: color-mix(in srgb, #d9534f 45%, transparent); }
@@ -291,3 +292,17 @@ button.link { background: none; border: none; padding: 0; color: var(--accent); 
 .side-doc-versions a { font-weight: 600; text-decoration: none; }
 .side-doc-versions small { display: block; color: var(--muted); }
 .side-doc-chat { display: block; max-width: 100%; padding: 0; font-size: 0.78rem; text-align: left; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* Deleted (TrashView.tsx) */
+.trash h3 { margin: 1.25rem 0 0.4rem; font-size: 0.95rem; }
+.trash-list { list-style: none; margin: 0; padding: 0; }
+.trash-list li { display: flex; align-items: center; gap: 0.75rem; padding: 0.6rem 0.2rem; border-bottom: 1px solid var(--border); }
+.trash-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 0.15rem; }
+.trash-main strong, .trash-main a { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.trash-list button { margin: 0; flex: none; }
+/* Restore and Delete for good, side by side; under the name on phones. */
+.trash-actions { display: flex; gap: 0.4rem; flex: none; }
+.trash-actions .danger { color: #d9534f; border-color: color-mix(in srgb, #d9534f 45%, transparent); }
+@media (max-width: 760px) {
+  .trash-list li { flex-wrap: wrap; }
+  .trash-main { flex-basis: 100%; }
+}
