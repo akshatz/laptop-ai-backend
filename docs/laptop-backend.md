@@ -32,6 +32,20 @@ export $(grep -v '^#' .env | xargs)
 cd database && alembic upgrade head
 ```
 
+## Logging
+
+Set in `.env` (passed through by `devops/docker-compose.yml`), read when laptop-backend starts, so changing one means recreating the service: `docker compose -f devops/docker-compose.yml up -d --no-deps laptop-backend`. Code: `logging_setup.py`.
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `LOG_LEVEL` | `INFO` | `DEBUG`, `INFO`, `WARNING`, `ERROR` or `CRITICAL`, for the app and uvicorn; a wrong value falls back to INFO and says so |
+| `LOG_FILE` | empty | a path, e.g. `/var/log/laptop-backend/app.log` (the `laptop-backend-logs` volume), written in addition to the console (`docker logs local-dev-backend`); empty = console only; a file that can't be opened falls back to the console and says so |
+| `LOG_FILE_MAX_MB` | `10` | size at which the file is rotated |
+| `LOG_FILE_BACKUPS` | `5` | rotated files kept (`app.log.1` …) |
+| `LOG_REQUEST_TIMING` | `true` | one INFO line per request from laptop-frontend: `POST /chats/<id>/messages -> 201 in 48213 ms` (logger `timing`, path only without the query string, `/health` left out) |
+
+At `WARNING` the per-request and timing lines (INFO) disappear.
+
 ## Paid cloud models (admins, or everyone)
 
 Besides the Ollama models in `CHAT_MODELS`, admins (`users.role = 'admin'`) can pick paid OpenRouter models in laptop-frontend's model dropdown, shown as "<name> (paid)". Their ids are `openrouter/<OpenRouter id>`; `CLOUD_MODELS` lists them (default `anthropic/claude-haiku-5.5,anthropic/claude-sonnet-5.5,openai/gpt-5.4-mini`; set `CLOUD_MODELS` in `.env` to change it, then `docker compose -f devops/docker-compose.yml up -d laptop-backend`). The key is `openrouter_api_key` in OpenBao's `apps/default/custom-backend` (`bootstrap.sh` writes it when `OPENROUTER_API_KEY` is set in `.env`; `OPENROUTER_API_KEY` in laptop-backend's environment is the fallback). Without a key no cloud model is offered. `CLOUD_MODELS_FOR=all` in `.env` offers them to every signed-in user instead (keep a credit limit on the key). `/models` lists them only for those users, and sending or regenerating with one is a 403 for anyone else (also for a chat created with a cloud `model_id`). The WEB/NO web-search decision still runs on the local model. To add only the key without re-running all of `bootstrap.sh`:
