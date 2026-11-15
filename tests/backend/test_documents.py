@@ -437,3 +437,93 @@ async def test_trash_is_private_and_purged_after_30_days(client, chat_id, vector
     assert (await client.get("/trash")).json()["chats"] == []
     async with session_maker() as session:
         assert (await session.execute(select(models.UserChatModel))).scalars().all() == []
+
+
+async def test_delete_a_deleted_chat_for_good(client, chat_id, chain, vector_store, session_maker, sign_in, make_client):
+    from sqlalchemy import select
+    import models
+
+    await client.post(f"/chats/{chat_id}/files", files=[("files", ("menu.txt", b"Tea 10", "text/plain"))])
+    await client.post(f"/chats/{chat_id}/messages", json={"content": "What does tea cost?"})
+    live_chat = (await client.post("/chats", json={})).json()["id"]
+    await client.delete(f"/chats/{chat_id}")
+    vector_store.deleted.clear()
+
+    # Only a chat that is already in Deleted: a live one, or someone else's, is a 404.
+    assert (await client.delete(f"/trash/chats/{live_chat}")).status_code == 404
+    async with await make_client() as other:
+        await sign_in(other, "meera@example.com", "Meera")
+        assert (await other.delete(f"/trash/chats/{chat_id}")).status_code == 404
+    assert [c["id"] for c in (await client.get("/trash")).json()["chats"]] == [chat_id]
+    assert vector_store.deleted == []
+
+    # If Milvus can't be reached, nothing is removed.
+    def broken(ids=None, expr=None):
+        raise RuntimeError("milvus down")
+    working = vector_store.delete
+    vector_store.delete = broken
+    assert (await client.delete(f"/trash/chats/{chat_id}")).status_code == 502
+    vector_store.delete = working
+    assert [c["id"] for c in (await client.get("/trash")).json()["chats"]] == [chat_id]
+
+    # Gone for good: its chunks, the chat, its messages and the stored originals.
+    assert (await client.delete(f"/trash/chats/{chat_id}")).status_code == 204
+    assert vector_store.deleted == [f'chat_id == "{chat_id}"']
+    assert (await client.get("/trash")).json()["chats"] == []
+    assert (await client.post(f"/chats/{chat_id}/restore")).status_code == 404
+    async with session_maker() as session:
+        assert [str(c.id) for c in (await session.execute(select(models.UserChatModel))).scalars().all()] == [live_chat]
+        assert (await session.execute(select(models.MessageModel))).scalars().all() == []
+        assert (await session.execute(select(models.ChatDocumentModel))).scalars().all() == []
+
+
+async def test_delete_a_deleted_document_for_good(client, chat_id, vector_store, session_maker, sign_in, make_client):
+    from sqlalchemy import select
+    import models
+
+    await client.post(f"/chats/{chat_id}/files", files=[("files", ("menu.txt", b"Tea 10", "text/plain")),
+                                                       ("files", ("list.txt", b"milk", "text/plain"))])
+    docs = {d["filename"]: d["id"] for d in (await client.get("/documents")).json()}
+    await client.delete(f"/documents/{docs['menu.txt']}")
+    vector_store.deleted.clear()
+
+    # A live document, or someone else's, is a 404.
+    assert (await client.delete(f"/trash/documents/{docs['list.txt']}")).status_code == 404
+    async with await make_client() as other:
+        await sign_in(other, "meera@example.com", "Meera")
+        assert (await other.delete(f"/trash/documents/{docs['menu.txt']}")).status_code == 404
+    assert [d["filename"] for d in (await client.get("/trash")).json()["documents"]] == ["menu.txt"]
+    assert vector_store.deleted == []
+
+    def broken(ids=None, expr=None):
+        raise RuntimeError("milvus down")
+    working = vector_store.delete
+    vector_store.delete = broken
+    assert (await client.delete(f"/trash/documents/{docs['menu.txt']}")).status_code == 502
+    vector_store.delete = working
+    assert [d["filename"] for d in (await client.get("/trash")).json()["documents"]] == ["menu.txt"]
+
+    # Gone for good: its chunks and the stored original, not even its owner can open it any more.
+    assert (await client.delete(f"/trash/documents/{docs['menu.txt']}")).status_code == 204
+    assert vector_store.deleted == [f'chat_id == "{chat_id}" and source == "menu.txt"']
+    assert (await client.get("/trash")).json()["documents"] == []
+    assert (await client.get(f"/documents/{docs['menu.txt']}/file")).status_code == 404
+    assert (await client.post(f"/documents/{docs['menu.txt']}/restore")).status_code == 404
+    async with session_maker() as session:
+        left = (await session.execute(select(models.ChatDocumentModel))).scalars().all()
+        assert [d.filename for d in left] == ["list.txt"]
+    # The chat and its other document are untouched.
+    assert [d["filename"] for d in (await client.get("/documents")).json()] == ["list.txt"]
+
+
+async def test_deleting_a_document_for_good_keeps_a_live_namesakes_chunks(client, chat_id, vector_store):
+    # Both pasted texts are called "Pasted text 1.txt", and chunks carry only the chat and that name.
+    await client.post(f"/chats/{chat_id}/documents", json={"documents": [{"text": "one"}]})
+    await client.post(f"/chats/{chat_id}/documents", json={"documents": [{"text": "two"}]})
+    first = (await client.get("/documents")).json()[1]
+    await client.delete(f"/documents/{first['id']}")
+    vector_store.deleted.clear()
+
+    assert (await client.delete(f"/trash/documents/{first['id']}")).status_code == 204
+    assert vector_store.deleted == []  # "two" is still live under that name
+    assert [d["filename"] for d in (await client.get("/documents")).json()] == ["Pasted text 1.txt"]

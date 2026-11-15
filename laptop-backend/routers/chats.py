@@ -551,6 +551,62 @@ async def restore_document(document_id: uuid.UUID, background: BackgroundTasks,
         status=doc.status, error=doc.error, created_at=doc.created_at, sha256=doc.sha256,
     )
 
+@router.delete("/trash/chats/{chat_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def purge_chat(chat_id: uuid.UUID, user: UserModel = Depends(current_user), db: AsyncSession = Depends(get_db)):
+    """Removes one of your deleted chats for good, at once instead of after TRASH_DAYS: its
+    messages, its documents (the stored originals) and whatever Milvus holds for it. Only chats
+    already in Deleted: a live chat, or someone else's, is a 404, so nothing that wasn't deleted
+    first can be removed this way. Milvus goes first; if that fails nothing is removed (502)."""
+    chat = (await db.execute(select(UserChatModel).where(
+        UserChatModel.id == chat_id, UserChatModel.user_id == user.id, UserChatModel.deleted_at.is_not(None)
+    ))).scalar_one_or_none()
+    if not chat:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Deleted chat not found.")
+    # Its chunks left Milvus when it was deleted (delete_chat). Deleting again makes sure of it,
+    # e.g. for a document that was still being embedded at that moment.
+    try:
+        await asyncio.to_thread(chat_service.vector_store.delete, expr=f"chat_id == {_milvus_str(str(chat_id))}")
+    except Exception as exc:
+        log.warning("Purging chunks of chat %s failed: %s", chat_id, exc)
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY,
+                            detail="Could not remove the chat's documents from search. Nothing was removed; try again.")
+    # Messages and documents go with it (ON DELETE CASCADE).
+    await db.execute(delete(UserChatModel).where(UserChatModel.id == chat_id))
+    await db.commit()
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+@router.delete("/trash/documents/{document_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def purge_document(document_id: uuid.UUID, user: UserModel = Depends(current_user), db: AsyncSession = Depends(get_db)):
+    """Removes one of your deleted documents for good, at once instead of after TRASH_DAYS: the
+    stored original and whatever Milvus holds for it. Only documents already in Deleted (a live
+    one, or someone else's, is a 404). Its chunks left Milvus when it was deleted; they're deleted
+    again here unless a live document in the same chat has the same name: chunks carry only
+    chat_id and source, so those would be the live document's. Milvus goes first; if that fails
+    nothing is removed (502)."""
+    doc = (await db.execute(
+        select(ChatDocumentModel).options(defer(ChatDocumentModel.data)).where(
+            ChatDocumentModel.id == document_id, ChatDocumentModel.user_id == user.id,
+            ChatDocumentModel.deleted_at.is_not(None))
+    )).scalar_one_or_none()
+    if not doc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Deleted document not found.")
+    live_namesake = (await db.execute(
+        select(ChatDocumentModel.id).where(
+            ChatDocumentModel.chat_id == doc.chat_id, ChatDocumentModel.filename == doc.filename,
+            ChatDocumentModel.status.in_(("embedding", "ready")), ChatDocumentModel.deleted_at.is_(None)).limit(1)
+    )).first()
+    if not live_namesake:
+        expr = f"chat_id == {_milvus_str(str(doc.chat_id))} and source == {_milvus_str(doc.filename)}"
+        try:
+            await asyncio.to_thread(chat_service.vector_store.delete, expr=expr)
+        except Exception as exc:
+            log.warning("Purging chunks of %s (chat %s) failed: %s", doc.filename, doc.chat_id, exc)
+            raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY,
+                                detail="Could not remove the document from search. Nothing was removed; try again.")
+    await db.execute(delete(ChatDocumentModel).where(ChatDocumentModel.id == document_id))
+    await db.commit()
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
 async def _generate(chat: UserChatModel, question: str, history: list,
                     rejected: tuple[str, str | None] | None = None) -> tuple[str, bool, list[dict]]:
     """One answer to `question`: the chat's document chunks from Milvus, web results when the
