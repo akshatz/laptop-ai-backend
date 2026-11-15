@@ -16,17 +16,19 @@ function daysLeft(deletedAt: string, purgeAfterDays: number) {
   return left <= 1 ? 'removed for good within a day' : `removed for good in ${left} days`;
 }
 
-// Your deleted chats and documents (laptop-backend GET /trash), with Restore; they're removed
-// for good after purge_after_days (TRASH_DAYS, 30 by default).
+// Your deleted chats and documents (laptop-backend GET /trash). Each row can be restored, or
+// deleted for good right away (DELETE /trash/...: gone from the database and from Milvus, no way
+// back); otherwise it's removed for good after purge_after_days (TRASH_DAYS, 30 by default).
 export default function TrashView({ onError, onChatRestored, onDocumentRestored }: Props) {
   const [trash, setTrash] = useState<Trash | null>(null);
-  const [busy, setBusy] = useState<string | null>(null);
+  // The row being restored or deleted for good; the other buttons wait meanwhile.
+  const [busy, setBusy] = useState<{ id: string; action: 'restore' | 'purge' } | null>(null);
 
   const reload = () => api.trash().then(setTrash).catch(err => onError('Could not load deleted items: ', err));
   useEffect(() => { reload(); }, []);
 
   async function restoreChat(id: string) {
-    setBusy(id);
+    setBusy({ id, action: 'restore' });
     try {
       onChatRestored(await api.restoreChat(id));
     } catch (err) {
@@ -37,7 +39,7 @@ export default function TrashView({ onError, onChatRestored, onDocumentRestored 
   }
 
   async function restoreDocument(id: string) {
-    setBusy(id);
+    setBusy({ id, action: 'restore' });
     try {
       await api.restoreDocument(id);
       onDocumentRestored();
@@ -49,6 +51,46 @@ export default function TrashView({ onError, onChatRestored, onDocumentRestored 
     }
   }
 
+  async function purgeChat(c: Trash['chats'][number]) {
+    const withDocs = c.documents > 0 ? ` and its ${c.documents} document${c.documents === 1 ? '' : 's'}` : '';
+    if (!confirm(`Delete “${c.title}” for good? Its messages${withDocs} are removed permanently, also from search. This can't be undone.`)) return;
+    setBusy({ id: c.id, action: 'purge' });
+    try {
+      await api.purgeChat(c.id);
+      await reload();
+    } catch (err) {
+      onError('Could not delete the chat for good: ', err);
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function purgeDocument(d: Trash['documents'][number]) {
+    if (!confirm(`Delete “${d.filename}” for good? It is removed permanently, also from search. This can't be undone.`)) return;
+    setBusy({ id: d.id, action: 'purge' });
+    try {
+      await api.purgeDocument(d.id);
+      await reload();
+    } catch (err) {
+      onError('Could not delete the document for good: ', err);
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  // Restore and Delete for good, the same pair on every row.
+  const actions = (id: string, restore: () => void, purge: () => void) => (
+    <div className="trash-actions">
+      <button type="button" onClick={restore} disabled={busy !== null}>
+        {busy?.id === id && busy.action === 'restore' ? 'Restoring…' : '↩ Restore'}
+      </button>
+      <button type="button" className="danger" onClick={purge} disabled={busy !== null}
+        title="Remove it now, permanently, instead of waiting">
+        {busy?.id === id && busy.action === 'purge' ? 'Deleting…' : '🗑 Delete for good'}
+      </button>
+    </div>
+  );
+
   if (!trash) return <section className="documents"><p className="muted">Loading…</p></section>;
   const empty = !trash.chats.length && !trash.documents.length;
 
@@ -57,7 +99,8 @@ export default function TrashView({ onError, onChatRestored, onDocumentRestored 
       <h2>Deleted</h2>
       <p className="muted">
         Deleted chats and documents stay here for {trash.purge_after_days} days, then they're removed for good.
-        Restoring a chat brings back its messages and documents.
+        Restoring a chat brings back its messages and documents. Delete for good removes one right away,
+        and that can't be undone.
       </p>
       {empty && <p className="muted">Nothing deleted.</p>}
 
@@ -72,9 +115,7 @@ export default function TrashView({ onError, onChatRestored, onDocumentRestored 
                 deleted {new Date(c.deleted_at).toLocaleString()} · {daysLeft(c.deleted_at, trash.purge_after_days)}
               </small>
             </div>
-            <button type="button" onClick={() => restoreChat(c.id)} disabled={busy !== null}>
-              {busy === c.id ? 'Restoring…' : '↩ Restore'}
-            </button>
+            {actions(c.id, () => restoreChat(c.id), () => purgeChat(c))}
           </li>
         ))}
       </ul>
@@ -90,9 +131,7 @@ export default function TrashView({ onError, onChatRestored, onDocumentRestored 
                 {new Date(d.deleted_at).toLocaleString()} · {daysLeft(d.deleted_at, trash.purge_after_days)}
               </small>
             </div>
-            <button type="button" onClick={() => restoreDocument(d.id)} disabled={busy !== null}>
-              {busy === d.id ? 'Restoring…' : '↩ Restore'}
-            </button>
+            {actions(d.id, () => restoreDocument(d.id), () => purgeDocument(d))}
           </li>
         ))}
       </ul>

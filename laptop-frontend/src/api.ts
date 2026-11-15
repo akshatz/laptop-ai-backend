@@ -167,6 +167,9 @@ export const api = {
   trash: () => request<Trash>('/trash'),
   restoreChat: (chatId: string) => request<Chat>(`/chats/${chatId}/restore`, undefined, 'POST'),
   restoreDocument: (id: string) => request<ChatDocument>(`/documents/${id}/restore`, undefined, 'POST'),
+  // Delete for good, from Deleted: removed at once (also from Milvus) instead of after 30 days.
+  purgeChat: (chatId: string) => request<void>(`/trash/chats/${chatId}`, undefined, 'DELETE'),
+  purgeDocument: (id: string) => request<void>(`/trash/documents/${id}`, undefined, 'DELETE'),
   // Your own documents; `all`: everyone's (documents are visible to every signed-in user).
   documents: (all = false) => request<ChatDocument[]>(all ? '/documents?all=true' : '/documents'),
   // `model`: the chat switches to it (laptop-backend checks it's installed).

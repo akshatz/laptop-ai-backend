@@ -285,3 +285,10 @@ button.link { background: none; border: none; padding: 0; color: var(--accent); 
 .trash-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 0.15rem; }
 .trash-main strong, .trash-main a { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .trash-list button { margin: 0; flex: none; }
+/* Restore and Delete for good, side by side; under the name on phones. */
+.trash-actions { display: flex; gap: 0.4rem; flex: none; }
+.trash-actions .danger { color: #d9534f; border-color: color-mix(in srgb, #d9534f 45%, transparent); }
+@media (max-width: 760px) {
+  .trash-list li { flex-wrap: wrap; }
+  .trash-main { flex-basis: 100%; }
+}
