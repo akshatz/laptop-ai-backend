@@ -3,7 +3,6 @@ import { copyText } from '../copy';
 import DocumentsView, { MAX_BYTES, MAX_FILES } from './DocumentsView';
 import FeedbackView from './FeedbackView';
 import LibraryView from './LibraryView';
-import SidebarDocuments from './SidebarDocuments';
 import TrashView from './TrashView';
 import Clock from './Clock';
 import AdminSessionsView from './AdminSessionsView';
@@ -465,11 +464,6 @@ export default function ChatScreen({ user, notice, onSignOut, onSessionExpired }
             </button>
           ))}
         </nav>
-
-        {user && (
-          <SidebarDocuments reloadKey={docsVersion}
-            onOpenChat={id => { const c = chats.find(x => x.id === id); if (c) openChat(c); }} />
-        )}
 
         <div className="account">
           {user ? (
