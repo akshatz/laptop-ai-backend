@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type FormEvent, type KeyboardEvent } from 'react';
+import { Fragment, useEffect, useRef, useState, type FormEvent, type KeyboardEvent } from 'react';
 import { copyText } from '../copy';
 import DocumentsView, { MAX_BYTES, MAX_FILES } from './DocumentsView';
 import FeedbackView from './FeedbackView';
@@ -48,6 +48,12 @@ const routeHash = (view: View, chatId: string | null) =>
 
 // An answer still being written after a reload: the backend keeps going when the page goes
 // away, so a question this recent without an answer is polled until the answer is saved.
+const GAP_MS = 30 * 60_000;
+// "Oct 14 16:57"
+const stamp = (iso: string) => {
+  const d = new Date(iso);
+  return `${d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} ${d.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })}`;
+};
 const PENDING_WINDOW_MS = 5 * 60_000;
 const POLL_PENDING_MS = 3000;
 function awaitingAnswer(list: Shown[]) {
@@ -334,7 +340,7 @@ export default function ChatScreen({ user, notice, onSignOut, onSessionExpired }
     const first = messages.length === 0;
     setInput('');
     setAnchor(messages.length);
-    setMessages(m => [...m, { role: 'user', content }]);
+    setMessages(m => [...m, { role: 'user', content, created_at: new Date().toISOString() }]);
     if (first) {
       const renamed = { ...target, title: titleFrom(content) };
       setChat(renamed);
@@ -546,8 +552,18 @@ export default function ChatScreen({ user, notice, onSignOut, onSessionExpired }
                   const latest = versions.length === 0 || shownIndex === versions.length - 1;
                   const shown: Shown = latest ? m : { ...m, content: versions[shownIndex].content, web_sources: undefined, web_searched: false };
                   const flip = (to: number) => m.id && setVersionShown(v => ({ ...v, [m.id!]: to }));
+                  // A time stamp above the first message and between two messages 30 minutes or more apart.
+                  const prev = i > 0 ? messages[i - 1].created_at : undefined;
+                  const gap = i === 0 && m.created_at ? Infinity
+                    : prev && m.created_at ? new Date(m.created_at).getTime() - new Date(prev).getTime() : 0;
                   return (
-                  <div key={i} data-index={i} className={'msg ' + m.role + (m.id && m.id === regenerating ? ' regenerating' : '') + (latest ? '' : ' earlier')}>
+                  <Fragment key={i}>
+                  {gap >= GAP_MS && (
+                    <div className="time-gap" role="separator">
+                      {stamp(m.created_at!)}
+                    </div>
+                  )}
+                  <div data-index={i} className={'msg ' + m.role + (m.id && m.id === regenerating ? ' regenerating' : '') + (latest ? '' : ' earlier')}>
                     <div className="bubble">{shown.content}</div>
                     {m.role === 'user' && (
                       <div className="msg-actions">
@@ -604,6 +620,7 @@ export default function ChatScreen({ user, notice, onSignOut, onSessionExpired }
                       </div>
                     )}
                   </div>
+                  </Fragment>
                   );
                 })}
                 {busy && !regenerating && <div className="msg assistant"><div className="bubble typing">{waiting ? 'Still answering…' : 'Thinking…'}</div></div>}

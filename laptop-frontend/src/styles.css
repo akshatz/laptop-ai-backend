@@ -308,3 +308,4 @@ button.link { background: none; border: none; padding: 0; color: var(--accent); 
   .trash-list li { flex-wrap: wrap; }
   .trash-main { flex-basis: 100%; }
 }
+.time-gap { text-align: center; margin: 0.75rem 0 0.25rem; font-size: 0.75rem; color: var(--muted); }
