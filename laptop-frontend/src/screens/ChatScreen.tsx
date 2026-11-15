@@ -499,7 +499,6 @@ export default function ChatScreen({ user, notice, onSignOut, onSessionExpired }
         ) : view === 'documents' ? (
           <DocumentsView chat={chat} ensureChat={ensureChat} onError={fail}
             setUploads={setUploads} reloadKey={docsVersion}
-            onOpenChat={id => { const c = chats.find(x => x.id === id); if (c) openChat(c); }}
             onBack={() => setView('chat')} />
         ) : view === 'library' ? (
           <LibraryView user={user} onError={fail} reloadKey={docsVersion}

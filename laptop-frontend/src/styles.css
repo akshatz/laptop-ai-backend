@@ -182,7 +182,7 @@ button.link { background: none; border: none; padding: 0; color: var(--accent); 
 .doc-table th { text-align: left; color: var(--muted); font-weight: 500; border-bottom: 1px solid var(--border); padding: 0.4rem; }
 .doc-table td { border-bottom: 1px solid var(--border); padding: 0.45rem 0.4rem; }
 .doc-table a { color: var(--accent); text-decoration: none; }
-/* Phones: hide Size and Added, let long names wrap. */
+/* Phones: only the first three columns (My documents: Name, Status, Size), let long names wrap. */
 @media (max-width: 760px) {
   .doc-table th:nth-child(n+4), .doc-table td:nth-child(n+4) { display: none; }
 }
