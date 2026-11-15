@@ -6,7 +6,6 @@ interface Props {
   chat: Chat | null;
   ensureChat: () => Promise<Chat | null>;
   onError: (prefix: string, err: unknown) => void;
-  onOpenChat: (chatId: string) => void;
   onBack: () => void;
   setUploads: (update: (items: UploadItem[]) => UploadItem[]) => void;
   // Changes when a background embedding finishes.
@@ -22,7 +21,7 @@ const STATUS_LABEL: Record<ChatDocument['status'], string> = {
   embedding: '⏳ Embedding', ready: '✓ Ready', failed: '✕ Failed', replaced: 'Replaced',
 };
 
-export default function DocumentsView({ chat, ensureChat, onError, onOpenChat, onBack, setUploads, reloadKey }: Props) {
+export default function DocumentsView({ chat, ensureChat, onError, onBack, setUploads, reloadKey }: Props) {
   const [picked, setPicked] = useState<File[]>([]);
   const [pasted, setPasted] = useState('');
   const [busy, setBusy] = useState(false);
@@ -128,7 +127,7 @@ export default function DocumentsView({ chat, ensureChat, onError, onOpenChat, o
         <p className="muted">You haven't added any documents yet.</p>
       ) : (
         <table className="doc-table">
-          <thead><tr><th>Name</th><th>Chat</th><th>Status</th><th>Size</th><th>Added</th></tr></thead>
+          <thead><tr><th>Name</th><th>Status</th><th>Size</th><th>Added</th></tr></thead>
           <tbody>
             {docs.map(d => (
               <tr key={d.id}>
@@ -136,7 +135,6 @@ export default function DocumentsView({ chat, ensureChat, onError, onOpenChat, o
                   <a href={documentUrl(d.id)} target="_blank" rel="noreferrer">📄 {d.filename}</a>
                   {d.version > 1 && <span className="muted"> v{d.version}</span>}
                 </td>
-                <td><button type="button" className="link" onClick={() => { if (d.chat_id) onOpenChat(d.chat_id); }}>{d.chat_title}</button></td>
                 <td className={'doc-status ' + d.status} title={d.error ?? undefined}>{STATUS_LABEL[d.status] ?? d.status}</td>
                 <td>{size(d.size_bytes)}</td>
                 <td>{new Date(d.created_at).toLocaleString()}</td>
