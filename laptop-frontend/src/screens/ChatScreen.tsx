@@ -4,7 +4,6 @@ import DocumentsView, { MAX_BYTES, MAX_FILES } from './DocumentsView';
 import FeedbackView from './FeedbackView';
 import LibraryView from './LibraryView';
 import TrashView from './TrashView';
-import Clock from './Clock';
 import AdminSessionsView from './AdminSessionsView';
 import UploadSnackbar, { fromUploaded, type UploadItem } from './UploadSnackbar';
 import { api, documentUrl, HttpError, SIGN_IN_URL, type Chat, type ChatDocument, type Feedback, type Message, type User } from '../api';
@@ -487,7 +486,6 @@ export default function ChatScreen({ user, notice, onSignOut, onSessionExpired }
             <button type="button" className="sidebar-show" onClick={toggleSidebar} aria-label="Show sidebar" title="Show sidebar">❯</button>
           )}
           <span className="title">{view === 'documents' ? 'Documents' : view === 'library' ? 'All documents' : view === 'sessions' ? 'Signed-in users' : view === 'feedback' ? 'Feedback' : view === 'trash' ? 'Deleted' : chat ? chat.title : 'New chat'}</span>
-          <Clock />
           {view === 'chat' && chat && (
             <button type="button" className="icon-button" onClick={deleteChat} disabled={busy}
               aria-label="Delete this chat" title="Delete this chat">🗑</button>
