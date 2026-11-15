@@ -507,11 +507,6 @@ export default function ChatScreen({ user, notice, onSignOut, onSessionExpired }
           <AdminSessionsView onError={fail} />
         ) : view === 'trash' ? (
           <TrashView onError={fail}
-            onChatRestored={async c => {
-              try { setChats(await api.chats()); } catch { /* list reloads on the next visit */ }
-              setDocsVersion(v => v + 1);
-              openChat(c);
-            }}
             onDocumentRestored={() => setDocsVersion(v => v + 1)} />
         ) : view === 'feedback' ? (
           <FeedbackView onError={fail}
