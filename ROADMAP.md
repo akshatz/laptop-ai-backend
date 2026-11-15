@@ -21,12 +21,12 @@ Not planned on this laptop: serving with vLLM or TGI (needs a GPU), models above
 
 Move the family from Open WebUI to laptop-frontend + laptop-backend, then retire Open WebUI (see [docs/laptop-frontend.md](docs/laptop-frontend.md)). Planned 2026-11-14, weekends only, ~3 h a day; estimates include testing in the browser.
 
-Already in laptop-frontend (2026-11-14): authentik sign-in, chats and history, model picker (paid models admin-only), web search with sources, sources-only answers for facts, regenerate limit, 👍/👎 and a Feedback page, suggested questions, documents and pictures (OCR + `gemma3:4b` description) attached from the message box, versions across chats, deleting chats and documents, admin views, hideable sidebar.
+Already in laptop-frontend (2026-11-14, extended 2026-11-15): authentik sign-in, chats and history, model picker (paid models admin-only), web search with sources, sources-only answers for facts, regenerate limit, 👍/👎 and a Feedback page, suggested questions, documents and pictures (OCR + `gemma3:4b` description) attached from the message box, versions across chats, deleting chats and documents, admin views, hideable sidebar; 2026-11-15: documents visible to every signed-in user (All documents, no chat on the cards), 🗑 Deleted for documents with Restore and Delete for good (also from Milvus), a time stamp between messages 30+ minutes apart, a 🕘 Versions page in the sidebar (every file's version timeline), a short message and retry instead of nginx's 502 page when the server is down. An optional compose override (`devops/docker-compose.frontend-dist.yml`) serves a locally built `laptop-frontend/dist`, so a UI change needs `npm run build` instead of an image rebuild. laptop-backend logging is set from `LOG_LEVEL`, `LOG_FILE` and related variables, with one timing line per request (docs/laptop-backend.md).
 
 | # | Feature | Estimate | Weekend | Status |
 |---|---|---|---|---|
 | 1 | **Streaming answers** (send + regenerate, Stop button) | 3–4 h | 15 Nov | |
-| 2 | **Restore deleted chats** (archive table, restore endpoint, Deleted chats view) | 2 h | 21–22 Nov | |
+| 2 | **Restore deleted chats** (soft delete with `deleted_at` instead of an archive table, restore endpoints, Deleted view) | 2 h | 21–22 Nov | partly done 2026-11-15 (built early, #103): chats and documents are soft-deleted for 30 days and restorable through the API, and the Deleted view restores documents or deletes them for good; deleted chats are no longer listed there since #109, so restoring a chat from the UI is still open |
 | 3 | **Follow-up suggestions** after each answer | 1–1.5 h | 21–22 Nov | |
 | 4 | **Idle sign-out** after 3 h | 1 h | 21–22 Nov | |
 | 5 | **"My usage" for everyone, KPI page for admins** | 2–3 h | 28–29 Nov | |
